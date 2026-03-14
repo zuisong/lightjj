@@ -73,6 +73,40 @@ func TestParseAliases_DoubleQuoteInsideSingleQuote(t *testing.T) {
 	assert.Equal(t, []string{"log", "-T", `"hello"`}, aliases[0].Command)
 }
 
+func TestParseAliases_TripleQuotedString(t *testing.T) {
+	// TOML multi-line literal strings (''') are used in jj aliases for
+	// shell scripts passed to `util exec`. The first newline after the
+	// opening ''' is stripped per TOML spec.
+	output := "aliases.l = [\"log\"]\n" +
+		"aliases.up = [\"util\", \"exec\", \"--\", \"bash\", \"-c\", '''\n" +
+		"set -e\n" +
+		"jj git fetch\n" +
+		"jj rebase\n" +
+		"''', \"bash\"]\n" +
+		"aliases.s = [\"status\"]"
+	aliases := ParseAliases(output)
+	assert.Len(t, aliases, 3)
+
+	assert.Equal(t, "l", aliases[0].Name)
+	assert.Equal(t, []string{"log"}, aliases[0].Command)
+
+	assert.Equal(t, "up", aliases[1].Name)
+	assert.Equal(t, []string{"util", "exec", "--", "bash", "-c", "set -e\njj git fetch\njj rebase\n", "bash"}, aliases[1].Command)
+
+	assert.Equal(t, "s", aliases[2].Name)
+	assert.Equal(t, []string{"status"}, aliases[2].Command)
+}
+
+func TestParseAliases_TripleDoubleQuotedString(t *testing.T) {
+	output := `aliases.run = ["util", "exec", "--", "bash", "-c", """
+echo "hello world"
+"""]`
+	aliases := ParseAliases(output)
+	assert.Len(t, aliases, 1)
+	assert.Equal(t, "run", aliases[0].Name)
+	assert.Equal(t, []string{"util", "exec", "--", "bash", "-c", "echo \"hello world\"\n"}, aliases[0].Command)
+}
+
 func TestConfigListAliases(t *testing.T) {
 	args := ConfigListAliases()
 	assert.Equal(t, []string{"config", "list", "aliases", "--color", "never", "--ignore-working-copy"}, args)
