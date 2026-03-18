@@ -62,9 +62,11 @@ export function syncVisibility(
   currentFilter: string,
 ): { nextPrev: string | undefined; apply: string | null } {
   // Indeterminate — bookmarks not loaded, hidden-mode can't enumerate.
-  // Don't advance prev: the null→determinate transition should look like
-  // a first fire (set prev, don't apply) — bookmarks loading isn't a toggle.
-  if (vr === null) return { nextPrev: prev, apply: null }
+  // RESET prev: repoPath arrives async, so there's a mount fire with
+  // vis={} → vr='' that sets prev='' BEFORE this null. Preserving prev
+  // would mean the next determinate vr sees prev='' === filter='' → apply.
+  // Resetting makes null→determinate a true first-fire (set, don't apply).
+  if (vr === null) return { nextPrev: undefined, apply: null }
 
   // First determinate fire. loadLog at mount handles the initial load;
   // applying here would double-request. Also covers null→determinate.

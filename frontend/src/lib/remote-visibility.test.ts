@@ -203,8 +203,8 @@ describe('syncVisibility', () => {
   it.each([
     // vr,       prev,    filter,   → nextPrev, apply,    scenario
     [null,       U,       '',       U,          null,     'mount, bookmarks not loaded'],
-    [null,       '',      '',       '',         null,     'still loading — prev untouched'],
-    [null,       'anc(a)', 'anc(a)', 'anc(a)',  null,     'reload cleared bookmarks mid-session'],
+    [null,       '',      '',       U,          null,     'repoPath arrived — RESET prev (the real bug)'],
+    [null,       'anc(a)', 'anc(a)', U,         null,     'reload cleared bookmarks — reset, next load rebaseline'],
     ['',         U,       '',       '',         null,     'first fire, no visibility config'],
     ['anc(a)',   U,       '',       'anc(a)',   null,     'first determinate fire — null→loaded, or saved-vis mount'],
     ['anc(a)',   '',      '',       'anc(a)',   'anc(a)', 'first toggle from blank — no-saved-config flow'],
@@ -222,19 +222,35 @@ describe('syncVisibility', () => {
 
   // ─── Sequence tests — prev threading across multiple fires ───
 
-  it('the reported bug: hidden-mode, switch to branches view', () => {
-    // Mount → bookmarks not loaded (vr=null). Switch to branches →
-    // bookmarks load → vr becomes the per-bookmark enumeration.
-    // prev threading: undefined → undefined (null skips) → 'anc…' (first
-    // determinate fire). apply stays null throughout — bookmarks loading
-    // is not a user action.
+  it('the reported bug: repoPath async, hidden-mode, switch to branches', () => {
+    // THREE-step: mount with repoPath='' → vis={} → vr='' (sets prev='').
+    // loadInfo resolves → repoPath set → vis has hidden → vr=null (bookmarks
+    // not loaded). null RESETS prev to undefined — without this, step 3
+    // would see prev='' === filter='' and apply. Branches → bookmarks load
+    // → vr determinate → first-fire path (set prev, don't apply).
     const results = run([
-      { vr: null, filter: '' },       // mount, bookmarks=[]
+      { vr: '', filter: '' },         // mount: repoPath='' → vis={} → vr=''
+      { vr: null, filter: '' },       // loadInfo: vis has hidden, bookmarks=[]
       { vr: 'anc(a|b)', filter: '' }, // branches view → bookmarks load
     ])
     expect(results).toEqual([
+      { prev: '', apply: null },          // first fire, prev poisoned to ''
+      { prev: undefined, apply: null },   // null RESETS — unpoisons
+      { prev: 'anc(a|b)', apply: null },  // first-fire after reset — NOT applied
+    ])
+  })
+
+  it('two-step variant: bookmarks-not-loaded straight from mount', () => {
+    // Simpler case: saved vis loads from localStorage synchronously before
+    // the effect fires (config.svelte.ts write-through cache). vr is null
+    // from the start — prev never gets poisoned.
+    const results = run([
+      { vr: null, filter: '' },
+      { vr: 'anc(a|b)', filter: '' },
+    ])
+    expect(results).toEqual([
       { prev: undefined, apply: null },
-      { prev: 'anc(a|b)', apply: null },  // NOT applied — the bug would have apply='anc(a|b)'
+      { prev: 'anc(a|b)', apply: null },
     ])
   })
 
@@ -283,5 +299,36 @@ describe('syncVisibility', () => {
       { vr: 'anc(toggled)', filter: '' }, // user toggles — '' !== 'anc(saved)' → dormant
     ])
     expect(results.map(r => r.apply)).toEqual([null, null, null])
+  })
+
+  it('tab-switch restore: filter rehydrated, prev fresh — tracking resumes', () => {
+    // AppShell preserves revsetFilter via initialState, but prev is plain
+    // `let` — resets on {#key activeTabId} remount. User was tracking in
+    // tab A (filter='anc'), switches away and back → filter restored but
+    // prev=undefined. Mount 3-step runs again; filter never matches prev
+    // until bookmarks load rebaselines prev to the SAME revset the filter
+    // was restored to. Then the next toggle picks up tracking.
+    const results = run([
+      { vr: '', filter: 'anc(a)' },       // remount: vis={}, filter RESTORED
+      { vr: null, filter: 'anc(a)' },     // loadInfo: vis has hidden — reset
+      { vr: 'anc(a)', filter: 'anc(a)' }, // bookmarks load — same revset as restored filter
+      { vr: 'anc(b)', filter: 'anc(a)' }, // user toggles — prev matches filter
+    ])
+    expect(results.map(r => r.apply)).toEqual([null, null, null, 'anc(b)'])
+  })
+
+  it('tracking survives a null interlude — resume after reload', () => {
+    // User is tracking (prev='anc', filter='anc'). Bookmarks briefly clear
+    // (tab A→B→A where B triggered a reload). null resets prev, but when
+    // bookmarks reload with the SAME revset, prev is rebaseline'd to that
+    // value. Next toggle: filter still 'anc', prev 'anc' → tracking resumes.
+    const results = run([
+      { vr: '', filter: '' },
+      { vr: 'anc(a)', filter: '' },       // first toggle — apply
+      { vr: null, filter: 'anc(a)' },     // reload clears — reset prev
+      { vr: 'anc(a)', filter: 'anc(a)' }, // reload completes, same revset — first-fire
+      { vr: 'anc(b)', filter: 'anc(a)' }, // user toggles — filter matches prev → apply
+    ])
+    expect(results.map(r => r.apply)).toEqual([null, 'anc(a)', null, null, 'anc(b)'])
   })
 })
