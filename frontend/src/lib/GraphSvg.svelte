@@ -79,21 +79,24 @@
       if (cells[i].char === '─') {
         if (runStart < 0) runStart = i
       } else if (runStart >= 0) {
-        // End of a ─ run: find the max lane among the run's neighboring endpoints
-        let maxLane = cells[runStart].lane
-        // Check left neighbor
-        if (runStart > 0 && HORIZ_CHARS.has(cells[runStart - 1].char)) {
-          maxLane = Math.max(maxLane, cells[runStart - 1].lane)
-        }
-        // Check right neighbor (current cell ended the run)
-        if (HORIZ_CHARS.has(cells[i].char)) {
-          maxLane = Math.max(maxLane, cells[i].lane)
-        }
-        for (let j = runStart; j < i; j++) cells[j].lane = maxLane
+        closeRun(cells, runStart, i)
         runStart = -1
       }
     }
+    // Trailing run (padGutter can truncate mid-connector at MAX_GUTTER)
+    if (runStart >= 0) closeRun(cells, runStart, cells.length)
     return cells
+  }
+
+  function closeRun(cells: GutterCell[], runStart: number, end: number) {
+    let maxLane = cells[runStart].lane
+    if (runStart > 0 && HORIZ_CHARS.has(cells[runStart - 1].char)) {
+      maxLane = Math.max(maxLane, cells[runStart - 1].lane)
+    }
+    if (end < cells.length && HORIZ_CHARS.has(cells[end].char)) {
+      maxLane = Math.max(maxLane, cells[end].lane)
+    }
+    for (let j = runStart; j < end; j++) cells[j].lane = maxLane
   }
 
   let cells = $derived(parseGutter(gutter))

@@ -274,16 +274,18 @@ export function createAnnotationStore(): AnnotationStore {
       status: 'open',
     }
     return withBusy(async () => {
-      bumpGen()
+      const gen = bumpGen()
       await api.saveAnnotation(ann)
+      if (gen !== loadGen) return
       list = [...list, ann]
     })
   }
 
   async function update(ann: Annotation) {
     return withBusy(async () => {
-      bumpGen()
+      const gen = bumpGen()
       await api.saveAnnotation(ann)
+      if (gen !== loadGen) return
       list = list.map(a => a.id === ann.id ? ann : a)
     })
   }
@@ -291,8 +293,9 @@ export function createAnnotationStore(): AnnotationStore {
   async function remove(id: string) {
     if (!loadedChangeId) return
     return withBusy(async () => {
-      bumpGen()
+      const gen = bumpGen()
       await api.deleteAnnotation(loadedChangeId!, id)
+      if (gen !== loadGen) return
       list = list.filter(a => a.id !== id)
     })
   }

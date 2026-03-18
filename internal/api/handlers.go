@@ -1009,10 +1009,10 @@ type hunkSpecRequest struct {
 	Description string          `json:"description"`
 }
 
-// Spec carries full synthesized file content for partials — can easily
-// exceed decodeBody's 1MB default on a large file. 64MB: enough for a
-// large repo-scale commit, still bounded.
-const hunkSpecBodyLimit = 64 << 20
+// Endpoints carrying full file content as JSON strings (split-hunks spec,
+// file-write from merge/inline editors). 64MB: enough for a large repo-scale
+// lock file, still bounded. decodeBody's 1MB default rejects these.
+const fileContentBodyLimit = 64 << 20
 
 func (s *Server) handleSplitHunks(w http.ResponseWriter, r *http.Request) {
 	// Local-only: jj must be able to exec our binary. In SSH mode the jj
@@ -1024,16 +1024,8 @@ func (s *Server) handleSplitHunks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// decodeBody re-wraps with a 1MB MaxBytesReader unconditionally — our
-	// 64MB outer wrapper would be moot. Inline the decode.
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		s.writeError(w, http.StatusBadRequest, "Content-Type must be application/json")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, hunkSpecBodyLimit)
-	defer r.Body.Close()
 	var req hunkSpecRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeBodyLimit(w, r, &req, fileContentBodyLimit); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1367,7 +1359,7 @@ func validateRepoRelativePath(p string) (cleaned string, err error) {
 
 func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	var req fileWriteRequest
-	if err := decodeBody(w, r, &req); err != nil {
+	if err := decodeBodyLimit(w, r, &req, fileContentBodyLimit); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

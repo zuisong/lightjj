@@ -59,7 +59,7 @@
   import { APP_VERSION, CURRENT_RELEASE_URL, RELEASES_URL, parseSemver, semverMinorGt } from './lib/version'
   import { FEATURES, type TutorialFeature } from './lib/tutorial-content'
   import WelcomeModal from './lib/WelcomeModal.svelte'
-  import { buildVisibilityRevset, revsetQuote } from './lib/remote-visibility'
+  import { buildVisibilityRevset, revsetQuote, syncVisibility } from './lib/remote-visibility'
 
   // --- Global state ---
   // initialState-hydrated vars: restored on tab-switch-back via AppShell's
@@ -183,33 +183,18 @@
     if (prsRevset !== '' && revsetFilter === prsRevset) return 'PRs'
     return 'Custom'
   })
-  // When visibilityRevset changes and the user hasn't typed a custom filter,
-  // update revsetFilter to reflect the new visibility config and reload.
-  // The guard compares against prevVisibilityRevset (the value that THIS effect
-  // previously wrote), NOT viewLabel — reading viewLabel inside the effect lazily
-  // recomputes it with NEW visibilityRevset + OLD revsetFilter → 'custom' →
-  // guard fails on every toggle after the first. untrack() blocks dep tracking,
-  // not $derived lazy recomputation.
-  //
-  // prev=undefined skips the FIRST fire: loadLog() at mount handles the initial
-  // load; firing handleRevsetSubmit here too is a wasted request. Subsequent
-  // fires (repoPath arriving with saved visibility, user toggle) work normally.
-  //
-  // Guard is ONLY `revsetFilter === prevVisibilityRevset` — NOT `=== ''`. The
-  // empty case is covered: when no visibility was set, prev starts as '' after
-  // the first fire, so '' === '' passes on the first toggle. The old `=== ''`
-  // branch caused a bug: user clears the filter → '' → bookmarks reload triggers
-  // recompute → effect sees '' and re-applies the visibility revset.
+  // Sync revsetFilter to visibility toggles. Decision logic extracted to
+  // syncVisibility() (remote-visibility.ts) for table-driven testing — the
+  // state machine has enough edges (mount, null→determinate, user-cleared,
+  // user-tracking, toggle-while-custom) that inline reasoning was producing
+  // bugs. See remote-visibility.test.ts for the full transition table.
   let prevVisibilityRevset: string | undefined = undefined
   $effect(() => {
     const vr = visibilityRevset
     untrack(() => {
-      if (prevVisibilityRevset === undefined) { prevVisibilityRevset = vr; return }
-      if (revsetFilter === prevVisibilityRevset) {
-        revsetFilter = vr
-        handleRevsetSubmit()
-      }
-      prevVisibilityRevset = vr
+      const { nextPrev, apply } = syncVisibility(vr, prevVisibilityRevset, revsetFilter)
+      prevVisibilityRevset = nextPrev
+      if (apply !== null) { revsetFilter = apply; handleRevsetSubmit() }
     })
   })
 
@@ -1046,10 +1031,12 @@
     })
   }
 
-  // Shared by handleCommit + startDescriptionEdit: prefer the already-loaded
-  // fullDescription, fall back to a fetch, fall back to the graph-row stub.
+  // Shared by handleCommit + startDescriptionEdit. Always fetches —
+  // api.description is commit_id-cached so the hot path is instant.
+  // Don't read fullDescription here: context-menu Describe calls this
+  // synchronously after selectByChangeId, before the loader's deferred rAF
+  // fires, so fullDescription still holds the PREVIOUS revision's text.
   async function fetchPrefillDescription(): Promise<string> {
-    if (fullDescription) return fullDescription
     if (!selectedRevision) return ''
     try {
       return (await api.description(selectedRevision.commit.commit_id)).description
@@ -1210,6 +1197,16 @@
     if (loaded?.kind === 'single' && loaded.commitId === sel.commit.commit_id) return true
     nav.loadDiffAndFiles(sel.commit, hasChecked)
     return false
+  }
+
+  // Mirror of switchToLogView — the descriptionEditing clear is the payload.
+  // DiffPanel (and the editor in its header slot) unmount in branches view,
+  // but descriptionEditing/descriptionDraft are App-level state; without the
+  // clear they survive a branches-view excursion and reattach over whatever
+  // revision the cursor landed on.
+  function switchToBranchesView() {
+    descriptionEditing = false
+    activeView = 'branches'
   }
 
   function enterRebaseMode() {
@@ -1430,11 +1427,12 @@
 
   async function executeHunkReview() {
     const total = allHunks.length
-    if (selectedHunks.size === total) {
+    const accepted = selectedHunks.size
+    if (accepted === total) {
       setMessage({ kind: 'warning', text: 'Reject at least one hunk (Space to toggle)' })
       return
     }
-    if (selectedHunks.size === 0) {
+    if (accepted === 0) {
       setMessage({ kind: 'warning', text: 'Accept at least one hunk' })
       return
     }
@@ -1448,14 +1446,14 @@
     // No partials → every file is all-or-none → file-level split is exact
     // AND works in SSH. Free optimization; also the only path SSH can take.
     if (plan.partials.length === 0) {
-      const accepted = reviewParsedDiff
+      const acceptedPaths = reviewParsedDiff
         .filter(f => fileSelectionState(f, selectedHunks) === 'all')
         .map(f => f.filePath)
       return withMutation(async () => {
         try {
-          const result = await api.split(revision, accepted)
+          const result = await api.split(revision, acceptedPaths)
           cancelInlineModes()
-          setMessage(mutationMessage(`Reviewed ${revision.slice(0, 8)} (${selectedHunks.size}/${total} hunks)`, result))
+          setMessage(mutationMessage(`Reviewed ${revision.slice(0, 8)} (${accepted}/${total} hunks)`, result))
           clearChecks()
           await loadLog()
         } catch (e) { showError(e) }
@@ -1499,7 +1497,7 @@
         // half that matters. Pass what we already have loaded.
         const result = await api.splitHunks(revision, spec, fullDescription)
         cancelInlineModes()
-        setMessage(mutationMessage(`Reviewed ${revision.slice(0, 8)} (${selectedHunks.size}/${total} hunks)`, result))
+        setMessage(mutationMessage(`Reviewed ${revision.slice(0, 8)} (${accepted}/${total} hunks)`, result))
         clearChecks()
         await loadLog()
       } catch (e) {
@@ -1788,7 +1786,7 @@
         if (workspaceList.length > 1) wsDropdownOpen = !wsDropdownOpen
         return true
       case '1': e.preventDefault(); switchToLogView(); return true
-      case '2': e.preventDefault(); activeView = 'branches'; return true
+      case '2': e.preventDefault(); switchToBranchesView(); return true
       // 3/4 open bottom drawers. Switch to log first so the drawer actually
       // renders (evolog/oplog are gated on activeView==='log' — they'd steal
       // vertical space from the bookmarks panel otherwise).
@@ -2043,7 +2041,7 @@
           <button
             class="toolbar-nav-btn"
             class:toolbar-nav-active={activeView === 'branches'}
-            onclick={() => { if (!inlineMode) activeView = 'branches' }}
+            onclick={() => { if (!inlineMode) switchToBranchesView() }}
             disabled={inlineMode}
           >⑂ Branches <kbd class="nav-hint">2</kbd></button>
         </nav>
@@ -2181,8 +2179,11 @@
             {mutating}
             {viewLabel}
             {lastCheckedIndex}
-            onselect={activeView === 'branches' ? selectRevisionCursorOnly : selectRevision}
-            oncheck={toggleCheck}
+            onselect={
+              /* NOT inlineMode — rebase.active must use selectRevision so the
+                 diff follows the destination cursor (see handleInlineNav's
+                 three-way: rebase → full, squash → cursorOnly, split → none) */
+              squash.active || split.active || activeView === 'branches' ? selectRevisionCursorOnly : selectRevision}
             onrangecheck={rangeCheck}
             oncontextmenu={openRevisionContextMenu}
             onnewfromchecked={handleNewFromChecked}

@@ -71,7 +71,6 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     viewLabel: null,
     lastCheckedIndex: -1,
     onselect: vi.fn(),
-    oncheck: vi.fn(),
     onrangecheck: vi.fn(),
     oncontextmenu: vi.fn(),
     onnewfromchecked: vi.fn(),

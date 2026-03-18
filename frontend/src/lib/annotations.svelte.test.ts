@@ -426,6 +426,37 @@ describe('createAnnotationStore', () => {
     expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({ comment: 'fix this' }))
   })
 
+  it('add() post-await gen check — load during save does not pollute new list', async () => {
+    // Scenario: save is in flight, user navigates, load(revB) completes first.
+    // Without the gen check, add()'s resumption appends revA's annotation to
+    // revB's list. Server-side is correct (changeId captured at bubble-open);
+    // this is purely a UI list-pollution guard.
+    mockAnnotations.mockResolvedValueOnce([]) // revA: empty
+    const store = createAnnotationStore()
+    await store.load('revA', 'commitA')
+
+    let resolveSave!: () => void
+    mockSave.mockImplementationOnce(() => new Promise<void>(r => { resolveSave = r }))
+    const addP = store.add({
+      changeId: 'revA', filePath: 'foo.go', lineNum: 5, lineContent: 'x',
+      comment: 'stale', severity: 'suggestion', createdAtCommitId: 'commitA',
+    })
+
+    // Navigation: load revB while add()'s save is pending. bumpGen in load
+    // invalidates add()'s captured gen.
+    mockAnnotations.mockResolvedValueOnce([mkStoreAnn('b1', { changeId: 'revB' })])
+    await store.load('revB', 'commitB')
+    expect(store.list).toHaveLength(1)
+    expect(store.list[0].id).toBe('b1')
+
+    resolveSave()
+    await addP
+
+    // revA annotation NOT appended — gen mismatch bailed before list write.
+    expect(store.list).toHaveLength(1)
+    expect(store.list[0].id).toBe('b1')
+  })
+
   it('update() replaces by id in list', async () => {
     const existing = mkStoreAnn('a1', { comment: 'old' })
     mockAnnotations.mockResolvedValue([existing])

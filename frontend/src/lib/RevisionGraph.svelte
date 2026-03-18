@@ -24,7 +24,6 @@
     viewLabel: string | null
     lastCheckedIndex: number
     onselect: (index: number) => void
-    oncheck: (changeId: string, index: number) => void
     onrangecheck: (from: number, to: number) => void
     oncontextmenu: (changeId: string, x: number, y: number) => void
     onnewfromchecked: () => void
@@ -42,7 +41,7 @@
 
   let {
     revisions, selectedIndex, checkedRevisions, loading, mutating, viewLabel, lastCheckedIndex,
-    onselect, oncheck, onrangecheck, oncontextmenu,
+    onselect, onrangecheck, oncontextmenu,
     onnewfromchecked, onabandonchecked, onclearchecks,
     onbookmarkclick,
     rebase, squash, split,

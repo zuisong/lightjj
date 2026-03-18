@@ -418,7 +418,7 @@ func resolveWSPaths(data []byte, repoStore string, isAbs func(string) bool, clea
 	return resolved, nil
 }
 
-func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
+func decodeBodyLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
 	// Require application/json content type. Triggers CORS preflight for cross-origin
 	// requests, blocking simple form-based CSRF. Full protection requires CORS origin
 	// restrictions (the Host header validation in the server already provides this).
@@ -426,7 +426,11 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
 	if !strings.HasPrefix(ct, "application/json") {
 		return fmt.Errorf("Content-Type must be application/json")
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
+	return decodeBodyLimit(w, r, v, 1<<20)
 }

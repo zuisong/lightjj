@@ -2673,6 +2673,25 @@ func TestHandleFileWrite(t *testing.T) {
 		assert.Equal(t, "hello world", string(data))
 	})
 
+	t.Run("large body accepted", func(t *testing.T) {
+		// decodeBody caps at 1MB; handleFileWrite carries full file content
+		// (merge editor, inline editor) — conflicted lock files easily exceed
+		// that. Uses decodeBodyLimit with fileContentBodyLimit (64MB).
+		dir := t.TempDir()
+		srv := newFileWriteSrv(t, dir)
+
+		content := strings.Repeat("x", 2<<20) // 2MB — past decodeBody's default
+		body, _ := json.Marshal(fileWriteRequest{Path: "big.lock", Content: content})
+		req := jsonPost("/api/file-write", body)
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		stat, err := os.Stat(filepath.Join(dir, "big.lock"))
+		require.NoError(t, err)
+		assert.Equal(t, int64(2<<20), stat.Size())
+	})
+
 	t.Run("subdirectory", func(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "src"), 0755))

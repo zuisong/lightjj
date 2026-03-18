@@ -239,13 +239,13 @@
   }
 
   // Extract line number + text content from a .diff-line DOM element.
-  // Prefers the last non-empty .line-num (new-side in unified, only number in split).
+  // Unified has [old, new] spans — take new-side unconditionally; remove
+  // lines yield null (they don't exist in the current file, so copy-ref
+  // and open-in-editor correctly skip them). Split has one span.
   function extractLineFromDom(el: Element): { lineNum: number | null, content: string } {
-    let lineNum: number | null = null
-    for (const span of el.querySelectorAll('.line-num')) {
-      const t = span.textContent?.trim()
-      if (t) lineNum = parseInt(t, 10)
-    }
+    const spans = el.querySelectorAll('.line-num')
+    const t = spans[spans.length - 1]?.textContent?.trim()
+    const lineNum = t ? parseInt(t, 10) : null
     let content = ''
     for (const child of el.childNodes) {
       if (child instanceof Element && (child.classList.contains('line-num') || child.classList.contains('diff-prefix'))) continue
@@ -272,9 +272,10 @@
       }
     }
 
-    // Fallback: single right-clicked line
+    // Fallback: single right-clicked line. Unified = [old, new]; split = [num].
+    // new-side is what exists in the file — remove lines (new=null) skip ref.
     if (lines.length === 0) {
-      const lineNum = lineNumbers[1] ?? lineNumbers[0] ?? null
+      const lineNum = lineNumbers[lineNumbers.length - 1] ?? null
       lines = [{ lineNum, content: line.content.replace(/^[-+ ]/, '') }]
     }
 
@@ -375,20 +376,21 @@
   })
 </script>
 
-{#snippet gutter(lineNumbers: (number | null)[], rawContent: string)}
-  {@const newLineNum = lineNumbers[lineNumbers.length - 1]}
-  {@const anns = newLineNum !== null && annotationsForLine ? annotationsForLine(newLineNum) : []}
-  {#each lineNumbers as n}<span class="line-num">{n ?? ''}</span>{/each}{#if anns.length > 0 && newLineNum !== null}<!--
+{#snippet gutter(lineNumbers: (number | null)[], rawContent: string, annLine: number | null)}
+  {@const anns = annLine !== null && annotationsForLine ? annotationsForLine(annLine) : []}
+  {#each lineNumbers as n}<span class="line-num">{n ?? ''}</span>{/each}{#if anns.length > 0 && annLine !== null}<!--
   --><button
         class="annotation-badge severity-{anns[0].severity}"
         class:orphaned={anns[0].status === 'orphaned'}
-        onclick={(e) => { e.stopPropagation(); onannotationclick?.(newLineNum, rawContent, e) }}
+        onclick={(e) => { e.stopPropagation(); onannotationclick?.(annLine, rawContent, e) }}
         title="{anns.length} annotation{anns.length > 1 ? 's' : ''}: {anns[0].comment}"
         aria-label="View annotation"
       >💬{#if anns.length > 1}<sup>{anns.length}</sup>{/if}</button>{/if}{/snippet}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-{#snippet diffLine(line: DiffLine, hlKey: string, spans: WordSpan[] | undefined, lineNumbers: (number | null)[], hunkIdx?: number, lineIdx?: number, conflictMeta?: ConflictLineMeta)}
+<!-- annLine default infers new-side for unified ([old,new]) and split-right
+     ([newRight]). Split-left must pass null — it has [oldLeft], not new-side. -->
+{#snippet diffLine(line: DiffLine, hlKey: string, spans: WordSpan[] | undefined, lineNumbers: (number | null)[], hunkIdx?: number, lineIdx?: number, conflictMeta?: ConflictLineMeta, annLine: number | null = lineNumbers[lineNumbers.length - 1])}
   {@const searchKey = hunkIdx !== undefined && lineIdx !== undefined ? `${hunkIdx}:${lineIdx}` : ''}
   {@const lm = searchKey ? lineMatchMap.get(searchKey) : undefined}
   {@const inConflict = !!conflictMeta}
@@ -410,7 +412,7 @@
       class:conflict-inner-remove={innerType === 'remove'}
       data-search-match-current={hasCurrent ? 'true' : undefined}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent)}<span class="diff-prefix">{displayPrefix}</span>{@html highlightSearchInText(displayContent, lm, currentMatchIdx)}</div>
+    >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{@html highlightSearchInText(displayContent, lm, currentMatchIdx)}</div>
   {:else if highlightedLines.has(hlKey)}
     <div
       class="diff-line highlighted"
@@ -420,7 +422,7 @@
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent)}{@html highlightedLines.get(hlKey)}</div>
+    >{@render gutter(lineNumbers, rawContent, annLine)}{@html highlightedLines.get(hlKey)}</div>
   {:else if spans}
     <div
       class="diff-line"
@@ -429,7 +431,7 @@
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent)}<span class="diff-prefix">{displayPrefix}</span>{#each spans as span}{#if span.changed}<span
+    >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{#each spans as span}{#if span.changed}<span
           class="word-change"
         >{span.text}</span>{:else}{span.text}{/if}{/each}</div>
   {:else}
@@ -441,7 +443,7 @@
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent)}<span class="diff-prefix">{displayPrefix}</span>{displayContent}</div>
+    >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{displayContent}</div>
   {/if}
 {/snippet}
 
@@ -499,10 +501,13 @@
       <button class="edit-file-btn edit-save-btn" disabled={editBusy || !editorRef} onclick={(e: MouseEvent) => { e.stopPropagation(); if (editorRef) onsavefile(filePath, editorRef.getContent()) }} title="Save changes (Ctrl+S)">{editBusy ? 'Saving…' : 'Save'}</button>
       <button class="edit-file-btn" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); oncanceledit(filePath) }} title="Cancel editing (Esc)">Cancel</button>
     {/if}
-    {#if isConflict && conflictData && conflictData.totalConflicts > 0}
+    {#if isConflict}
+      <!-- Gate on fileStats.conflict (backend truth), not findConflicts:
+           markers unchanged from parent appear as context lines → found=0
+           → indicator/button would hide despite the file still conflicting. -->
       <span class="conflict-indicator">
         <span class="conflict-glyph" aria-hidden="true">⚡</span>
-        {conflictData.totalConflicts} conflict{conflictData.totalConflicts !== 1 ? 's' : ''}
+        {#if conflictData && conflictData.totalConflicts > 0}{conflictData.totalConflicts} conflict{conflictData.totalConflicts !== 1 ? 's' : ''}{:else}conflicted{/if}
       </span>
       {#if onmerge}
         <!-- 3-pane merge editor. N-way conflicts: reconstructSides returns null
@@ -532,7 +537,9 @@
               {@const slKey = `${filePath}:${sl.left.hunkIdx}:${sl.left.lineIdx}`}
               {@const spans = wordDiffs.get(String(sl.left.hunkIdx))?.get(sl.left.lineIdx)}
               {@const slCm = conflictData?.lineMeta.get(sl.left.hunkIdx)?.get(sl.left.lineIdx)}
-              {@render diffLine(sl.left.line, slKey, spans, [splitNums[si].oldLeft], sl.left.hunkIdx, sl.left.lineIdx, slCm)}
+              <!-- 8th arg null: split-left has OLD line numbers; annotation
+                   store is NEW-indexed. Right column + unified use the default. -->
+              {@render diffLine(sl.left.line, slKey, spans, [splitNums[si].oldLeft], sl.left.hunkIdx, sl.left.lineIdx, slCm, null)}
             {:else}
               <div class="diff-line diff-empty">&nbsp;</div>
             {/if}

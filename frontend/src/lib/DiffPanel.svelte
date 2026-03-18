@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte'
+  import { tick, untrack, onDestroy } from 'svelte'
   import type { Snippet } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { api, diffTargetKey, type FileChange, type DiffTarget } from './api'
@@ -83,6 +83,13 @@
 
   // Expanded files: store full-context DiffFile per file path
   let expandedDiffs: Map<string, DiffFile> = $state(new Map())
+
+  // Expansion merges adjacent hunks into one — but hunkReview's cursor/
+  // selection is keyed by RAW diff hunk indices. onexpand is gated off
+  // during review; this clears any pre-existing expansion at mode entry.
+  $effect(() => {
+    if (hunkReview && untrack(() => expandedDiffs.size) > 0) expandedDiffs = new Map()
+  })
 
   // --- Inline editing state ---
   let editingFiles = new SvelteSet<string>()
@@ -429,6 +436,7 @@
   })
 
   let conflictFileDiffs: Map<string, DiffFile> = $state(new Map())
+  let conflictMapRevId = ''
 
   $effect(() => {
     const files = conflictOnlyFiles
@@ -436,11 +444,20 @@
     // the async .then() write would then re-trigger this effect → O(n²) fetches.
     if (files.length === 0) {
       if (untrack(() => conflictFileDiffs.size) > 0) conflictFileDiffs = new Map()
+      conflictMapRevId = ''
       return
     }
     // `jj file show -r 'connected(a|b)' path` is undefined — gate on single.
     if (diffTarget?.kind !== 'single') return
     const revId = diffTarget.commitId
+    // Entries are per-path but valid for ONE commitId. This effect is declared
+    // before the reset effect, so on navigation `already` below would read the
+    // OUTGOING rev's map → same-path skip → reset clears → permanent Loading.
+    // Clear here when revId differs; the has() check is then same-rev only.
+    if (revId !== conflictMapRevId) {
+      conflictMapRevId = revId
+      if (untrack(() => conflictFileDiffs.size) > 0) conflictFileDiffs = new Map()
+    }
     // NO gen-counter. The old pattern (++gen here, gen check in callback) raced
     // with the reset effect: effects run in declaration order, so this fetch
     // fired FIRST on diffTarget change, then reset bumped gen → callback's gen
@@ -669,14 +686,26 @@
   // single-rev mode; multi-check collapse state is ephemeral (not saved).
   let lastActiveRevId: string | undefined = undefined
   let lastCollapseCacheKey: string | null = null
+
+  // size === 0 is a meaningful choice ("expanded everything") — delete the
+  // prior entry so revisit doesn't restore stale collapsed files.
+  function saveCollapseState() {
+    if (!lastCollapseCacheKey) return
+    if (collapsedFiles.size > 0) {
+      lruSet(collapseStateCache, lastCollapseCacheKey, new Set(collapsedFiles), COLLAPSE_CACHE_SIZE)
+    } else {
+      collapseStateCache.delete(lastCollapseCacheKey)
+    }
+  }
+  // The reset effect below saves on transition; unmount (Divergence panel,
+  // {#key tab} remount) isn't a transition — save the last-viewed rev here.
+  onDestroy(saveCollapseState)
+
   $effect(() => {
     if (activeRevisionId === lastActiveRevId) return
 
-    // Save collapse state for the OUTGOING diff (single-rev only — multi-check
-    // state is ephemeral). Must happen before collapsedFiles.clear().
-    if (lastCollapseCacheKey && collapsedFiles.size > 0) {
-      lruSet(collapseStateCache, lastCollapseCacheKey, new Set(collapsedFiles), COLLAPSE_CACHE_SIZE)
-    }
+    // Save collapse state for the OUTGOING diff before clear.
+    saveCollapseState()
 
     lastActiveRevId = activeRevisionId
     // Compute cache key for the INCOMING diff. Null for multi-check.
@@ -744,6 +773,8 @@
         // Changing expandedDiffs triggers effectiveFiles → the derivation
         // $effect's single-file-delta path handles highlights + word-diffs.
         expandedDiffs = new Map(expandedDiffs).set(filePath, parsed[0])
+        // Expansion can reveal matches BEFORE the current one → indices shift.
+        if (searchOpen) currentMatchIdx = 0
       }
     } catch {
       // Silently fail — the unexpanded diff remains visible
@@ -933,6 +964,7 @@
   $effect(() => {
     const container = panelContentEl
     const diff = parsedDiff // track dependency
+    void conflictFileDiffs // track — async-loaded headers need observing too
     if (!container || diff.length === 0) { activeFilePath = null; return }
 
     let observer: IntersectionObserver | null = null

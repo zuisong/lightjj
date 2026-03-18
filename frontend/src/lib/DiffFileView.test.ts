@@ -95,8 +95,11 @@ describe('DiffFileView', () => {
       expect(container.querySelector('.conflict-indicator')).not.toBeInTheDocument()
     })
 
-    it('hides conflict indicator when conflict=true but no markers in diff', () => {
-      // Real scenario: commit is conflicted but this specific file has no conflict markers
+    it('shows conflict indicator when conflict=true but markers are context lines', () => {
+      // fileStats.conflict is per-FILE (backend conflicted_files.map). Markers
+      // unchanged from parent appear as context → findConflicts finds 0 → the
+      // old gate (totalConflicts > 0) hid the indicator despite the file being
+      // conflicted. Backend is the source of truth here, not the diff parser.
       const file = makeFile('other.go', [
         { type: 'add', content: '+normal add line' },
         { type: 'context', content: ' context line' },
@@ -105,8 +108,9 @@ describe('DiffFileView', () => {
       const { container } = render(DiffFileView, {
         props: defaultProps({ file, fileStats: stats }),
       })
-      // totalConflicts is 0 — indicator should not render
-      expect(container.querySelector('.conflict-indicator')).not.toBeInTheDocument()
+      const indicator = container.querySelector('.conflict-indicator')
+      expect(indicator).toBeInTheDocument()
+      expect(indicator?.textContent).toContain('conflicted')
     })
   })
 

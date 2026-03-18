@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { revsetQuote, buildVisibilityRevset } from './remote-visibility'
+import { revsetQuote, buildVisibilityRevset, syncVisibility } from './remote-visibility'
 import type { Bookmark, BookmarkRemote, RemoteVisibility } from './api'
 
 describe('revsetQuote', () => {
@@ -148,5 +148,140 @@ describe('buildVisibilityRevset', () => {
     const bms = [mkBm('main', ['upstream']), mkBm('x', ['upstream'])]
     expect(buildVisibilityRevset(vis, bms))
       .toBe('ancestors(remote_bookmarks(remote="origin") | "main"@"upstream", 2)')
+  })
+
+  // --- Indeterminate (null) vs genuinely-empty ('') ---
+  // bookmarksPanel.load() only fires on branches-view entry. Before that,
+  // hidden-mode can't enumerate → output is UNKNOWN, not empty. Returning
+  // '' in both cases made the sync effect overwrite revsetFilter when
+  // bookmarks loaded (the '' → 'ancestors(…)' transition looked like a
+  // user toggle because prev and filter were both '').
+
+  it('hidden-mode + empty bookmarks → null (indeterminate, not empty)', () => {
+    const vis: RemoteVisibility = { origin: { visible: true, hidden: ['x'] } }
+    expect(buildVisibilityRevset(vis, [])).toBe(null)
+  })
+
+  it('mixed shorthand + hidden-mode + empty bookmarks → null (whole result indeterminate)', () => {
+    // origin could use remote_bookmarks() shorthand, but upstream needs
+    // enumeration. Partial output would change when bookmarks load — null
+    // signals "wait for data" regardless of how many parts are computable.
+    const vis: RemoteVisibility = {
+      origin: { visible: true },
+      upstream: { visible: true, hidden: ['x'] },
+    }
+    expect(buildVisibilityRevset(vis, [])).toBe(null)
+  })
+
+  it('no-hidden + empty bookmarks → shorthand (bookmarks not needed)', () => {
+    // remote_bookmarks() is evaluated by jj, not us — empty bookmarks[]
+    // doesn't affect it. Only hidden-mode needs the enumeration input.
+    const vis: RemoteVisibility = { origin: { visible: true } }
+    expect(buildVisibilityRevset(vis, [])).toBe('ancestors(remote_bookmarks(remote="origin"), 2)')
+  })
+})
+
+describe('syncVisibility', () => {
+  // Sequence helper: thread prev through a series of (vr, filter) steps,
+  // collecting the apply decision at each step. This tests TRANSITIONS,
+  // not just individual calls — the prev threading is load-bearing.
+  function run(steps: { vr: string | null; filter: string }[]) {
+    let prev: string | undefined = undefined
+    return steps.map(({ vr, filter }) => {
+      const { nextPrev, apply } = syncVisibility(vr, prev, filter)
+      prev = nextPrev
+      return { prev, apply }
+    })
+  }
+
+  // ─── Single-step transition table ───
+  // Each row is one syncVisibility call. Covers the 3×N guard matrix:
+  //   vr:     null | '' | non-empty
+  //   prev:   undefined | '' | non-empty (matching filter or not)
+  //   filter: '' | matching prev | custom
+  const U = undefined
+  it.each([
+    // vr,       prev,    filter,   → nextPrev, apply,    scenario
+    [null,       U,       '',       U,          null,     'mount, bookmarks not loaded'],
+    [null,       '',      '',       '',         null,     'still loading — prev untouched'],
+    [null,       'anc(a)', 'anc(a)', 'anc(a)',  null,     'reload cleared bookmarks mid-session'],
+    ['',         U,       '',       '',         null,     'first fire, no visibility config'],
+    ['anc(a)',   U,       '',       'anc(a)',   null,     'first determinate fire — null→loaded, or saved-vis mount'],
+    ['anc(a)',   '',      '',       'anc(a)',   'anc(a)', 'first toggle from blank — no-saved-config flow'],
+    ['anc(b)',   'anc(a)', 'anc(a)', 'anc(b)',  'anc(b)', 'user tracking, visibility toggled'],
+    ['anc(b)',   'anc(a)', '',       'anc(b)',  null,     'user cleared, visibility changes — DO NOT reapply'],
+    ['anc(b)',   'anc(a)', 'mine()', 'anc(b)',  null,     'user custom, visibility changes — DO NOT stomp'],
+    ['',         'anc(a)', 'anc(a)', '',        '',       'visibility turned off while tracking — clear filter'],
+    ['',         'anc(a)', 'mine()', '',        null,     'visibility off, user has custom'],
+    ['anc(a)',   'anc(a)', 'anc(a)', 'anc(a)',  'anc(a)', 'idempotent (same vr) — applies but write is no-op'],
+  ] as const)('vr=%j prev=%j filter=%j → nextPrev=%j apply=%j (%s)', (vr, prev, filter, expNext, expApply, _scenario) => {
+    const result = syncVisibility(vr, prev, filter)
+    expect(result.nextPrev).toBe(expNext)
+    expect(result.apply).toBe(expApply)
+  })
+
+  // ─── Sequence tests — prev threading across multiple fires ───
+
+  it('the reported bug: hidden-mode, switch to branches view', () => {
+    // Mount → bookmarks not loaded (vr=null). Switch to branches →
+    // bookmarks load → vr becomes the per-bookmark enumeration.
+    // prev threading: undefined → undefined (null skips) → 'anc…' (first
+    // determinate fire). apply stays null throughout — bookmarks loading
+    // is not a user action.
+    const results = run([
+      { vr: null, filter: '' },       // mount, bookmarks=[]
+      { vr: 'anc(a|b)', filter: '' }, // branches view → bookmarks load
+    ])
+    expect(results).toEqual([
+      { prev: undefined, apply: null },
+      { prev: 'anc(a|b)', apply: null },  // NOT applied — the bug would have apply='anc(a|b)'
+    ])
+  })
+
+  it('no-saved-config flow: mount blank, user toggles, tracks through changes', () => {
+    const results = run([
+      { vr: '', filter: '' },           // mount, no visibility config
+      { vr: 'anc(a)', filter: '' },     // user enables origin — apply
+      { vr: 'anc(a|b)', filter: 'anc(a)' }, // user unhides bookmark b — tracks
+      { vr: '', filter: 'anc(a|b)' },   // user disables origin — clears
+    ])
+    expect(results.map(r => r.apply)).toEqual([null, 'anc(a)', 'anc(a|b)', ''])
+  })
+
+  it('user clears then visibility changes — effect goes dormant', () => {
+    const results = run([
+      { vr: '', filter: '' },
+      { vr: 'anc(a)', filter: '' },     // apply
+      { vr: 'anc(a)', filter: '' },     // user cleared filter (idempotent vr — in practice the effect wouldn't fire, but filter no longer matches prev)
+      { vr: 'anc(b)', filter: '' },     // visibility changes — user cleared, DON'T reapply
+    ])
+    expect(results.map(r => r.apply)).toEqual([null, 'anc(a)', null, null])
+  })
+
+  it('user types custom revset — effect goes dormant, stays dormant', () => {
+    const results = run([
+      { vr: '', filter: '' },
+      { vr: 'anc(a)', filter: '' },     // apply
+      { vr: 'anc(b)', filter: 'mine()' }, // user typed custom — don't stomp
+      { vr: 'anc(c)', filter: 'mine()' }, // still custom — still dormant
+      { vr: '', filter: 'mine()' },     // visibility off — still dormant
+    ])
+    expect(results.map(r => r.apply)).toEqual([null, 'anc(a)', null, null, null])
+  })
+
+  it('saved visibility at mount, bookmarks load later, user toggles', () => {
+    // With saved hidden-config: vr is null until bookmarks load. After
+    // load, vr is determinate but first-fire doesn't apply. User then
+    // toggles — filter ('') doesn't match prev (enumeration) → dormant.
+    // This is a KNOWN LIMITATION: saved-vis users must explicitly click
+    // a visibility chip to start tracking. Documenting, not fixing —
+    // auto-applying saved vis at mount would fight with tab-restore's
+    // revsetFilter rehydration.
+    const results = run([
+      { vr: null, filter: '' },
+      { vr: 'anc(saved)', filter: '' },  // bookmarks load — first determinate, don't apply
+      { vr: 'anc(toggled)', filter: '' }, // user toggles — '' !== 'anc(saved)' → dormant
+    ])
+    expect(results.map(r => r.apply)).toEqual([null, null, null])
   })
 })
