@@ -1,11 +1,28 @@
 import { describe, it, expect } from 'vitest'
-import { createRebaseMode, createSquashMode, createSplitMode, createFileSelection, targetModeLabel } from './modes.svelte'
+import { createRebaseMode, createSquashMode, createSplitMode, createFileSelection, targetModeLabel, type ModeBase } from './modes.svelte'
 
 describe('targetModeLabel', () => {
   it('maps all target modes to labels', () => {
     expect(targetModeLabel['-d']).toBe('onto')
     expect(targetModeLabel['--insert-after']).toBe('after')
     expect(targetModeLabel['--insert-before']).toBe('before')
+  })
+})
+
+// diffFollows is what App derives `diffFrozen` from. It answers "does j/k
+// in this mode reload the diff?" — the question `inlineMode` (binary gate)
+// can't answer. App used to spell `squash.active || split.active` at each
+// site that needed this; the /bughunt regression was writing `inlineMode`
+// there instead. New modes MUST appear in this table so the per-mode
+// question is answered at definition time, not at each call site.
+describe('diffFollows — per-mode nav semantics', () => {
+  it.each([
+    ['rebase', createRebaseMode, true,  'destination preview — diff shows what you land on'],
+    ['squash', createSquashMode, false, 'frozen on source — that is what you are squashing'],
+    ['split',  createSplitMode,  false, 'frozen on source — that is what you are splitting'],
+  ] as const)('%s → diffFollows=%s (%s)', (_name, create, expected, _why) => {
+    const mode: ModeBase = create()
+    expect(mode.diffFollows).toBe(expected)
   })
 })
 

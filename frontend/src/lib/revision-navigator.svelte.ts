@@ -36,10 +36,31 @@ export interface RevisionNavigator {
    */
   applyCacheHit(commit: Commit, hit: CacheHit): void
   /**
-   * Invalidate any in-flight loadDiffAndFiles without changing loader values.
-   * For App-level "stop whatever's pending" cases (clear-checks, mode entry).
+   * Invalidate any in-flight loadDiffAndFiles AND any pending navigate*
+   * schedule without changing loader values. For App-level "stop whatever's
+   * pending" cases (clear-checks, mode entry, switchToLogView).
    */
   cancel(): void
+  /**
+   * Schedule applyCacheHit past the next paint (double-rAF). Cancels any
+   * prior navigate* schedule. `abort()` re-checked at fire — guards against
+   * cursor moving via a path that doesn't call navigate* (loadLog's
+   * selectedIndex reset, selectRevisionCursorOnly).
+   *
+   * Double-rAF: rAF callbacks run BEFORE paint in the same frame (event →
+   * microtasks → rAF → style → layout → paint). Outer rAF = frame N pre-paint;
+   * inner = frame N+1 pre-paint. Frame N paints the cursor move alone; the
+   * diff DOM lands in frame N+1. Single rAF would batch cursor + diff into
+   * one frame, making cached j/k feel SLOWER than uncached.
+   */
+  navigateCached(commit: Commit, hit: CacheHit, abort: () => boolean): void
+  /**
+   * Schedule loadDiffAndFiles after a 50ms debounce. Cancels any prior
+   * navigate* schedule. `getCommit()` is re-read at fire — rapid uncached
+   * j/k coalesces to whatever the cursor points at WHEN the debounce expires,
+   * not what it pointed at when scheduled. Return null to abort.
+   */
+  navigateDeferred(getCommit: () => Commit | null, abort: () => boolean): void
 }
 
 export function createRevisionNavigator(opts: {
@@ -90,9 +111,55 @@ export function createRevisionNavigator(opts: {
     description.set(hit.description)
   }
 
+  // Scheduling timers — previously App.svelte instance state (navRafId,
+  // navDebounceTimer). Owning them here means cancel() clears everything
+  // in one call, and the double-rAF timing is testable via fake timers.
+  let navRafId = 0
+  let navDebounceTimer: ReturnType<typeof setTimeout> | undefined
+
+  function clearSchedule(): void {
+    cancelAnimationFrame(navRafId)
+    clearTimeout(navDebounceTimer)
+  }
+
+  function navigateCached(commit: Commit, hit: CacheHit, abort: () => boolean): void {
+    clearSchedule()
+    // revGen bump NOW: a loadDiffAndFiles suspended at its await would
+    // otherwise resume AFTER the rAF fires below, call diff.load(stale),
+    // and bump the loader generation past applyCacheHit's set(). Bumping
+    // here invalidates it before it can race.
+    revGen++
+    navRafId = requestAnimationFrame(() => {
+      navRafId = requestAnimationFrame(() => {
+        if (abort()) return
+        applyCacheHit(commit, hit)
+      })
+    })
+  }
+
+  function navigateDeferred(getCommit: () => Commit | null, abort: () => boolean): void {
+    clearSchedule()
+    // Same entry-time bump as navigateCached: a suspended loadDiffAndFiles
+    // could otherwise resume during the 50ms window, pass its revGen check,
+    // and fire diff.load(stale). Loader gen eventually discards the stale
+    // result, but the fetch itself is wasted. Bumping here stops it before
+    // diff.load is ever called.
+    revGen++
+    navDebounceTimer = setTimeout(() => {
+      const commit = getCommit()
+      if (!commit || abort()) return
+      loadDiffAndFiles(commit, abort)
+    }, 50)
+  }
+
   function cancel(): void {
+    clearSchedule()
     revGen++
   }
 
-  return { diff, files, description, singleTarget, loadDiffAndFiles, applyCacheHit, cancel }
+  return {
+    diff, files, description, singleTarget,
+    loadDiffAndFiles, applyCacheHit, cancel,
+    navigateCached, navigateDeferred,
+  }
 }

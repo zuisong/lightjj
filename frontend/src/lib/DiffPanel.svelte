@@ -13,6 +13,7 @@
   import { computeWordDiffs } from './word-diff'
   import { highlightLines, detectLanguage } from './highlighter'
   import { createDiffDerivation } from './diff-derivation.svelte'
+  import { createLoader } from './loader.svelte'
   import DiffFileView, { type DiffLineInfo } from './DiffFileView.svelte'
   import MergePanel from './MergePanel.svelte'
   import { reconstructSides, type MergeSides } from './conflict-extract'
@@ -435,52 +436,62 @@
     return changedFiles.filter(f => f.conflict && !diffPaths.has(f.path))
   })
 
-  let conflictFileDiffs: Map<string, DiffFile> = $state(new Map())
-  let conflictMapRevId = ''
+  // Pure: `jj file show` content → DiffFile with all-add lines.
+  function conflictContentToDiffFile(path: string, content: string): DiffFile {
+    const lines: DiffLine[] = content.split('\n').map(line => ({
+      type: 'add' as const,
+      content: '+' + line,
+    }))
+    return {
+      header: `Conflicted file: ${path}`,
+      filePath: path,
+      hunks: [{ header: '@@ conflict @@', oldStart: 1, newStart: 1, newCount: lines.length, lines }],
+    }
+  }
 
+  // Replaces a 44-line hand-rolled effect (conflictMapRevId tracker + untrack
+  // self-loop guards + per-path .then + post-await commitId guard). createLoader's
+  // generation counter subsumes all of it — including the M3/M7 effect-ordering
+  // hazard (this effect fires before the reset effect → `already.has()` read
+  // pre-reset map → same-path skip → permanent Loading). The gen counter doesn't
+  // care what other effects do; stale resolves just bounce.
+  //
+  // allSettled (not all): one failed fetch shouldn't blank the whole panel.
+  // Trade-off vs the old per-path .then: loses progressive display (old showed
+  // first file at 100ms while third was still loading; this shows nothing until
+  // all settle). For the typical 0-1 conflict files it's invisible; for 3+ over
+  // SSH it's a UX step back. Accepted for correctness — the old progressive
+  // path is exactly what made the stale-content window observable.
+  const conflictFetch = createLoader(
+    async (revId: string, paths: string[]) => {
+      const results = await Promise.allSettled(paths.map(p =>
+        api.fileShow(revId, p).then(r => [p, conflictContentToDiffFile(p, r.content)] as const)
+      ))
+      return new Map(results.flatMap(r => r.status === 'fulfilled' ? [r.value] : []))
+    },
+    new Map<string, DiffFile>(),
+  )
+  let conflictFileDiffs = $derived(conflictFetch.value)
+
+  // Dedup key — prevents refetch when loadLog → diff.set writes a fresh
+  // diffTarget object with the same commitId inside. NOT a validity key
+  // (that's loader.generation). reset-before-load keeps the stale→fresh
+  // window empty→fresh (old per-path behavior), so the template at :1181
+  // doesn't briefly show rev A's conflict content under rev B's header.
+  let conflictLoadedFor = ''
   $effect(() => {
     const files = conflictOnlyFiles
-    // untrack: .size/.has() reads would register conflictFileDiffs as a dep;
-    // the async .then() write would then re-trigger this effect → O(n²) fetches.
-    if (files.length === 0) {
-      if (untrack(() => conflictFileDiffs.size) > 0) conflictFileDiffs = new Map()
-      conflictMapRevId = ''
+    // `jj file show -r 'connected(a|b)' path` is undefined — gate on single.
+    if (files.length === 0 || diffTarget?.kind !== 'single') {
+      conflictFetch.reset()
+      conflictLoadedFor = ''
       return
     }
-    // `jj file show -r 'connected(a|b)' path` is undefined — gate on single.
-    if (diffTarget?.kind !== 'single') return
     const revId = diffTarget.commitId
-    // Entries are per-path but valid for ONE commitId. This effect is declared
-    // before the reset effect, so on navigation `already` below would read the
-    // OUTGOING rev's map → same-path skip → reset clears → permanent Loading.
-    // Clear here when revId differs; the has() check is then same-rev only.
-    if (revId !== conflictMapRevId) {
-      conflictMapRevId = revId
-      if (untrack(() => conflictFileDiffs.size) > 0) conflictFileDiffs = new Map()
-    }
-    // NO gen-counter. The old pattern (++gen here, gen check in callback) raced
-    // with the reset effect: effects run in declaration order, so this fetch
-    // fired FIRST on diffTarget change, then reset bumped gen → callback's gen
-    // check failed → discarded → NO retry (reset's writes aren't tracked deps).
-    // commitId alone is the correct invariant: it's a content hash, never
-    // recycles, and IS what the fetch was keyed to. If diffTarget.commitId
-    // still matches when fetch resolves, the data is provably valid.
-    const already = untrack(() => conflictFileDiffs)
-    for (const f of files) {
-      if (already.has(f.path)) continue
-      api.fileShow(revId, f.path).then(result => {
-        if (diffTarget?.kind !== 'single' || diffTarget.commitId !== revId) return
-        const lines: DiffLine[] = result.content.split('\n').map(line => ({
-          type: 'add' as const,
-          content: '+' + line,
-        }))
-        conflictFileDiffs = new Map(conflictFileDiffs).set(f.path, {
-          header: `Conflicted file: ${f.path}`,
-          filePath: f.path,
-          hunks: [{ header: '@@ conflict @@', oldStart: 1, newStart: 1, newCount: lines.length, lines }],
-        })
-      }).catch(() => {})
-    }
+    if (revId === conflictLoadedFor) return
+    conflictLoadedFor = revId
+    conflictFetch.reset()
+    conflictFetch.load(revId, files.map(f => f.path))
   })
 
   // File suffixes where word-level diffs add noise rather than value
@@ -721,7 +732,6 @@
     mergeSides = null
     mergingPath = null
     activeFilePath = null
-    conflictFileDiffs = new Map()
     annBubble = { open: false, x: 0, y: 0, editing: null, lineContext: null }
     if (searchOpen) { searchQuery = ''; currentMatchIdx = 0 }
 

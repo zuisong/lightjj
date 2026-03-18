@@ -11,6 +11,16 @@ export const targetModeLabel: Record<TargetMode, string> = {
 
 export interface ModeBase {
   readonly active: boolean
+  /** Does j/k navigation in this mode reload the diff panel?
+   *  `true` = diff follows cursor (rebase: destination preview).
+   *  `false` = diff frozen on source (squash/split: that's what you're editing).
+   *
+   *  This is the per-mode question `inlineMode` CAN'T answer — `inlineMode`
+   *  is correct for binary gates (disable toolbar, hide palette entries),
+   *  wrong for "which selectRevision variant?". App derives `diffFrozen` from
+   *  this so both keyboard (handleInlineNav) and mouse (onselect) read the
+   *  same source instead of each spelling out `squash.active || split.active`. */
+  readonly diffFollows: boolean
   cancel(): void
   handleKey(key: string): boolean
 }
@@ -50,6 +60,7 @@ export function createRebaseMode(): RebaseMode {
 
   return {
     get active() { return active },
+    diffFollows: true,  // destination preview — diff shows what you'd land on
     get sources() { return sources },
     get sourceMode() { return sourceMode },
     get targetMode() { return targetMode },
@@ -94,6 +105,7 @@ export function createSquashMode(): SquashMode {
 
   return {
     get active() { return active },
+    diffFollows: false,  // frozen on source — that's what you're squashing
     get sources() { return sources },
     get keepEmptied() { return keepEmptied },
     get ignoreImmutable() { return ignoreImmutable },
@@ -198,6 +210,7 @@ export function createSplitMode(): SplitMode {
 
   return {
     get active() { return active },
+    diffFollows: false,  // frozen on source — that's what you're splitting
     get revision() { return revision },
     get parallel() { return parallel },
     get review() { return review },

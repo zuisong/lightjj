@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createRevisionNavigator } from './revision-navigator.svelte'
 import { api, type LogEntry } from './api'
 
@@ -223,5 +223,200 @@ describe('applyCacheHit', () => {
     const divergent = { ...mkCommit('D'), divergent: true }
     const t = nav.singleTarget(divergent)
     expect(t.kind === 'single' && t.changeId).toBe('D') // commit_id, not change_id
+  })
+})
+
+// Scheduling was previously inline in App.svelte's selectRevision (72 lines,
+// untestable). navigateCached/navigateDeferred own the rAF/debounce timers
+// now; cancel() clears both. These tests pin the TIMING contract — the "rAF
+// runs BEFORE paint" comment in the interface docstring is what we test
+// AROUND (can't test paint), but we CAN test: double-rAF means two frame
+// ticks before fire, and rapid calls only fire the last.
+describe('navigateCached — double-rAF paint-first deferral', () => {
+  const hit = { diff: 'cached-diff', files: [], description: 'cached-desc' }
+
+  // jsdom rAF is setTimeout(16) under the hood. Two advances = two "frames".
+  const frame = () => new Promise(r => requestAnimationFrame(() => r(undefined)))
+
+  it('fires after two frames, not one — cursor paints alone in frame N', async () => {
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.navigateCached(mkCommit('A'), hit, () => false)
+
+    // After one frame, nothing applied yet (outer rAF fired, inner scheduled).
+    await frame()
+    expect(targetCommitId(nav)).toBeUndefined()
+
+    // After second frame, applied.
+    await frame()
+    expect(targetCommitId(nav)).toBe('A')
+    expect(nav.diff.value.diff).toBe('cached-diff')
+  })
+
+  it('second navigateCached cancels first — only last lands', async () => {
+    // Rapid j/k through cached revisions: each press schedules, each cancels
+    // prior. Only the destination's diff lands. This is what makes cached
+    // j/k FASTER than uncached (no intermediate DOM builds).
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.navigateCached(mkCommit('A'), { ...hit, diff: 'A-diff' }, () => false)
+    nav.navigateCached(mkCommit('B'), { ...hit, diff: 'B-diff' }, () => false)
+
+    await frame(); await frame()
+    expect(targetCommitId(nav)).toBe('B')
+    expect(nav.diff.value.diff).toBe('B-diff')
+  })
+
+  it('abort() checked at fire — loadLog resetting selectedIndex cancels', async () => {
+    // abort callback closes over App's selectedIndex. If loadLog (or
+    // selectRevisionCursorOnly, or branches-view click) moves the cursor
+    // WITHOUT calling selectRevision, the rAF still fires but abort()
+    // sees the mismatch and bails. Without this, stale cache hit would
+    // land over whatever the cursor now points at.
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    let aborted = false
+    nav.navigateCached(mkCommit('A'), hit, () => aborted)
+
+    await frame()
+    aborted = true  // cursor moved between frames
+    await frame()
+
+    expect(targetCommitId(nav)).toBeUndefined()
+  })
+
+  it('navigateCached invalidates suspended loadDiffAndFiles BEFORE rAF fires', async () => {
+    // The revGen bump at navigateCached entry (not inside the rAF callback)
+    // is load-bearing: a loadDiffAndFiles suspended at its await could
+    // resume BETWEEN schedule and fire, call diff.load(stale), and bump
+    // loader.gen past the eventual applyCacheHit. Bumping revGen at
+    // schedule time stops it before it can race.
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+
+    let resolveA!: () => void
+    mockApi.revision.mockImplementation(() => new Promise<void>(r => { resolveA = r }))
+    const diffLoadSpy = vi.spyOn(nav.diff, 'load')
+
+    void nav.loadDiffAndFiles(mkCommit('A'), noAbort)
+    await Promise.resolve()  // let it reach the await
+
+    nav.navigateCached(mkCommit('B'), hit, () => false)  // bumps revGen NOW
+
+    resolveA()  // A resumes — should see revGen mismatch and bail
+    await flush()
+
+    expect(diffLoadSpy).not.toHaveBeenCalled()
+
+    // rAF hasn't fired yet — B also not applied
+    expect(targetCommitId(nav)).toBeUndefined()
+
+    await frame(); await frame()
+    expect(targetCommitId(nav)).toBe('B')
+  })
+})
+
+describe('navigateDeferred — 50ms debounce coalesce', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('rapid uncached j/k coalesces to CURRENT cursor at fire time', async () => {
+    // getCommit is re-read at fire. Three j presses within 50ms → only
+    // one load, for whatever getCommit returns THEN (the final cursor).
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    mockApi.revision.mockResolvedValue(undefined)
+    mockApi.diff.mockResolvedValue({ diff: 'C-diff' })
+    mockApi.files.mockResolvedValue([])
+    mockApi.description.mockResolvedValue({ description: '' })
+
+    let current = mkCommit('A')
+    nav.navigateDeferred(() => current, noAbort)
+    current = mkCommit('B')
+    nav.navigateDeferred(() => current, noAbort)  // cancels A's timer
+    current = mkCommit('C')
+    nav.navigateDeferred(() => current, noAbort)  // cancels B's timer
+
+    // 49ms: nothing fired.
+    await vi.advanceTimersByTimeAsync(49)
+    expect(mockApi.revision).not.toHaveBeenCalled()
+
+    // 50ms: fires once with C (what getCommit returns NOW).
+    await vi.advanceTimersByTimeAsync(1)
+    expect(mockApi.revision).toHaveBeenCalledTimes(1)
+    expect(mockApi.revision).toHaveBeenCalledWith('C')
+  })
+
+  it('getCommit() returning null aborts — cursor cleared during debounce', async () => {
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    let current: ReturnType<typeof mkCommit> | null = mkCommit('A')
+    nav.navigateDeferred(() => current, noAbort)
+
+    current = null  // e.g. revisions became empty
+    await vi.advanceTimersByTimeAsync(50)
+    expect(mockApi.revision).not.toHaveBeenCalled()
+  })
+
+  it('entry-time revGen bump invalidates suspended loadDiffAndFiles', async () => {
+    // /simplify quality review found the asymmetry: navigateCached bumps
+    // revGen at schedule time, navigateDeferred didn't. Without the bump,
+    // a suspended loadDiffAndFiles(A) resumes during the 50ms window, passes
+    // its gen check, and fires diff.load(A) — loader gen eventually discards
+    // the stale result, but the fetch itself is wasted. Now both bump at entry.
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    let resolveA!: () => void
+    mockApi.revision.mockImplementation(() => new Promise<void>(r => { resolveA = r }))
+    const diffLoadSpy = vi.spyOn(nav.diff, 'load')
+
+    void nav.loadDiffAndFiles(mkCommit('A'), noAbort)
+    await Promise.resolve()  // reach the await
+
+    nav.navigateDeferred(() => mkCommit('B'), noAbort)  // bumps revGen
+
+    resolveA()
+    await Promise.resolve()
+    expect(diffLoadSpy).not.toHaveBeenCalled()  // A bailed at revGen check
+  })
+
+  it('cancel() clears pending debounce', async () => {
+    // switchToLogView, handleRevsetSubmit, onDestroy all call nav.cancel().
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.navigateDeferred(() => mkCommit('A'), noAbort)
+    nav.cancel()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mockApi.revision).not.toHaveBeenCalled()
+  })
+
+  it('navigateCached cancels a pending navigateDeferred (cross-path)', async () => {
+    // j (uncached, debounce scheduled) → j (cached, rAF scheduled). The
+    // second must cancel the first's timer or we'd fire BOTH (debounce
+    // loads stale, then rAF applies cached).
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.navigateDeferred(() => mkCommit('A'), noAbort)
+    nav.navigateCached(mkCommit('B'), { diff: 'B', files: [], description: '' }, () => false)
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mockApi.revision).not.toHaveBeenCalled()  // debounce cancelled
+  })
+})
+
+// Separate describe — needs REAL timers for jsdom rAF (setTimeout(16)).
+describe('cancel() — rAF path', () => {
+  const frame = () => new Promise(r => requestAnimationFrame(() => r(undefined)))
+
+  it('cancel() clears pending rAF', async () => {
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.navigateCached(mkCommit('B'), { diff: 'B', files: [], description: '' }, () => false)
+    nav.cancel()
+    await frame(); await frame()
+    expect(targetCommitId(nav)).toBeUndefined()
+  })
+
+  it('navigateDeferred cancels a pending navigateCached (reverse cross-path)', async () => {
+    // j (cached, rAF scheduled) → j (uncached, debounce scheduled).
+    // clearSchedule() in navigateDeferred must cancel BOTH rAF and setTimeout.
+    // If it only cleared its own timer kind, the stale rAF would fire and
+    // applyCacheHit(A) would land AFTER the debounce's loadDiffAndFiles(B).
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.navigateCached(mkCommit('A'), { diff: 'A', files: [], description: '' }, () => false)
+    nav.navigateDeferred(() => mkCommit('B'), noAbort)
+
+    await frame(); await frame()
+    expect(targetCommitId(nav)).toBeUndefined()  // A's rAF cancelled
   })
 })

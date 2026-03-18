@@ -89,7 +89,8 @@
 
   let checkedRevisions = new SvelteSet<string>()
   let lastCheckedIndex: number = $state(-1)
-  let navDebounceTimer: number | undefined
+  // navDebounceTimer + navRafId moved to revision-navigator — nav.cancel()
+  // clears both. App keeps evologDebounceTimer (separate panel, separate timer).
   let evologDebounceTimer: number | undefined
   let evologOpen: boolean = $state(false)
   let oplogOpen: boolean = $state(false)
@@ -298,6 +299,12 @@
 
   let anyModalOpen = $derived(paletteOpen || bookmarkModalOpen || bookmarkInputOpen || gitModalOpen || !!contextMenu || divergence.active || welcomeOpen)
   let inlineMode = $derived(rebase.active || squash.active || split.active)
+  // Which mode (if any). `inlineMode` answers "is ANY mode active?" for
+  // toolbar gates; `activeInlineMode.diffFollows` answers the per-mode
+  // question — whether nav should reload the diff or freeze it. The 5-0
+  // /bughunt regression (onselect using `inlineMode`) was conflating these.
+  let activeInlineMode = $derived(rebase.active ? rebase : squash.active ? squash : split.active ? split : null)
+  let diffFrozen = $derived(activeInlineMode ? !activeInlineMode.diffFollows : false)
   let conflictCount = $derived(changedFiles.filter(f => f.conflict).length)
 
   // Mutation lock — prevents queuing ops against stale/changing state.
@@ -697,7 +704,6 @@
   }
 
   let prevSelectedIndex = -1
-  let navRafId = 0
 
   function selectRevision(index: number) {
     const moved = index !== prevSelectedIndex
@@ -717,35 +723,16 @@
       divergence.cancel()
     }
 
-    // Cache hits: double-rAF defers loader writes past the FIRST paint so
-    // the browser renders the cursor move (selectedIndex) before building
-    // the diff panel DOM. Single rAF isn't enough — rAF callbacks run
-    // BEFORE paint in the same frame (event → microtasks → rAF → style →
-    // layout → paint). Double-rAF: outer fires pre-paint in frame N,
-    // inner fires pre-paint in frame N+1 — frame N paints cursor-only.
-    //
-    // Cache misses: defer with 50ms debounce. Coalesces rapid uncached j/k
-    // into one network request. The browser paints the selection highlight
-    // before the setTimeout fires.
-    clearTimeout(navDebounceTimer)
-    cancelAnimationFrame(navRafId)
+    // Scheduling (rAF/debounce/cancel) lives in navigator now. abort covers
+    // cursor moving via a path that doesn't call selectRevision (loadLog's
+    // index reset, selectRevisionCursorOnly in branches view).
     const hit = checkedRevisions.size === 0 ? getCached(entry.commit.commit_id) : null
     if (hit) {
-      const commit = entry.commit
-      navRafId = requestAnimationFrame(() => {
-        // Outer rAF: frame N (pre-paint). Schedule inner for frame N+1.
-        navRafId = requestAnimationFrame(() => {
-          // Guard: rapid j/k may have moved past this revision already.
-          if (selectedIndex !== index) return
-          nav.applyCacheHit(commit, hit)
-        })
-      })
+      nav.navigateCached(entry.commit, hit, () => selectedIndex !== index)
     } else {
-      navDebounceTimer = setTimeout(() => {
-        const current = revisions[selectedIndex]
-        if (!current) return
-        if (checkedRevisions.size === 0) nav.loadDiffAndFiles(current.commit, hasChecked)
-      }, 50)
+      // getCommit re-read at fire — rapid uncached j/k coalesces to CURRENT
+      // cursor, not scheduled-time cursor.
+      nav.navigateDeferred(() => revisions[selectedIndex]?.commit ?? null, hasChecked)
     }
     // Evolog is uncached — always debounce to avoid one network request per
     // keypress during rapid j/k with the panel open.
@@ -898,10 +885,10 @@
     : undefined
   )
   // Reload diff/files when checked revisions change.
-  // Skip during squash/split mode — diff is intentionally frozen on source revision.
+  // Skip when diffFrozen — diff is intentionally frozen on source revision.
   $effect(() => {
     if (intendedTarget?.kind !== 'multi') return
-    if (squash.active || split.active) return
+    if (diffFrozen) return
     diff.load(intendedTarget)
     loadFilesForRevset(intendedTarget.revset)
   })
@@ -1185,12 +1172,10 @@
   // diff IS the state enter*Mode wants.
   function switchToLogView(): boolean {
     activeView = 'log'
-    // Cancel any queued selectRevision debounce/rAF — the direct load below
-    // supersedes it. Otherwise context-menu → selectByChangeId → selectRevision
-    // schedules a load, then switchToLogView fires another, then 50ms later
-    // the debounce fires a third. revGen makes it correct but it's wasteful.
-    clearTimeout(navDebounceTimer)
-    cancelAnimationFrame(navRafId)
+    // Cancel any queued navigate* schedule — the direct load below supersedes
+    // it. Otherwise context-menu → selectByChangeId → selectRevision schedules,
+    // then this fires another; revGen makes it correct but it's wasteful.
+    nav.cancel()
     const sel = revisions[selectedIndex]
     if (!sel || checkedRevisions.size > 0) return true
     const loaded = diff.value.target
@@ -1605,7 +1590,6 @@
   }
 
   function handleRevsetSubmit() {
-    clearTimeout(navDebounceTimer)
     nav.cancel()
     diff.reset()
     files.reset()
@@ -1874,12 +1858,12 @@
   $effect(() => onStaleWC((s) => { workspaceStale = s }))
 
   // Raw setTimeout escapes {#key} remount — clear on tab-switch unmount so
-  // stale closures don't keep the old instance's signals alive.
+  // stale closures don't keep the old instance's signals alive. nav.cancel()
+  // clears the navigator-owned rAF + debounce.
   onDestroy(() => {
     clearTimeout(messageClearTimer)
-    clearTimeout(navDebounceTimer)
     clearTimeout(evologDebounceTimer)
-    cancelAnimationFrame(navRafId)
+    nav.cancel()
   })
   $effect(() => {
     if (!inlineMode && !anyModalOpen && staleWhileSuppressed) {
@@ -2179,11 +2163,7 @@
             {mutating}
             {viewLabel}
             {lastCheckedIndex}
-            onselect={
-              /* NOT inlineMode — rebase.active must use selectRevision so the
-                 diff follows the destination cursor (see handleInlineNav's
-                 three-way: rebase → full, squash → cursorOnly, split → none) */
-              squash.active || split.active || activeView === 'branches' ? selectRevisionCursorOnly : selectRevision}
+            onselect={diffFrozen || activeView === 'branches' ? selectRevisionCursorOnly : selectRevision}
             onrangecheck={rangeCheck}
             oncontextmenu={openRevisionContextMenu}
             onnewfromchecked={handleNewFromChecked}

@@ -333,6 +333,93 @@ describe('DiffPanel', () => {
     })
   })
 
+  describe('conflictFetch — createLoader replaces hand-rolled effect', () => {
+    // conflict-only file: in changedFiles with conflict=true but NOT in
+    // parsedDiff (empty diffContent → parsedDiff=[]). This is what triggers
+    // the fetch. The old 44-line effect had conflictMapRevId + untrack +
+    // post-await guard; the loader's gen counter subsumes all of it.
+    const conflictProps = (commitId: string) => props({
+      diffTarget: target(commitId, 'ch-X'),
+      diffContent: '',  // empty → no files in parsedDiff → conflict.go is conflict-only
+      changedFiles: [mkFile('conflict.go', { conflict: true, conflict_sides: 2 })],
+    })
+
+    it('fetches once per commitId — dedup across fresh diffTarget objects', async () => {
+      // The regression this locks in: loadLog → nav.loadDiffAndFiles writes a
+      // FRESH diffTarget object (singleTarget() creates new) with the SAME
+      // commitId. The $effect fires (prop identity changed), but
+      // conflictLoadedFor gates the refetch. Without the gate, every loadLog
+      // = one wasted api.fileShow per conflict file.
+      mockFileShow.mockResolvedValue({ content: 'conflict body' })
+
+      const { rerender } = render(DiffPanel, { props: conflictProps('co-A') })
+      await settle()
+      expect(mockFileShow).toHaveBeenCalledTimes(1)
+      expect(mockFileShow).toHaveBeenCalledWith('co-A', 'conflict.go')
+
+      // Fresh diffTarget object, SAME commitId — no refetch.
+      await rerender(conflictProps('co-A'))
+      await settle()
+      expect(mockFileShow).toHaveBeenCalledTimes(1)
+
+      // Different commitId — refetch.
+      await rerender(conflictProps('co-B'))
+      await settle()
+      expect(mockFileShow).toHaveBeenCalledTimes(2)
+      expect(mockFileShow).toHaveBeenLastCalledWith('co-B', 'conflict.go')
+    })
+
+    it('stale resolve after nav does NOT land — loader gen guard', async () => {
+      // The M3/M7 bug: hand-rolled version relied on commitId post-await check
+      // AND effect-ordering (declared before reset effect → read pre-reset
+      // map → same-path skip). Loader gen counter doesn't care about any of
+      // that — the SECOND load() call bumped gen, so the first's resolve sees
+      // gen mismatch and discards. Effect ordering is irrelevant.
+      let resolveA!: (v: { content: string }) => void
+      mockFileShow
+        .mockReturnValueOnce(new Promise(r => { resolveA = r }))
+        .mockResolvedValueOnce({ content: 'B content' })
+
+      const { container, rerender } = render(DiffPanel, { props: conflictProps('co-A') })
+      await settle()
+
+      // Navigate A→B while A's fetch is pending.
+      await rerender(conflictProps('co-B'))
+      await settle()
+
+      // A resolves late. Loader gen discards it — only B's content lands.
+      resolveA({ content: 'A content (stale)' })
+      await settle()
+
+      // Template at DiffPanel.svelte:1187 renders conflictFetch.value.get(path).
+      // If A's stale resolve landed, we'd see A's content. We should see B's.
+      const bodyText = container.textContent ?? ''
+      expect(bodyText).toContain('B content')
+      expect(bodyText).not.toContain('A content')
+    })
+
+    it('partial failure — allSettled keeps successful entries', async () => {
+      mockFileShow
+        .mockResolvedValueOnce({ content: 'good file' })
+        .mockRejectedValueOnce(new Error('file missing'))
+
+      const { container } = render(DiffPanel, {
+        props: props({
+          diffTarget: target('co-A', 'ch-X'),
+          diffContent: '',
+          changedFiles: [
+            mkFile('good.go', { conflict: true, conflict_sides: 2 }),
+            mkFile('bad.go', { conflict: true, conflict_sides: 2 }),
+          ],
+        }),
+      })
+      await settle()
+
+      // good.go renders (fulfilled), bad.go stays at Loading (rejected, no entry in map).
+      expect(container.textContent).toContain('good file')
+    })
+  })
+
   describe('auto-collapse by char count', () => {
     // Giant one-liner (minified JS, lockfile): 1 line but 20k+ chars.
     // Line-count triggers miss these; char-count catches them.
