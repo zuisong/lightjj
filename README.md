@@ -1,6 +1,6 @@
 # lightjj
 
-A fast, keyboard-driven browser UI for [Jujutsu (jj)](https://github.com/jj-vcs/jj). Single static binary — `go install` and open your repo.
+A fast, keyboard-driven browser UI for [Jujutsu (jj)](https://github.com/jj-vcs/jj). Single static binary — download or `go install`, open your repo.
 
 ![lightjj screenshot](screenshot.png)
 
@@ -16,13 +16,37 @@ A fast, keyboard-driven browser UI for [Jujutsu (jj)](https://github.com/jj-vcs/
 
 **A real merge tool.** Conflicted files open in a 3-pane editor — `ours ← result → theirs` — with per-hunk arrow-click, arbitrary editing in the center, and undo that restores the source tag. Falls back to raw editor for >2-side or git-style conflicts.
 
-## Quick Start
+## Install
+
+**Prebuilt binary** (no toolchain needed):
+
+```bash
+# macOS (Apple Silicon — Intel via Rosetta)
+curl -L https://github.com/chronologos/lightjj/releases/latest/download/lightjj-macos-arm64 -o ~/.local/bin/lightjj
+chmod +x ~/.local/bin/lightjj
+xattr -cr ~/.local/bin/lightjj && codesign -s - -f ~/.local/bin/lightjj   # Gatekeeper: ad-hoc sign
+
+# Linux x86_64 (swap for -arm64)
+curl -L https://github.com/chronologos/lightjj/releases/latest/download/lightjj-linux-x86_64 -o ~/.local/bin/lightjj
+chmod +x ~/.local/bin/lightjj
+```
+
+`~/.local/bin` must be on `$PATH`. Checksums in the [release assets](https://github.com/chronologos/lightjj/releases/latest). Linux and macOS only.
+
+**Or `go install`** (builds from source, requires Go ≥ 1.21):
 
 ```bash
 go install github.com/chronologos/lightjj/cmd/lightjj@latest
+```
+
+**Run:**
+
+```bash
 cd /path/to/your/jj/repo
 lightjj
 ```
+
+**Updating:** re-run either install command — `curl` hits `/releases/latest/`, `go install ...@latest` pulls the newest tag. Check your version with `lightjj --version`.
 
 ## Highlights
 
@@ -84,7 +108,7 @@ In `--remote` mode, `gh pr list` is also run over SSH — install and `gh auth l
 ## Requirements
 
 - **jj >= 0.39**
-- **Go >= 1.21** (build from source)
+- **Go >= 1.21** — only if using `go install`; prebuilt binaries have zero deps
 - **gh** (optional) — for PR badges. Must be installed and authed wherever the repo lives (remote host when using `--remote`)
 
 ## Development
