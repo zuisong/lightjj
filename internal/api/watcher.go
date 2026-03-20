@@ -41,9 +41,13 @@ type Watcher struct {
 	onSub, onUnsub func()
 
 	// Tracks whether snapshotLoop last saw a stale-working-copy error.
-	// Broadcast fires only on transition edges (atomic.Bool.Swap returns the
-	// old value, so `if !stale.Swap(true)` = "was false, now true").
-	stale atomic.Bool
+	// Mutated ONLY via setStale() (staleMu-serialized edge+broadcast); read
+	// atomically (handleEvents connect-time emit). staleMu makes the
+	// Swap+broadcast atomic so a handler's setStale(false) can't race a loop's
+	// setStale(true) and send sentinels out-of-order (client would be stuck on
+	// stale=true with no self-heal — the Swap edge fires once).
+	stale   atomic.Bool
+	staleMu sync.Mutex
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -79,6 +83,24 @@ func newWatcher(srv *Server) *Watcher {
 		subs:     make(map[chan string]struct{}),
 		debounce: 150 * time.Millisecond,
 		stop:     make(chan struct{}),
+	}
+}
+
+// setStale updates the stale flag and broadcasts the sentinel IFF the value
+// changed. staleMu serializes the Swap+broadcast pair so two callers can't
+// interleave and emit sentinels out-of-order (handleWorkspaceUpdateStale
+// clearing + snapshotLoop setting in between would leave the client stuck on
+// stale=true; Swap edges don't re-fire so there's no self-heal).
+func (w *Watcher) setStale(v bool) {
+	w.staleMu.Lock()
+	defer w.staleMu.Unlock()
+	if w.stale.Swap(v) == v {
+		return
+	}
+	if v {
+		w.broadcast(evStaleWC)
+	} else {
+		w.broadcast(evFreshWC)
 	}
 }
 
@@ -197,7 +219,13 @@ func (w *Watcher) watchLoop() {
 func (w *Watcher) sshPollLoop(interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	last := ""
+	// lastBroadcast: what WE last sent to subscribers. Independent of
+	// cachedOp — a runMutation advancing cachedOp between ticks doesn't
+	// change what WE broadcast last. Comparing against this (not cachedOp)
+	// is what lets the next poll detect the between-tick mutation and
+	// broadcast it to OTHER tabs (the mutating tab got the X-JJ-Op-Id
+	// header; non-mutating tabs rely on SSE).
+	lastBroadcast := ""
 	var consecutiveErrors int
 	for {
 		select {
@@ -207,6 +235,12 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 			if !w.hasSubscribers() {
 				continue
 			}
+			// preCached: the SHARED value, for the DURING-call CAS below.
+			// If a concurrent runMutation advances it while our SSH call is
+			// in flight, the poll result is stale and the CAS prevents
+			// regression. DISTINCT from lastBroadcast (the between-tick
+			// case) — collapsing these was the bug_017 regression.
+			preCached := w.srv.getOpId()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			out, err := w.srv.Runner.Run(ctx, jj.PollOpId())
 			cancel()
@@ -214,9 +248,7 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 				// Snapshotting can hit stale-WC (same as snapshotLoop); the
 				// sentinel routing is shared.
 				if isStaleWCError(err) {
-					if !w.stale.Swap(true) {
-						w.broadcast(evStaleWC)
-					}
+					w.setStale(true)
 					consecutiveErrors = 0
 					continue
 				}
@@ -226,18 +258,25 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 				}
 				continue
 			}
-			if w.stale.Swap(false) {
-				w.broadcast(evFreshWC)
-			}
+			w.setStale(false)
 			consecutiveErrors = 0
 			opId := strings.TrimSpace(string(out))
-			if opId != "" && opId != last {
-				w.srv.cachedMu.Lock()
-				w.srv.cachedOp = opId
-				w.srv.cachedMu.Unlock()
-				w.broadcast(opId)
-				last = opId
+			if opId == "" || opId == lastBroadcast {
+				continue
 			}
+			// CAS: write only if nobody else advanced cachedOp mid-poll. If
+			// someone did (cur != preCached), broadcast THEIR value so
+			// non-mutating clients still refresh — it's fresher than our
+			// poll's pre-mutation snapshot.
+			w.srv.cachedMu.Lock()
+			cur := w.srv.cachedOp
+			if cur == preCached {
+				w.srv.cachedOp = opId
+				cur = opId
+			}
+			w.srv.cachedMu.Unlock()
+			w.broadcast(cur)
+			lastBroadcast = cur
 		}
 	}
 }
@@ -275,9 +314,7 @@ func (w *Watcher) snapshotLoop(interval time.Duration) {
 				// would be misleading). Broadcast once on transition; the 5s
 				// retry continues so a CLI-side `update-stale` is noticed.
 				if isStaleWCError(err) {
-					if !w.stale.Swap(true) {
-						w.broadcast(evStaleWC)
-					}
+					w.setStale(true)
 					// Reset — stale is categorically different from transient
 					// errors. Leaving the counter frozen would inflate the
 					// next non-stale error's log threshold (3rd-failure log
@@ -293,9 +330,7 @@ func (w *Watcher) snapshotLoop(interval time.Duration) {
 					log.Printf("watcher: snapshot failed %dx (%v); repo may be locked, auto-refresh degraded", consecutiveErrors, err)
 				}
 			} else {
-				if w.stale.Swap(false) {
-					w.broadcast(evFreshWC)
-				}
+				w.setStale(false)
 				consecutiveErrors = 0
 			}
 		}
@@ -360,10 +395,17 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Disable the server's WriteTimeout for this long-lived connection.
-	// Without this, main.go's 120s WriteTimeout kills SSE after 2 minutes.
+	// Per-write deadline extension — replaces the blanket disable. main.go's
+	// 120s WriteTimeout would kill SSE after 2 minutes; disabling entirely
+	// (time.Time{}) meant dead TCP connections (browser crash, no FIN/RST)
+	// blocked writes until OS keepalive detection (~2-10 min) — idle-shutdown
+	// timer couldn't arm. With extension, a dead connection surfaces on the
+	// next keepalive write (25s tick + 60s deadline ≈ 85s worst case).
 	rc := http.NewResponseController(rw)
-	_ = rc.SetWriteDeadline(time.Time{})
+	extendDeadline := func() {
+		_ = rc.SetWriteDeadline(time.Now().Add(60 * time.Second))
+	}
+	extendDeadline()
 
 	rw.Header().Set("Content-Type", "text/event-stream")
 	rw.Header().Set("Cache-Control", "no-cache")
@@ -378,15 +420,28 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 	// the client's SSE dropped during a repo change, the reconnect syncs state
 	// without waiting for the next fsnotify event. Client's notifyOpId dedup
 	// makes this a no-op on the common case (op-id unchanged since last call).
-	writeOp := func(opId string) error {
-		payload, _ := json.Marshal(map[string]string{"op_id": opId})
-		if _, err := rw.Write([]byte("event: op\ndata: " + string(payload) + "\n\n")); err != nil {
+	//
+	// Refresh if cachedOp is empty — otherwise a read-only session (no
+	// mutations, nothing to advance cachedOp) never gets event:op → frontend's
+	// everSawEvent stays false → first SSE drop permanently kills auto-refresh.
+	// Local refresh is <1ms (filesystem read); SSH is ~440ms once per connect.
+	write := func(payload string) error {
+		extendDeadline()
+		if _, err := rw.Write([]byte(payload)); err != nil {
 			return err
 		}
 		flusher.Flush()
 		return nil
 	}
-	if cur := w.srv.getOpId(); cur != "" {
+	writeOp := func(opId string) error {
+		js, _ := json.Marshal(map[string]string{"op_id": opId})
+		return write("event: op\ndata: " + string(js) + "\n\n")
+	}
+	cur := w.srv.getOpId()
+	if cur == "" {
+		cur = w.srv.refreshOpId()
+	}
+	if cur != "" {
 		if err := writeOp(cur); err != nil {
 			return
 		}
@@ -403,10 +458,9 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 		if w.stale.Load() {
 			ev = evStaleWC
 		}
-		if _, err := rw.Write([]byte("event: " + ev[1:] + "\ndata: {}\n\n")); err != nil {
+		if err := write("event: " + ev[1:] + "\ndata: {}\n\n"); err != nil {
 			return
 		}
-		flusher.Flush()
 	}
 
 	keepalive := time.NewTicker(25 * time.Second)
@@ -426,10 +480,9 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 			// `event: <name>\ndata: {}\n\n` — the frontend adds a dedicated
 			// listener per event type, so no payload parsing needed.
 			if strings.HasPrefix(msg, "!") {
-				if _, err := rw.Write([]byte("event: " + msg[1:] + "\ndata: {}\n\n")); err != nil {
+				if err := write("event: " + msg[1:] + "\ndata: {}\n\n"); err != nil {
 					return
 				}
-				flusher.Flush()
 				continue
 			}
 			if err := writeOp(msg); err != nil {
@@ -437,10 +490,9 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 			}
 		case <-keepalive.C:
 			// SSE comment line — keeps proxies/browsers from timing out.
-			if _, err := rw.Write([]byte(": keepalive\n\n")); err != nil {
+			if err := write(": keepalive\n\n"); err != nil {
 				return
 			}
-			flusher.Flush()
 		}
 	}
 }

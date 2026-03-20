@@ -94,13 +94,20 @@ export function reconstructSides(raw: string): MergeSides | null {
     let lbl: string | null
 
     if ((m = line.match(M_START))) {
-      if (inRegion) return null // nested / malformed
-      inRegion = true
-      mLen = m[1].length  // all markers in this region are this exact width
-      mode = 'out'
-      sideNum = 0
-      baseDoneThisRegion = false
-      continue
+      if (inRegion) {
+        // Shorter run = content. jj escalated mLen BECAUSE the file contains
+        // <mLen-char runs; {7,} re-matching them here would false-null on
+        // the line jj was protecting. ≥mLen = nested/malformed → bail.
+        if (m[1].length >= mLen) return null
+        // fall through to content routing (switch below)
+      } else {
+        inRegion = true
+        mLen = m[1].length  // all markers in this region are this exact width
+        mode = 'out'
+        sideNum = 0
+        baseDoneThisRegion = false
+        continue
+      }
     }
     // All subsequent markers use exact-length match against mLen. mLen=0
     // outside a region (matchMarker rejects len<7 via length check? No —
@@ -141,8 +148,13 @@ export function reconstructSides(raw: string): MergeSides | null {
     // The + marker CAN follow a %%%%%%% section (Diff-style: diff then snapshot).
     // But inside the diff, content lines get `+` prefix — an added line of
     // (mLen-1) '+' chars becomes a bare mLen-char run → false-positive. jj
-    // always labels real markers (" Contents of side #N"), so in diff mode
-    // require a non-empty label to disambiguate.
+    // always labels real markers, so in diff mode require a non-empty label.
+    //
+    // Known edge: content `++++++  foo` + `+` prefix = 7 plus + "foo" → passes
+    // `lbl !== ''` → false marker. Rare (6-plus-chars followed by ws+text in
+    // source) and non-catastrophic (sideNum>2 → null → raw-editor fallback).
+    // Stem-checking jj's label format would couple to jj's output (commit-ref
+    // labels vs "Contents of side #N" vary by version/config).
     if (inRegion && (lbl = matchMarker(line, '+', mLen)) !== null && (mode !== 'diff' || lbl !== '')) {
       sideNum++
       if (sideNum > 2) return null

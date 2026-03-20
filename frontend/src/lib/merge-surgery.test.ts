@@ -85,20 +85,38 @@ describe('planTake — zero-width position (from === to)', () => {
     expect(plan.newTrack).toEqual({ from: 8, to: 11 })
   })
 
-  it('on empty line mid-doc: insert AS-IS, no separator, no extension', () => {
-    // Found by round-trip test: 90d818ca's fix#9 (to+=1) over-corrected.
-    // Doc: "AAA\n\nCCC" — line 2 is "" at [4,4], framed by \n's at [3] and [4].
-    // The OLD bug: trailing-\n branch → "AAA\nBBB\n\nCCC" (extra blank).
-    // The 90d818ca fix: to+=1 → replace [4,5] → eats the \n separator between
-    // lines 2 and 3 → "AAA\nBBBCCC" (joins lines!).
-    // Correct: replace [4,4] with "BBB" → "AAA\n" + "BBB" + "\nCCC" = perfect.
-    // The empty line's content span is already correctly framed; just fill it.
+  it('on empty line mid-doc (theirs IS empty string): insert AS-IS replaces it', () => {
+    // theirs=['AAA','','CCC'] (blank middle), ours=['AAA','BBB','CCC']. Center
+    // seeded theirs → "AAA\n\nCCC". Block bFrom=2,bTo=3 (theirs HAS a line,
+    // the empty string) — oppEmpty=false → the empty line IS block content.
+    // Insert as-is fills it: "AAA\nBBB\nCCC". No separator, no extension.
+    //
+    // 90d818ca's fix#9 (to+=1) over-corrected (ate the next-line's separator
+    // → "AAA\nBBBCCC"). Trailing-\n would leave a phantom blank
+    // ("AAA\nBBB\n\nCCC"). The !oppEmpty gate prevents the latter; the
+    // insert-as-is prevents the former.
     const d = doc('AAA\n\nCCC')
     const tracked: TrackedBlock = { from: 4, to: 4, source: 'theirs' }
-    const plan = planTake(d, tracked, 'ours', ['AAA', 'BBB', 'CCC'], blk(2, 3, 2, 2))!
+    const plan = planTake(d, tracked, 'ours', ['AAA', 'BBB', 'CCC'], blk(2, 3, 2, 3))!
     expect(plan.change).toEqual({ from: 4, to: 4, insert: 'BBB' })  // NO extension
     expect(apply('AAA\n\nCCC', plan.change)).toBe('AAA\nBBB\nCCC')
     expect(plan.newTrack).toEqual({ from: 4, to: 7 })
+  })
+
+  it('at empty line when oppEmpty=true (pure insertion): trailing \\n — shared content, do NOT replace', () => {
+    // theirs=['AAA','','CCC'] (shared blank at line 2). ours=['AAA','X','','CCC']
+    // (extra 'X' at line 2, pushes blank to line 3). Block: ours[2]='X' vs
+    // theirs[nothing] at bFrom=2 → bFrom===bTo=2 → oppEmpty=true. Center seeded
+    // theirs → "AAA\n\nCCC". initialTrackPos lands at bFrom=2 → line(2).from=4
+    // = the SHARED blank's position. Insert must go BEFORE it with trailing \n
+    // → "AAA\nX\n\nCCC". Previously the empty-line branch replaced the shared
+    // blank → "AAA\nX\nCCC" (lost the blank).
+    const d = doc('AAA\n\nCCC')
+    const tracked: TrackedBlock = { from: 4, to: 4, source: 'theirs' }
+    const plan = planTake(d, tracked, 'ours', ['AAA', 'X', '', 'CCC'], blk(2, 3, 2, 2))!
+    expect(plan.change).toEqual({ from: 4, to: 4, insert: 'X\n' })  // trailing \n
+    expect(apply('AAA\n\nCCC', plan.change)).toBe('AAA\nX\n\nCCC')
+    expect(plan.newTrack).toEqual({ from: 4, to: 5 })
   })
 
   it('on empty doc: insert as-is, no separator, no \\n consumption', () => {
@@ -113,16 +131,30 @@ describe('planTake — zero-width position (from === to)', () => {
     expect(plan.newTrack).toEqual({ from: 0, to: 1 })
   })
 
-  it('srcEmpty: from===to, nothing to insert → no-op change (zero-width dispatch)', () => {
-    // Pure-insertion block on BOTH sides? Shouldn't happen in practice (diffBlocks
-    // never emits aFrom===aTo && bFrom===bTo — that would be an empty block).
-    // But if it did: from===to, srcEmpty → neither branch fires → zero change.
-    // Pin the degenerate case.
-    const d = doc('AAA')
-    const tracked: TrackedBlock = { from: 3, to: 3, source: 'theirs' }
-    const plan = planTake(d, tracked, 'ours', ['AAA'], blk(2, 2, 2, 2))!
-    expect(plan.change).toEqual({ from: 3, to: 3, insert: '' })
-    expect(plan.newTrack).toEqual({ from: 3, to: 3 })
+  // An empty line tracks as zero-width (line.from === line.to). Previously the
+  // from===to gate swallowed srcEmpty before the \n-consumption branch could
+  // fire → zero-width no-op → arrow click silently did nothing. The reorder
+  // (srcEmpty checked first) makes this reach the \n consumer.
+  it('srcEmpty + tracked empty-line (from===to): consumes adjacent \\n — the 2026-03-18 no-op bug', () => {
+    // theirs = ['A', '', 'B'] (blank middle). ours = ['A', 'B'] (deleted).
+    // Center seeded theirs → "A\n\nB". Line 2 empty → tracked {from:2, to:2}.
+    // Take ours: delete the empty line → "A\nB".
+    const d = doc('A\n\nB')
+    const tracked: TrackedBlock = { from: 2, to: 2, source: 'theirs' }
+    const plan = planTake(d, tracked, 'ours', ['A', 'B'], blk(2, 2, 2, 3))!
+    expect(plan.change.insert).toBe('')
+    expect(apply('A\n\nB', plan.change)).toBe('A\nB')
+    expect(plan.newTrack.from).toBe(plan.newTrack.to)  // zero-width after delete
+  })
+
+  it('srcEmpty + tracked empty-line at end-of-doc: consumes LEADING \\n', () => {
+    // theirs = ['A', ''] (trailing blank). ours = ['A']. Center "A\n".
+    // Line 2 empty at pos 2 (from=to=2). No trailing \n (end of doc) →
+    // consume leading \n at pos 1 → "A".
+    const d = doc('A\n')
+    const tracked: TrackedBlock = { from: 2, to: 2, source: 'theirs' }
+    const plan = planTake(d, tracked, 'ours', ['A'], blk(2, 2, 2, 3))!
+    expect(apply('A\n', plan.change)).toBe('A')
   })
 })
 
@@ -290,6 +322,71 @@ describe('planTake — round-trip (take-ours → take-theirs = identity)', () =>
     const theirs = ['A', 'X', 'C']
     const { docStr } = roundTrip('A\nX\nC', ours, theirs, blk(2, 3, 2, 3))
     expect(docStr).toBe('A\nX\nC')
+  })
+
+  it('empty-line DELETE → restore: identity (the srcEmpty+zero-width reorder)', () => {
+    // Theirs has blank middle. Ours deleted it. Take-ours removes the blank
+    // line; take-theirs-back restores it. Previously step 1 was a no-op
+    // (from===to gate swallowed srcEmpty) so step 2's idempotence check
+    // returned null — the arrow click did nothing, silently.
+    const ours = ['A', 'C']
+    const theirs = ['A', '', 'C']
+    const { docStr } = roundTrip('A\n\nC', ours, theirs, blk(2, 2, 2, 3))
+    expect(docStr).toBe('A\n\nC')
+  })
+})
+
+// Full-pipeline round-trip: reconstructSides → diffBlocks → planTake × all
+// blocks → take-ours-then-theirs-back = identity. This composes every layer
+// the 3-pane merge editor depends on. Covers shapes the single-block
+// roundTrip above misses (adjacent blocks, crossing diffs, empty-line runs).
+describe('planTake — full-pipeline round-trip (every block ours→theirs = identity)', () => {
+  // Apply ALL blocks take-ours, then ALL blocks take-theirs-back. Position
+  // remapping via remapBlock between each dispatch. This is what MergePanel
+  // does when the user clicks every ← arrow then every → arrow.
+  const fullRoundTrip = (oursLines: string[], theirsLines: string[]) => {
+    const blocks = diffBlocks(oursLines, theirsLines)
+    let docStr = theirsLines.join('\n')
+    let d = doc(docStr)
+    let tracked = blocks.map(b => ({ ...initialTrackPos(d, b), source: 'theirs' as const }))
+
+    const takeAll = (side: 'ours' | 'theirs', srcLines: string[]) => {
+      for (let i = 0; i < blocks.length; i++) {
+        const plan = planTake(d, tracked[i], side, srcLines, blocks[i])
+        if (!plan) continue  // idempotent skip
+        docStr = apply(docStr, plan.change)
+        d = doc(docStr)
+        // Remap all OTHER tracked positions through this change (blockTracker's
+        // update() does this via remapBlock). The just-applied block gets the
+        // explicit newTrack from planTake.
+        const changes = ChangeSet.of(plan.change, d.length - plan.change.insert.length + (plan.change.to - plan.change.from))
+        tracked = tracked.map((t, j) => j === i
+          ? { ...plan.newTrack, source: side }
+          : { ...remapBlock(t, changes), source: t.source })
+      }
+    }
+
+    takeAll('ours', oursLines)
+    takeAll('theirs', theirsLines)
+    return docStr
+  }
+
+  it.each([
+    // Simple replace
+    [['A', 'OURS', 'C'], ['A', 'THEIRS', 'C']],
+    // Adjacent non-overlapping blocks (common: import reorder)
+    [['A', 'X', 'B', 'Y', 'C'], ['A', 'P', 'B', 'Q', 'C']],
+    // Empty-line: ours deleted, theirs keeps (the srcEmpty+zero-width case)
+    [['A', 'C'], ['A', '', 'C']],
+    // Mirror: theirs deleted, ours keeps
+    [['A', '', 'C'], ['A', 'C']],
+    // Trailing empty line
+    [['A'], ['A', '']],
+    [['A', ''], ['A']],
+    // Multiple adjacent empty-line operations
+    [['A', '', '', 'C'], ['A', '', 'C']],
+  ])('ours=%j theirs=%j → round-trip identity', (oursLines, theirsLines) => {
+    expect(fullRoundTrip(oursLines, theirsLines)).toBe(theirsLines.join('\n'))
   })
 })
 

@@ -41,13 +41,26 @@
 
   // Derived view data
   let isStack = $derived((group?.changeIds.length ?? 0) > 1)
-  let nVersions = $derived(group?.versions[0]?.length ?? 0)
+  // MAX across levels, not versions[0].length — when alignable=false we keep
+  // the ORIGINAL unaligned versions, and those can have mismatched widths
+  // (root=3, child=2). Root-only would crash on versions[1][2].commit_id
+  // before the `!alignable` Keep-disabled guard can save the user. MAX + the
+  // optional chaining below renders all columns with "—" placeholders for
+  // missing cells; Keep stays disabled so no wrong-abandon risk.
+  let nVersions = $derived(
+    group ? Math.max(...group.versions.map(l => l.length)) : 0
+  )
 
   // --- Cross-diff (works for both stack tips and single-change versions) ---
   let compareFrom = $state(0)
   let compareTo = $state(1)
   let crossDiff = $state('')
   let diffLoading = $state(false)
+  // Separate from `error` — cross-diff failure must NOT hide the Keep buttons
+  // (the `{:else if error}` template branch replaces the entire group view).
+  // Previously this WROTE `error` → panel clobbered with no recovery (success
+  // path doesn't clear it). Rendered inline in the compare-section instead.
+  let crossDiffError = $state('')
   let fileUnion = $state<Set<string>>(new Set())
 
   let parsedCrossDiff = $derived(parseDiffContent(crossDiff))
@@ -120,9 +133,16 @@
       // unconditionally return 'pure-rebase' (filter against empty set → []),
       // triggering a HIGH-confidence keep recommendation when trees may
       // actually differ. Let failures bubble to the outer catch → panel error.
-      const tipLevel = found.versions[found.versions.length - 1]
+      //
+      // ALL levels, not just tip — diffRange(tip0, tip1) compares full trees
+      // which inherit changes from intermediate levels. Tip-only fileUnion
+      // would exclude those from the filterFiles → refineRebaseKind
+      // subtraction is a no-op (every returned file is tip-touched) →
+      // 'pure-rebase' + HIGH confidence when stacked content differs.
+      // Rare (stacked divergence + non-tip edits) but the failure mode is
+      // "recommend destructive action with false confidence".
       const fileResults = await Promise.all(
-        tipLevel.map(v => api.files(v.commit_id))
+        found.versions.flat().map(v => api.files(v.commit_id))
       )
       const paths = new Set<string>()
       for (const files of fileResults) for (const f of files) paths.add(f.path)
@@ -143,6 +163,10 @@
   // fires on group becoming non-null (mid-way through version load's async).
   let diffGen = 0
   $effect(() => {
+    // Clear error at the top — early-returns below would otherwise leave a
+    // stale crossDiffError displayed after toggling compareFrom/To out of a
+    // failed state (e.g. self-compare, or !alignable colIdx out-of-range).
+    crossDiffError = ''
     // compareFrom === compareTo: meaningless self-compare. Clear crossDiff so
     // the template doesn't show stale content labeled "Diff /N → /N". Also
     // invalidate in-flight fetch (prev from/to selection) that would clobber.
@@ -171,7 +195,7 @@
       if (g !== diffGen) return
       crossDiff = ''
       diffLoading = false
-      error = e.message || 'Failed to load cross-version diff'
+      crossDiffError = e.message || 'Failed to load cross-version diff'
     })
   })
 
@@ -410,10 +434,13 @@
       {@render strategyCard()}
 
       <!-- Columns: one per version, rows = stack levels. For single-change
-           divergence this is 1 row × N columns = the old card layout. -->
+           divergence this is 1 row × N columns = the old card layout.
+           Optional chaining for arity-mismatch (!alignable) cases where
+           nVersions=MAX(...) exceeds some level's width — cell renders "—"
+           instead of crashing on undefined.commit_id. Keep stays disabled. -->
       <div class="version-columns" style="--n-cols: {nVersions}">
         {#each Array(nVersions) as _, colIdx}
-          {@const tipCommitId = group.versions[group.versions.length - 1][colIdx].commit_id}
+          {@const tipCommitId = group.versions[group.versions.length - 1][colIdx]?.commit_id}
           {@const rootV = group.versions[0][colIdx]}
           <div class="version-col" class:col-live={group.liveVersion === colIdx} class:col-from={colIdx === compareFrom} class:col-to={colIdx === compareTo}>
             <div class="col-header">
@@ -424,27 +451,27 @@
                  from the template (divergence.go:42). Highlighted when THIS is
                  the thing to compare (metadata-only case). -->
             <div class="col-desc" class:col-desc-key={refinedKind === 'metadata-only'}
-              title={rootV.description}>
-              {rootV.description || '(no description)'}
+              title={rootV?.description}>
+              {rootV?.description || '(no description)'}
             </div>
             <!-- Parent commit chip — for diff-parent cases these DIFFER and
                  answer "which trunk point?"; for same-parent they match. -->
             <div class="col-parent" class:col-parent-key={group.kind === 'diff-parent'}
               title="Parent commit. Cross-reference in the log to see which trunk point this sits on.">
               <span class="col-parent-label">on</span>
-              <span class="col-parent-id">{rootV.parent_commit_ids[0]?.slice(0, 8)}</span>
+              <span class="col-parent-id">{rootV?.parent_commit_ids[0]?.slice(0, 8) ?? '—'}</span>
             </div>
             {#each group.changeIds as cid, levelIdx}
               {@const v = group.versions[levelIdx][colIdx]}
               <div class="version-cell">
                 <span class="cell-change-id">{cid.slice(0, 8)}</span>
-                <span class="cell-commit-id">{v.commit_id.slice(0, 8)}</span>
-                {#if v.bookmarks.length > 0}
+                <span class="cell-commit-id">{v?.commit_id.slice(0, 8) ?? '—'}</span>
+                {#if v && v.bookmarks.length > 0}
                   <span class="cell-bookmarks">{v.bookmarks.join(', ')}</span>
                 {/if}
               </div>
             {/each}
-            {#each group.descendants.filter(d => d.parent_commit_ids.includes(tipCommitId)) as d}
+            {#each group.descendants.filter(d => tipCommitId && d.parent_commit_ids.includes(tipCommitId)) as d}
               <div class="version-cell descendant-cell" title="Non-divergent descendant — pins this column visible">
                 <span class="descendant-marker">└</span>
                 <span class="cell-commit-id">{d.commit_id.slice(0, 8)}</span>
@@ -485,6 +512,8 @@
 
           {#if diffLoading}
             <div class="diff-loading">Loading diff…</div>
+          {:else if crossDiffError}
+            <div class="diff-empty diff-error">{crossDiffError}</div>
           {:else if crossDiff === '' && compareFrom !== compareTo}
             <!-- Diff is filtered to fileUnion — empty means the files THIS
                  change owns are identical. For same-parent that's "only
@@ -760,6 +789,7 @@
   .diff-loading, .diff-empty {
     color: var(--surface2); font-size: 12px; padding: 12px 0; text-align: center;
   }
+  .diff-error { color: var(--red); }
   .cross-diff { margin-top: 4px; }
 
   .confirm-overlay {

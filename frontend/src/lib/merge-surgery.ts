@@ -52,6 +52,13 @@ export function planTake(
   // joins to '', falsy, but is valid content (a blank line the user wants
   // to keep). Blank-line conflicts are common in code formatting merges.
   const srcEmpty = from1 === to1
+  // oppEmpty: the OPPOSITE side's block range. Disambiguates the empty-line
+  // zero-width case: if theirs has '' at this position (oppEmpty=false), the
+  // empty line IS block content — insert-as-is replaces it. If theirs has
+  // nothing (oppEmpty=true, pure insertion), the empty line at the tracked
+  // position is SHARED LCS content — insert needs a trailing \n to go BEFORE
+  // it, not replace it. Positionally both are from===to at the same place.
+  const oppEmpty = side === 'ours' ? blk.bFrom === blk.bTo : blk.aFrom === blk.aTo
   let insert = srcLines.slice(from1 - 1, to1 - 1).join('\n')
 
   let { from, to } = tracked
@@ -62,35 +69,17 @@ export function planTake(
   let contentOff = 0
   const contentLen = insert.length
 
-  if (from === to) {
-    // Zero-width position (pure-insertion block, or prior apply deleted all).
-    if (!srcEmpty) {
-      const line = doc.lineAt(from)
-      // Empty line (or empty doc): zero-width position already sits between
-      // the two framing \n's. Insert as-is — no separator, no extension.
-      // Other branches would over-correct: trailing \n → extra blank line;
-      // `to += 1` (90d818ca's first attempt) → consumes the next-line's
-      // separator, joining lines. The else-if chain below handles the non-
-      // empty-line cases.
-      if (line.from === from && line.to === from) {
-        // insert as-is — intentionally blank
-      } else if (line.from === from) {
-        // Line-start mid-doc: trailing \n pushes the following line down.
-        insert += '\n'
-      } else {
-        // Line-end (including end-of-doc with no trailing \n): trailing \n
-        // would concatenate the doc's last line with insert's first. Leading
-        // \n instead.
-        insert = '\n' + insert
-        contentOff = 1
-      }
-    }
-  } else if (srcEmpty) {
-    // Deleting a non-empty region (flank side is empty for this block).
-    // Extend through the adjacent newline so we don't leave a blank line.
-    // Prefer trailing; if end-of-doc (no trailing \n), consume leading
-    // instead — otherwise "a\nb\nBLOCK" deleting BLOCK leaves "a\nb\n" with
-    // a phantom trailing newline the source side never had.
+  if (srcEmpty) {
+    // Source side has zero lines. Delete center content + one adjacent \n.
+    // Prefer trailing; if end-of-doc (no trailing \n), consume leading —
+    // otherwise "a\nb\nBLOCK" deleting BLOCK leaves "a\nb\n" with a phantom
+    // trailing newline the source side never had.
+    //
+    // from===to included: an EMPTY LINE tracks as zero-width (line.from ===
+    // line.to). Previously the from===to gate above swallowed this before
+    // srcEmpty could fire → zero-width no-op → arrow click silently did
+    // nothing. Common trigger: base has a blank line, one side deletes it —
+    // the classic code-formatting merge.
     //
     // The \n verification guards against user hand-edits that moved tracked
     // `to` off a line boundary (e.g. typing at exact end-of-block: mapPos(-1)
@@ -98,6 +87,32 @@ export function planTake(
     // would corrupt content.
     if (to < doc.length && doc.sliceString(to, to + 1) === '\n') to += 1
     else if (from > 0 && doc.sliceString(from - 1, from) === '\n') from -= 1
+  } else if (from === to) {
+    // Zero-width position, non-empty source: pure insertion.
+    const line = doc.lineAt(from)
+    if (line.from === from && line.to === from && !oppEmpty) {
+      // Empty line IS block content (opposite side has '' at this position,
+      // not nothing). The tracked zero-width sits between the two framing
+      // \n's — insert as-is replaces the empty line. Trailing \n would leave
+      // a phantom blank; `to += 1` (90d818ca's first attempt) consumes the
+      // next-line's separator, joining lines.
+    } else if (doc.length > 0 && line.from === from) {
+      // Line-start mid-doc (or shared empty line, oppEmpty=true): trailing \n
+      // pushes the following line down. Previously the empty-line check above
+      // swallowed the pure-insertion case (initialTrackPos for bFrom===bTo
+      // lands AT the next LCS line's start, which may BE empty) → insert-as-is
+      // = silent no-op for blank content. Trigger: ours=['A','','','C'] vs
+      // theirs=['A','','C'] — ours' extra blank must go BEFORE theirs' shared
+      // blank, not replace it.
+      insert += '\n'
+    } else if (doc.length > 0) {
+      // Line-end (including end-of-doc with no trailing \n): trailing \n
+      // would concatenate the doc's last line with insert's first. Leading
+      // \n instead.
+      insert = '\n' + insert
+      contentOff = 1
+    }
+    // doc.length === 0: empty doc, insert as-is — nothing to separate from.
   }
 
   // newFrom skips a leading \n separator; newTo ends at last content byte,

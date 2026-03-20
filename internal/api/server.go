@@ -214,8 +214,12 @@ func (s *Server) refreshOpId() string {
 		}
 	}
 	// Fallback: SSH mode, divergent ops, or unexpected dir state. Detached
-	// context so it completes even if the HTTP request is cancelled.
-	output, err := s.Runner.Run(context.Background(), jj.CurrentOpId())
+	// from the HTTP request (so it completes even on client cancel) but WITH
+	// a timeout — handleEvents calls this on SSE connect when cachedOp is
+	// empty; a hanging SSH would otherwise block SSE setup indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	output, err := s.Runner.Run(ctx, jj.CurrentOpId())
+	cancel()
 	if err != nil {
 		return ""
 	}

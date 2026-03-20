@@ -343,6 +343,25 @@ describe('reconstructSides', () => {
     expect(r.theirs).toBe('theirs')
   })
 
+  it('escalated region: shorter `<` run inside is content, NOT nested-null', () => {
+    // jj escalated to 8 chars because file has 7-char `<<<<<<<` line. That
+    // line appears INSIDE the region (snapshot content). Previously M_START
+    // {7,} re-matched it → `inRegion=true` already → `return null` → false
+    // fallback to raw editor. The mLen guard treats <mLen runs as content.
+    const raw = [
+      '<<<<<<<<',             // 8-char start (escalated)
+      '++++++++ s1',
+      '<<<<<<<',              // CONTENT: 7-char run, <mLen=8 → not a marker
+      'ours rest',
+      '++++++++ s2',
+      'theirs',
+      '>>>>>>>>',
+    ].join('\n')
+    const r = reconstructSides(raw)!
+    expect(r.ours).toBe('<<<<<<<\nours rest')
+    expect(r.theirs).toBe('theirs')
+  })
+
   it('marker-lookalike content OUTSIDE regions is treated as content', () => {
     // `-------` markdown rule, `+++++++` ASCII art, etc. in normal file content
     // should NOT trigger the !inRegion → return null path.

@@ -288,12 +288,29 @@ export function buildKeepPlan(g: DivergenceGroup, keeperIdx: number): KeepPlan {
   const nonEmptyDescendants = collateral.filter(d => !d.empty)
   for (const d of collateral.filter(d => d.empty)) abandonCommitIds.push(d.commit_id)
 
-  // Bookmarks: map each conflicted bookmark to the keeper at the SAME
-  // change_id level it was on. Not the stack tip. See doc §"Collateral" #2.
-  const bookmarkRepoints = g.conflictedBookmarks.map(({ name, changeId }) => {
-    const levelIdx = g.changeIds.indexOf(changeId)
-    return { name, targetCommitId: g.versions[levelIdx][keeperIdx].commit_id }
-  })
+  // Bookmarks: repoint to the keeper at the SAME change_id level. Not the
+  // stack tip. See doc §"Collateral" #2.
+  //
+  // ALL loser-column bookmarks, not just conflicted ones — a bookmark on
+  // only ONE version of a loser commit (count=1, so not in conflictedBookmarks)
+  // would otherwise get `--retain-bookmarks` auto-move to the abandoned
+  // commit's parent (= trunk for a stack root). Silent cascade-to-trunk.
+  // Dedup by name: conflicted bookmarks would otherwise emit N-1 repoints
+  // (one per loser column); jj bookmark set is idempotent but the log noise
+  // isn't worth it.
+  const repointed = new Set<string>()
+  const bookmarkRepoints: { name: string; targetCommitId: string }[] = []
+  for (let levelIdx = 0; levelIdx < g.versions.length; levelIdx++) {
+    const keeperAtLevel = g.versions[levelIdx][keeperIdx].commit_id
+    for (let col = 0; col < g.versions[levelIdx].length; col++) {
+      if (col === keeperIdx) continue
+      for (const name of g.versions[levelIdx][col].bookmarks) {
+        if (repointed.has(name)) continue
+        repointed.add(name)
+        bookmarkRepoints.push({ name, targetCommitId: keeperAtLevel })
+      }
+    }
+  }
 
   return {
     keeperCommitId: keeperTip,

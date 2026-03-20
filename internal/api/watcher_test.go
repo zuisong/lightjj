@@ -103,6 +103,43 @@ func TestWatcher_BroadcastEmptyIsNoop(t *testing.T) {
 	}
 }
 
+// setStale serializes Swap+broadcast so two callers can't interleave and emit
+// sentinels out-of-order (the 2026-03-18 confirmed race). This test doesn't
+// prove the race is fixed (races don't manifest deterministically), but it
+// locks the INVARIANT: setStale(v) broadcasts IFF the value changed, and the
+// broadcast value matches the new state. Four inline sites + two handler calls
+// all go through this; if any reverts to inline Swap+broadcast the atomicity
+// guarantee is lost.
+func TestWatcher_SetStale_EdgeOnlyBroadcast(t *testing.T) {
+	w := &Watcher{subs: make(map[chan string]struct{})}
+	ch, unsub := w.subscribe()
+	defer unsub()
+
+	drain := func() (got []string) {
+		for {
+			select {
+			case v := <-ch:
+				got = append(got, v)
+			default:
+				return
+			}
+		}
+	}
+
+	// false→true: one stale-wc
+	w.setStale(true)
+	assert.Equal(t, []string{evStaleWC}, drain())
+	// true→true: no-op
+	w.setStale(true)
+	assert.Empty(t, drain())
+	// true→false: one fresh-wc
+	w.setStale(false)
+	assert.Equal(t, []string{evFreshWC}, drain())
+	// false→false: no-op
+	w.setStale(false)
+	assert.Empty(t, drain())
+}
+
 func TestIsStaleWCError(t *testing.T) {
 	// WorkingCopyStale (cli_util.rs:2734)
 	assert.True(t, isStaleWCError(errors.New("Error: The working copy is stale (not updated since operation abc123).")))
@@ -207,42 +244,56 @@ func TestHandleEventsDisabled(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
+// handleEvents sends event:op on connect. If cachedOp is empty (read-only
+// session — no mutations to advance it), handleEvents must refresh so the
+// frontend's everSawEvent gets set. Without this, first SSE drop = permanent
+// auto-refresh loss (api.ts:~311 gives up immediately if everSawEvent=false).
 func TestHandleEvents_SendsInitialOpIdOnConnect(t *testing.T) {
-	srv := &Server{cachedOp: "initial-op-id"}
-	watcher := &Watcher{
-		srv:  srv,
-		subs: make(map[chan string]struct{}),
+	for _, tc := range []struct {
+		name    string
+		cached  string
+		runner  bool // seed a MockRunner that returns "fetched-op"
+		wantOp  string
+	}{
+		// Cached value present — send directly, no refresh.
+		{"cached", "cached-op", false, "cached-op"},
+		// Cached empty — handleEvents refreshes via Runner (the read-only
+		// session path). Previously this skipped the event entirely.
+		{"empty-refreshes", "", true, "fetched-op"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &Server{cachedOp: tc.cached}
+			if tc.runner {
+				r := testutil.NewMockRunner(t)
+				r.Expect(jj.CurrentOpId()).SetOutput([]byte(tc.wantOp))
+				defer r.Verify()
+				srv.Runner = r
+			}
+			watcher := &Watcher{srv: srv, subs: make(map[chan string]struct{})}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
+			rec := httptest.NewRecorder()
+
+			done := make(chan struct{})
+			go func() { watcher.handleEvents(rec, req); close(done) }()
+
+			deadline := time.Now().Add(1 * time.Second)
+			for time.Now().Before(deadline) {
+				if bytes.Contains(rec.Body.Bytes(), []byte(tc.wantOp)) {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			cancel()
+			<-done
+
+			body := rec.Body.String()
+			assert.Contains(t, body, "event: op")
+			assert.Contains(t, body, `"op_id":"`+tc.wantOp+`"`)
+		})
 	}
-
-	// Use a cancellable context so the handler returns after we've checked
-	// the initial write.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-
-	done := make(chan struct{})
-	go func() {
-		watcher.handleEvents(rec, req)
-		close(done)
-	}()
-
-	// Give the handler time to write the initial event. httptest.Recorder is
-	// not a real streaming writer, so we poll the buffer.
-	deadline := time.Now().Add(1 * time.Second)
-	for time.Now().Before(deadline) {
-		if bytes.Contains(rec.Body.Bytes(), []byte("initial-op-id")) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	cancel()
-	<-done
-
-	body := rec.Body.String()
-	assert.Contains(t, body, "event: op")
-	assert.Contains(t, body, `"op_id":"initial-op-id"`)
 }
 
 func TestServerEventsRoute_NilWatcher(t *testing.T) {
@@ -268,12 +319,18 @@ type seqRunner struct {
 	testutil.MockRunner
 	outputs []string
 	calls   atomic.Int32
+	// Optional per-call hook fired BEFORE returning output. Used by CAS tests
+	// to simulate a concurrent runMutation advancing cachedOp mid-SSH-call.
+	hook func(callIdx int)
 }
 
 func (r *seqRunner) Run(_ context.Context, _ []string) ([]byte, error) {
 	n := int(r.calls.Add(1)) - 1
 	if n >= len(r.outputs) {
 		n = len(r.outputs) - 1
+	}
+	if r.hook != nil {
+		r.hook(n)
 	}
 	return []byte(r.outputs[n]), nil
 }
@@ -304,6 +361,98 @@ func TestSSHPollLoop_BroadcastsOnChange(t *testing.T) {
 	}
 	// cachedOp reflects the latest poll (direct write, not via refreshOpId).
 	assert.Equal(t, "op-bbb", srv.getOpId())
+
+	close(w.stop)
+	<-done
+}
+
+// Between-tick mutation: runMutation advances cachedOp BETWEEN poll ticks
+// (not during the SSH call). The next poll returns the same value cachedOp
+// already has (remote state matches). Mutating tab got the X-JJ-Op-Id header;
+// non-mutating tabs rely on SSE broadcast. Comparing against lastBroadcast
+// (local — what WE last sent) not preCached (shared — reflects the mutation)
+// is what lets the poll detect and broadcast this. The CAS fix's first cut
+// collapsed these → bug_017 (between-tick mutations silently dropped).
+func TestSSHPollLoop_BroadcastsBetweenTickMutation(t *testing.T) {
+	// cachedOp starts at A (seeded by handleEvents refresh). Between ticks,
+	// a "mutation" advances it to B. Poll returns B (remote matches).
+	// preCached=B (reads shared), opId=B → opId==preCached would skip.
+	// lastBroadcast="" (we never broadcast yet) → opId!=lastBroadcast → emit.
+	srv := &Server{}
+	srv.cachedOp = "op-B" // already advanced by a mutation's refreshOpId
+
+	r := &seqRunner{outputs: []string{"op-B", "op-B"}} // poll returns what cachedOp already is
+	srv.Runner = r
+
+	w := newWatcher(srv)
+	ch, unsub := w.subscribe()
+	defer unsub()
+	done := make(chan struct{})
+	go func() { w.sshPollLoop(5 * time.Millisecond); close(done) }()
+
+	// Must broadcast B — lastBroadcast="" so opId!=lastBroadcast. The CAS
+	// (cur==preCached, both B) passes, write is a no-op (B→B), broadcast B.
+	select {
+	case got := <-ch:
+		assert.Equal(t, "op-B", got, "between-tick mutation must broadcast to other tabs")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("no broadcast — non-mutating tabs would never refresh")
+	}
+
+	close(w.stop)
+	<-done
+}
+
+// sshPollLoop CAS: if a concurrent runMutation advances cachedOp while the
+// poll's SSH call is in flight (returning a value captured BEFORE the
+// mutation), the poll must not regress cachedOp. Previously the unconditional
+// write would overwrite the mutation's fresher value with the poll's stale
+// snapshot (~18% probability per mutation: 880ms/5000ms). The CAS now
+// compares against pre-poll cachedOp; mismatch = concurrent advance → skip
+// write, broadcast the advanced value so non-mutating clients still refresh.
+func TestSSHPollLoop_CASGuardsConcurrentAdvance(t *testing.T) {
+	srv := &Server{}
+	srv.cachedOp = "op-A" // seeded (handleEvents refresh, or prior poll)
+
+	// Poll 0: preCached=A, SSH call starts; DURING the call, a "mutation"
+	//         (hook) advances cachedOp to C. SSH returns B (captured between
+	//         A and C — a CLI mutation on the remote). CAS: cachedOp==A? →
+	//         no (it's C) → don't write B. Broadcast C (the fresher value).
+	// Poll 1: preCached=C, SSH returns C (remote caught up). No change, skip.
+	r := &seqRunner{
+		outputs: []string{"op-B", "op-C"},
+		hook: func(i int) {
+			if i == 0 {
+				srv.cachedMu.Lock()
+				srv.cachedOp = "op-C" // concurrent runMutation's refreshOpId
+				srv.cachedMu.Unlock()
+			}
+		},
+	}
+	srv.Runner = r
+
+	w := newWatcher(srv)
+	ch, unsub := w.subscribe()
+	defer unsub()
+	done := make(chan struct{})
+	go func() { w.sshPollLoop(5 * time.Millisecond); close(done) }()
+
+	// First broadcast is C (the advanced value), NOT B (the stale poll result).
+	select {
+	case got := <-ch:
+		assert.Equal(t, "op-C", got, "must broadcast advanced value, not stale poll result")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("no broadcast")
+	}
+	// cachedOp NOT regressed to B.
+	assert.Equal(t, "op-C", srv.getOpId())
+
+	// Poll 1 returns C == cachedOp → no broadcast.
+	select {
+	case v := <-ch:
+		t.Fatalf("unexpected second broadcast: %q", v)
+	case <-time.After(20 * time.Millisecond):
+	}
 
 	close(w.stop)
 	<-done

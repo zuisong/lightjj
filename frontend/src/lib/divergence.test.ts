@@ -494,16 +494,15 @@ describe('buildKeepPlan', () => {
     // the MIDDLE of a stack repoints to that change_id's keeper — not jumping
     // forward to the tip. Jumping to tip would move a user's mid-stack
     // checkpoint ahead, breaking their mental model.
+    //
+    // buildKeepPlan scans v.bookmarks directly (not the pre-computed
+    // conflictedBookmarks subset) — fixtures must populate them.
     const g = mkGroup({
       changeIds: ['A', 'B', 'C'],
       versions: [
         [e({ commit_id: 'a0' }), e({ commit_id: 'a1' })],
-        [e({ commit_id: 'b0' }), e({ commit_id: 'b1' })],
-        [e({ commit_id: 'c0' }), e({ commit_id: 'c1' })],
-      ],
-      conflictedBookmarks: [
-        { name: 'mid-checkpoint', changeId: 'B' },  // middle of stack
-        { name: 'tip', changeId: 'C' },
+        [e({ commit_id: 'b0', bookmarks: ['mid-checkpoint'] }), e({ commit_id: 'b1', bookmarks: ['mid-checkpoint'] })],
+        [e({ commit_id: 'c0', bookmarks: ['tip'] }), e({ commit_id: 'c1', bookmarks: ['tip'] })],
       ],
     })
     const plan = buildKeepPlan(g, 1)
@@ -511,6 +510,39 @@ describe('buildKeepPlan', () => {
       { name: 'mid-checkpoint', targetCommitId: 'b1' },  // B's keeper, NOT c1
       { name: 'tip', targetCommitId: 'c1' },
     ])
+  })
+
+  it('NON-conflicted loser-column bookmark → repointed, not cascaded to trunk', () => {
+    // Previously buildKeepPlan only processed conflictedBookmarks (count>1
+    // across versions of a change_id). A bookmark on ONLY ONE version of a
+    // loser commit (count=1) was skipped → `--retain-bookmarks` auto-moved
+    // it to the abandoned commit's parent (trunk for a stack root). Silent
+    // cascade-to-trunk. Now ALL loser-column bookmarks repoint.
+    const g = mkGroup({
+      changeIds: ['A'],
+      versions: [[
+        e({ commit_id: 'a0', bookmarks: ['only-on-loser'] }),  // bookmark on ONE version
+        e({ commit_id: 'a1' }),                                 // keeper has no bookmark
+      ]],
+    })
+    const plan = buildKeepPlan(g, 1)
+    expect(plan.bookmarkRepoints).toEqual([
+      { name: 'only-on-loser', targetCommitId: 'a1' },  // repointed to keeper
+    ])
+  })
+
+  it('keeper-column bookmark → NOT repointed (it stays where it is)', () => {
+    // Bookmarks on the keeper don't need repointing — the commit they point
+    // to is being kept. Only loser columns are scanned.
+    const g = mkGroup({
+      changeIds: ['A'],
+      versions: [[
+        e({ commit_id: 'a0' }),
+        e({ commit_id: 'a1', bookmarks: ['on-keeper'] }),  // keeper
+      ]],
+    })
+    const plan = buildKeepPlan(g, 1)
+    expect(plan.bookmarkRepoints).toEqual([])  // NOT repointed
   })
 
   it('descendant of KEEPER tip → excluded from collateral (stays valid)', () => {
@@ -593,9 +625,14 @@ describe('buildKeepPlan — invariant sweep (all shapes)', () => {
   function genGroup(shape: {
     levels: number; cols: number
     descendants: Array<{ parentLevel: number; parentCol: number; empty: boolean }>
-    conflictedBookmarks?: Array<{ name: string; levelIdx: number }>
+    // Bookmarks placed at {name, levelIdx} on ALL columns of that level —
+    // buildKeepPlan scans v.bookmarks directly (not conflictedBookmarks), so
+    // the fixture must populate them on the version entries too.
+    bookmarksAtLevel?: Array<{ name: string; levelIdx: number }>
   }): DivergenceGroup {
     const changeIds = Array.from({ length: shape.levels }, (_, i) => `CH${i}`)
+    const bookmarksFor = (L: number) =>
+      (shape.bookmarksAtLevel ?? []).filter(b => b.levelIdx === L).map(b => b.name)
     const versions: DivergenceEntry[][] = []
     for (let L = 0; L < shape.levels; L++) {
       const level: DivergenceEntry[] = []
@@ -605,6 +642,7 @@ describe('buildKeepPlan — invariant sweep (all shapes)', () => {
           commit_id: `L${L}c${c}`,
           parent_commit_ids: L === 0 ? [`trunk${c}`] : [`L${L-1}c${c}`],
           parent_change_ids: L === 0 ? ['TRUNK'] : [changeIds[L-1]],
+          bookmarks: bookmarksFor(L),
         }))
       }
       versions.push(level)
@@ -617,9 +655,6 @@ describe('buildKeepPlan — invariant sweep (all shapes)', () => {
         parent_commit_ids: [`L${d.parentLevel}c${d.parentCol}`],
         parent_change_ids: [changeIds[d.parentLevel]],
         divergent: false, empty: d.empty,
-      })),
-      conflictedBookmarks: (shape.conflictedBookmarks ?? []).map(b => ({
-        name: b.name, changeId: changeIds[b.levelIdx],
       })),
     })
   }
@@ -647,9 +682,9 @@ describe('buildKeepPlan — invariant sweep (all shapes)', () => {
     { name: '2L×3C + desc on middle col', levels: 2, cols: 3,
       descendants: [{ parentLevel: 1, parentCol: 1, empty: true }] },
     { name: '3L×2C + bookmark at mid-level', levels: 3, cols: 2, descendants: [],
-      conflictedBookmarks: [{ name: 'mid', levelIdx: 1 }] },
+      bookmarksAtLevel: [{ name: 'mid', levelIdx: 1 }] },
     { name: '4L×2C + bookmarks at root AND tip', levels: 4, cols: 2, descendants: [],
-      conflictedBookmarks: [{ name: 'r', levelIdx: 0 }, { name: 't', levelIdx: 3 }] },
+      bookmarksAtLevel: [{ name: 'r', levelIdx: 0 }, { name: 't', levelIdx: 3 }] },
   ]
 
   for (const shape of shapes) {
@@ -694,10 +729,12 @@ describe('buildKeepPlan — invariant sweep (all shapes)', () => {
         }
 
         // Invariant 6: bookmark repoints target SAME-LEVEL keeper (not tip).
-        for (const { name, targetCommitId } of plan.bookmarkRepoints) {
-          const bm = g.conflictedBookmarks.find(b => b.name === name)!
-          const levelIdx = g.changeIds.indexOf(bm.changeId)
-          expect(targetCommitId).toBe(g.versions[levelIdx][k].commit_id)
+        // Every bookmark on a loser column must appear in bookmarkRepoints;
+        // the target must be the keeper at the SAME level the bookmark was on.
+        for (const bm of shape.bookmarksAtLevel ?? []) {
+          const repoint = plan.bookmarkRepoints.find(r => r.name === bm.name)
+          expect(repoint, `bookmark ${bm.name} must be repointed`).toBeDefined()
+          expect(repoint!.targetCommitId).toBe(`L${bm.levelIdx}c${k}`)
         }
 
         // Invariant 7: rebaseSources starts empty (pre-confirm).

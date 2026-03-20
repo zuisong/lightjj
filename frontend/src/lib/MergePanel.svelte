@@ -257,6 +257,12 @@
                 inv.push(restoreBlock.of({ idx: e.value.idx, ...old[e.value.idx] }))
               } else if (e.is(editInside)) {
                 inv.push(restoreBlock.of({ idx: e.value, ...old[e.value] }))
+              } else if (e.is(restoreBlock)) {
+                // Undo dispatches restoreBlock; redo needs the inverse — the
+                // PRE-undo state (= post-applyBlock state). Without this
+                // branch, redo re-applies doc changes but leaves source tag
+                // stale (arrow dimmed, highlight wrong, counter wrong).
+                inv.push(restoreBlock.of({ idx: e.value.idx, ...old[e.value.idx] }))
               }
             }
             return inv

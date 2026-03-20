@@ -278,23 +278,28 @@ export function wireAutoRefresh(): () => void {
 
     es.addEventListener('open', () => { backoff = 1000 })
 
-    es.addEventListener('op', (ev) => {
+    // handleEvents sends BOTH op (if cachedOp non-empty after refresh) and
+    // one of stale-wc/fresh-wc unconditionally on connect. Any of these
+    // proves the watcher is alive — handleEventsDisabled returns 204, so
+    // events never arrive there. Previously only `op` marked everSawEvent;
+    // that broke when cachedOp was empty (read-only session, SSH first-poll
+    // window) — first SSE drop permanently killed auto-refresh.
+    const mark = () => {
       everSawEvent = true
       sawEventThisConn = true
       closesWithoutEvent = 0
+    }
+    es.addEventListener('op', (ev) => {
+      mark()
       try {
         const { op_id } = JSON.parse(ev.data) as { op_id: string }
         notifyOpId(op_id)
       } catch { /* malformed event — ignore */ }
     })
-
-    // Server pushes these on snapshot-loop stale-detection transition edges.
-    // Don't mark everSawEvent — reconnect heuristic keys off the op event
-    // (handleEvents sends op-id on connect unconditionally; stale only when
-    // the flag is set). Counting stale alone would break watcher-absence
-    // detection.
-    es.addEventListener('stale-wc', () => notifyStaleWC(true))
-    es.addEventListener('fresh-wc', () => notifyStaleWC(false))
+    // Server pushes these on snapshot-loop stale-detection transition edges
+    // AND unconditionally on connect (watcher.go:handleEvents).
+    es.addEventListener('stale-wc', () => { mark(); notifyStaleWC(true) })
+    es.addEventListener('fresh-wc', () => { mark(); notifyStaleWC(false) })
 
     // Network drop → readyState CONNECTING (browser retries automatically).
     // Non-200 response (including 204 from handleEventsDisabled — spec is

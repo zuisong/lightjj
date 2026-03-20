@@ -417,31 +417,49 @@ func TestHandleWorkspaceUpdateStale(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Updated working copy")
 }
 
-func TestHandleWorkspaceUpdateStale_ClearsAndBroadcasts(t *testing.T) {
-	runner := testutil.NewMockRunner(t)
-	runner.Expect(jj.WorkspaceUpdateStale()).SetOutput([]byte(""))
-	defer runner.Verify()
+// handleSnapshot and handleWorkspaceUpdateStale are the two handler-side
+// snapshot-success paths. Both must clear stale + broadcast fresh-wc via
+// setStale(false) — otherwise a CLI-fixed staleness + tab-focus snapshot
+// leaves server stale=true until snapshotLoop's next tick (≤5s), and an SSE
+// reconnect in that window shows a false stale-wc warning. The asymmetry
+// (handleSnapshot didn't clear, handleWorkspaceUpdateStale did) was a
+// confirmed bug from the 2026-03-18 targeted bughunt.
+func TestHandler_ClearsStale(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		args []string
+	}{
+		{"snapshot", "/api/snapshot", jj.DebugSnapshot()},
+		{"workspace-update-stale", "/api/workspace/update-stale", jj.WorkspaceUpdateStale()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := testutil.NewMockRunner(t)
+			runner.Expect(tc.args).SetOutput([]byte(""))
+			defer runner.Verify()
 
-	srv := newTestServer(runner)
-	srv.Watcher = &Watcher{subs: make(map[chan string]struct{})}
-	srv.Watcher.stale.Store(true)
-	ch, unsub := srv.Watcher.subscribe()
-	defer unsub()
+			srv := newTestServer(runner)
+			srv.Watcher = &Watcher{subs: make(map[chan string]struct{})}
+			srv.Watcher.stale.Store(true)
+			ch, unsub := srv.Watcher.subscribe()
+			defer unsub()
 
-	req := jsonPost("/api/workspace/update-stale", []byte("{}"))
-	w := httptest.NewRecorder()
-	srv.Mux.ServeHTTP(w, req)
+			req := jsonPost(tc.path, []byte("{}"))
+			w := httptest.NewRecorder()
+			srv.Mux.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.False(t, srv.Watcher.stale.Load(), "stale flag should be cleared")
-	// Must broadcast — Store(false) alone would consume the Swap edge and
-	// leave other SSE clients stuck (snapshotLoop's next Swap(false) would
-	// return false → no fresh-wc).
-	select {
-	case got := <-ch:
-		assert.Equal(t, evFreshWC, got)
-	default:
-		t.Fatal("expected fresh-wc broadcast")
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.False(t, srv.Watcher.stale.Load(), "stale flag should be cleared")
+			// Must broadcast — Store(false) alone would consume the Swap edge
+			// and leave other SSE clients stuck (snapshotLoop's next
+			// Swap(false) returns false → no fresh-wc).
+			select {
+			case got := <-ch:
+				assert.Equal(t, evFreshWC, got)
+			default:
+				t.Fatal("expected fresh-wc broadcast")
+			}
+		})
 	}
 }
 

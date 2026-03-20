@@ -749,6 +749,12 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.runMutation(w, r, jj.DebugSnapshot())
+	// Successful snapshot proves not-stale (jj auto-update-stale would have
+	// either cleared it or errored). Same reasoning as handleWorkspaceUpdateStale
+	// below — without this, CLI-fixed staleness + tab-focus snapshot leaves
+	// server stale=true until the next snapshotLoop tick (≤5s), and an SSE
+	// reconnect in that window shows a false stale-wc.
+	s.clearStale()
 }
 
 // handleWorkspaceUpdateStale recovers a stale working copy. The watcher's
@@ -760,19 +766,20 @@ func (s *Server) handleWorkspaceUpdateStale(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.runMutation(w, r, jj.WorkspaceUpdateStale())
-	// Clear + broadcast immediately. A bare Store(false) would consume the
-	// Swap edge WITHOUT notifying connected clients — snapshotLoop's next
-	// success would then Swap(false)→old=false→no broadcast. Other SSE
-	// clients (2nd browser window, same tab URL) would stay stuck on stale
-	// until reload. The clicking tab is covered by the frontend's `after`
-	// callback; this covers the rest.
-	//
+	// Clear + broadcast immediately so OTHER SSE clients (2nd browser window)
+	// unstick. The clicking tab is covered by the frontend's `after` callback.
 	// Runs even on error: runMutation early-returns internally but Go doesn't
 	// propagate that to us. Self-heals — if update-stale FAILED, the next
-	// snapshot re-detects (Swap(true) edge re-fires) within 5s. The spurious
-	// fresh-wc in that window is a brief false-clear, bounded by one tick.
-	if s.Watcher != nil && s.Watcher.stale.Swap(false) {
-		s.Watcher.broadcast(evFreshWC)
+	// snapshot re-detects within 5s. Brief false-clear, bounded by one tick.
+	s.clearStale()
+}
+
+// clearStale is the handler-side stale reset. setStale serializes the
+// Swap+broadcast so this can't race a concurrent snapshotLoop set (which would
+// emit sentinels out-of-order with no self-heal).
+func (s *Server) clearStale() {
+	if s.Watcher != nil {
+		s.Watcher.setStale(false)
 	}
 }
 
