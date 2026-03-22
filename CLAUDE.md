@@ -99,6 +99,8 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     split-view.ts          — Side-by-side diff alignment
     word-diff.ts           — Word-level inline diff computation
     highlighter.ts         — Lezer highlightCode → tok-* spans. Sync, theme-independent (class names not inline styles)
+    markdown-render.ts     — marked (GFM) + DOMPurify + beautiful-mermaid lazy-load. `renderMarkdown()` is sync; mermaid blocks render once the dynamic import resolves (caller re-derives on `mermaidReady` flag). Diagrams pass CSS-var references directly (`bg: 'var(--base)'`) — SVG resolves against active :root, theme toggle is pure CSS cascade (same principle as tok-*). `DIAGRAM_LINE_LIMIT=200` bails to raw <pre> (sync elkjs blocks main thread). `wirePanzoom()` attaches wheel-zoom/drag-pan/dblclick-reset post-mount.
+    MarkdownPreview.svelte — .md preview toggle in DiffFileView header. `mermaidReady` triggers re-derive once chunk loads; `{@html}` + $effect re-wires panzoom on content change.
     fuzzy.ts               — Fuzzy string matching
     group-by.ts            — groupByWithIndex utility for per-file match scoping
     loader.svelte.ts       — createLoader() async factory with generation counter

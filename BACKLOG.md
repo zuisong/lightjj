@@ -2,44 +2,15 @@
 
 Open items only. Done-item narratives live in [docs/CHANGELOG-ARCHIVE.md](docs/CHANGELOG-ARCHIVE.md).
 
-## Confirmed bugs (2026-03-20 — fixed in current WC, pending ship)
+Last shipped: **2026-03-22** v1.3.0 — markdown preview with mermaid diagrams (zoom/pan). marked+dompurify eager (~32KB), beautiful-mermaid+panzoom lazy (~1.5MB chunk, only on first preview). CSS-var theming means diagrams recolor on theme toggle with zero re-render. See archive for the 6 bughunter-found bugs fixed in-session.
 
-Three clusters from the 2026-03-18 targeted bughunts. Status per bug below.
+## Divergence deferred (low-impact, from 2026-03-18 bughunt)
 
-### Watcher/SSE — fixed (5/7, 2 accepted)
+The only non-trivial carryover from the 2026-03-20 fix cluster:
 
-`internal/api/watcher.go` + `handlers.go` + `frontend/src/lib/api.ts`.
-
-- [x] **cachedOp never seeded** — `handleEvents` now refreshes if `getOpId()==""` (covers both local + SSH in one place). Frontend `mark()` helper counts stale/fresh events as watcher-alive too (defense in depth). `refreshOpId()` SSH fallback now has a 10s timeout (bughunter bug_003: `context.Background()` alone would block SSE setup indefinitely on SSH hang). `TestHandleEvents_SendsInitialOpIdOnConnect` table test covers both branches.
-- [x] **Swap+broadcast race** — `setStale(bool)` helper serializes under `staleMu`; all 4 loop sites + 2 handler calls go through it. `TestWatcher_SetStale_EdgeOnlyBroadcast` locks the invariant.
-- [x] **handleSnapshot asymmetry** — both handlers call `clearStale()`. `TestHandler_ClearsStale` table test.
-- [x] **sshPollLoop cachedOp regression** — CAS against `preCached` (DURING-call race) + `lastBroadcast` local tracker (BETWEEN-tick mutations — collapsing these was a regression the first CAS fix introduced, caught by bughunter bug_017). `TestSSHPollLoop_CASGuardsConcurrentAdvance` + `TestSSHPollLoop_BroadcastsBetweenTickMutation`.
-- [x] **WriteDeadline zeroed** — per-write `extendDeadline()` (60s). Dead TCP surfaces in ≤85s (25s keepalive + 60s deadline) instead of OS keepalive's ~2-10min.
-- [ ] **sentinel drop on full buffer** — accepted. 4-element buffer + localhost = negligible. SSE-reconnect's connect-time state emit is the recovery path. Comment at `:314` documents.
-- [ ] **(original bug #2 variant)** — merged into cachedOp-seed fix above.
-
-### Merge editor — fixed (4/6, 1 accepted, 1 covered by full-pipeline test)
-
-`frontend/src/lib/merge-surgery.ts` + `MergePanel.svelte` + `conflict-extract.ts`.
-
-- [x] **invertedEffects missing restoreBlock branch** — added. Undo→redo now restores source tag.
-- [x] **planTake srcEmpty+from===to no-op** — branch reorder (srcEmpty before from===to). Empty line tracks as zero-width; previously unreachable. Two new targeted tests.
-- [x] **planTake blank-line at shared-empty-line no-op** — `oppEmpty` distinguisher (opposite-side block range). Empty line IS block content (oppEmpty=false) → replace. Shared LCS content (oppEmpty=true) → insert-before with trailing \n. Both cases tested.
-- [x] **M_START escalated-content false-null** — shorter `<` run inside region is content (jj escalated BECAUSE of it). `TestEscalatedRegion_ShorterLtRun`.
-- [ ] **`+` marker diff-mode labeled false positive** — accepted. Stem-checking jj's label format couples to jj output (commit-ref vs "Contents of side #N" varies by version). Rare trigger (6-plus-chars + ws + text in source), non-catastrophic (sideNum>2 → null → raw-editor fallback). Comment documents.
-- [x] **srcEmpty \n crosses block boundary** — covered by the new `full-pipeline round-trip` `it.each` sweep (7 shapes × diffBlocks × every-block-ours→theirs-back = identity). If the crossing case manifested, the sweep would catch it.
-
-### Divergence panel — fixed (4/8, 4 deferred as nits/low-impact)
-
-`frontend/src/lib/DivergencePanel.svelte` + `divergence.ts`.
-
-- [x] **Template crash on arity mismatch** — `nVersions = Math.max(...versions.map(l => l.length))` + optional chaining + "—" placeholders for missing cells. Keep stays disabled via `!alignable`.
-- [x] **fileUnion tip-level only** — `found.versions.flat()` instead of tip-only. All-level paths feed refineRebaseKind.
-- [x] **Shared error state clobbers panel** — `crossDiffError` separate; cleared at effect top (bughunter bug_010: early-returns left stale error displayed); rendered inline with `.diff-error { color: var(--red) }` (bughunter bug_018: first fix added the class but not the CSS rule). Main `error` only for load failures.
-- [x] **Non-conflicted bookmarks cascade to trunk** — `buildKeepPlan` now scans ALL loser-column `v.bookmarks` directly (not conflicted-only subset). Dedup by name. Two new tests + sweep Invariant-6 now exercises real v.bookmarks.
-- [ ] **confirmRebaseDescendants wrong target** — deferred. Requires per-descendant parent-level tracking; current `keeperTip` target is correct for the common case (descendants off tip). Mid-stack-branch case is uncommon.
-- [ ] **Invisible versions/descendants** (nit × 2) — partially fixed by nVersions=MAX (all columns render); mid-stack descendant display still tip-filtered (low priority, confirm dialog shows them).
-- [ ] **commit_id.short() TOCTOU** (nit) — deferred. Same window as `staleImmutableTemplate`; low-probability in practice.
+- [ ] **confirmRebaseDescendants wrong target** — Requires per-descendant parent-level tracking; current `keeperTip` target is correct for the common case (descendants off tip). Mid-stack-branch is uncommon.
+- [ ] **Mid-stack descendant display tip-filtered** — confirm dialog shows them, panel doesn't. Low priority.
+- [ ] **commit_id.short() TOCTOU** — same window as `staleImmutableTemplate`; low-probability.
 
 ## Active
 
@@ -71,7 +42,6 @@ Three clusters from the 2026-03-18 targeted bughunts. Status per bug below.
 - [ ] **Search across revisions** (Medium) — `jj log -r 'description(glob:"*query*")'` or tree-grep. Needs design.
 - [ ] **SSH remote repo browser** (Low) — discover repos on remote host, open as tabs.
 - [ ] **Drag-and-drop rebase** (Low) — drag revision onto destination. Inline keyboard rebase already covers the CUJ.
-- [ ] **Hunk-level accept/reject** (Medium) — `jj split --tool` protocol. The "review mode" (`v` key) currently does file-level; hunk-level needs a tool handshake.
 - [ ] **LSP-in-FileEditor** (Complex) — hover/goto in the inline editor. Depends on the LSP running relative to the repo root.
 
 ## Known non-goals

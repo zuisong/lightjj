@@ -348,7 +348,8 @@ describe('planTake — full-pipeline round-trip (every block ours→theirs = ide
     const blocks = diffBlocks(oursLines, theirsLines)
     let docStr = theirsLines.join('\n')
     let d = doc(docStr)
-    let tracked = blocks.map(b => ({ ...initialTrackPos(d, b), source: 'theirs' as const }))
+    type Tracked = { from: number; to: number; source: 'ours' | 'theirs' }
+    let tracked: Tracked[] = blocks.map(b => ({ ...initialTrackPos(d, b), source: 'theirs' }))
 
     const takeAll = (side: 'ours' | 'theirs', srcLines: string[]) => {
       for (let i = 0; i < blocks.length; i++) {

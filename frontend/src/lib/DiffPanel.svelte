@@ -88,8 +88,19 @@
   // Expansion merges adjacent hunks into one — but hunkReview's cursor/
   // selection is keyed by RAW diff hunk indices. onexpand is gated off
   // during review; this clears any pre-existing expansion at mode entry.
+  // previewContents: {#if previewing} branch comes BEFORE the hunk-review
+  // checkbox UI — a pre-open .md preview would hide the checkboxes entirely.
+  // Derived boolean: hunkReview is an object that changes identity on every
+  // j/k keystroke (cursor updates). Depending on it directly would re-fire
+  // this effect ~every-frame during review; the boolean only flips on entry.
+  let reviewActive = $derived(!!hunkReview)
   $effect(() => {
-    if (hunkReview && untrack(() => expandedDiffs.size) > 0) expandedDiffs = new Map()
+    if (!reviewActive) return
+    if (untrack(() => expandedDiffs.size) > 0) expandedDiffs = new Map()
+    // Unconditional bump — in-flight fetch may be the ONLY pending preview
+    // (map empty now, would populate post-resolve).
+    previewGen++
+    if (untrack(() => previewContents.size) > 0) previewContents = new Map()
   })
 
   // --- Inline editing state ---
@@ -97,6 +108,21 @@
   let editFileContents = $state(new Map<string, string>())
   let editBusy = new SvelteSet<string>()  // concurrency guard + loading indicator
   let editError = $state('')  // last error message (shown in status bar area)
+
+  // --- Markdown preview ---
+  // Presence = previewing. Simpler than editing (read-only, no busy/dirty);
+  // one Map serves as both toggle-set and content-store. previewGen bumped
+  // by every clear (toggle-off, hunkReview entry, edit-opens, nav reset) so
+  // an in-flight fileShow resolves bounce instead of re-inserting after a
+  // sync clear — the SSH-latency hunkReview race (fetch resolves 440ms
+  // AFTER the clear effect already ran).
+  let previewContents = $state(new Map<string, string>())
+  let previewGen = 0
+
+  function closePreview(path: string) {
+    previewGen++
+    previewContents = new Map([...previewContents].filter(([p]) => p !== path))
+  }
 
   // 3-pane merge — when set, MergePanel takes over .panel-content entirely
   // (vs FileEditor which slots into split-view's right column per-file).
@@ -221,7 +247,9 @@
 
   function scrollToAnnotation(ann: Annotation) {
     // Scroll to the file then to its approximate line position. DiffFileView
-    // doesn't expose per-line scrolling; this gets close enough.
+    // doesn't expose per-line scrolling; this gets close enough. Close preview
+    // — the annotation is on a diff line, hidden when MarkdownPreview renders.
+    if (previewContents.has(ann.filePath)) closePreview(ann.filePath)
     scrollToFile(ann.filePath)
   }
 
@@ -316,6 +344,9 @@
   function openFileEditor(path: string, content: string): void {
     // Editor lives in the right split column — switch if coming from unified.
     if (!splitView) splitView = true
+    // Edit wins over preview — DiffFileView's {#if previewContent} branch
+    // precedes the FileEditor branch; a stale preview would hide the editor.
+    if (previewContents.has(path)) closePreview(path)
     editFileContents = new Map(editFileContents).set(path, content)
     editingFiles.add(path)
   }
@@ -324,6 +355,23 @@
     const content = await fetchFileForEdit(path, 'Edit')
     if (content === undefined) return
     openFileEditor(path, content)
+  }
+
+  async function togglePreview(path: string) {
+    if (previewContents.has(path)) return closePreview(path)
+    if (diffTarget?.kind !== 'single' || editBusy.has(path)) return
+    const revId = diffTarget.commitId
+    const gen = previewGen
+    editBusy.add(path)
+    try {
+      const { content } = await api.fileShow(revId, path)
+      if (gen !== previewGen || diffTarget?.kind !== 'single' || diffTarget.commitId !== revId) return
+      previewContents = new Map(previewContents).set(path, content)
+    } catch (e) {
+      if (gen === previewGen) editError = `Preview failed: ${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      editBusy.delete(path)
+    }
   }
 
   async function startMerge(path: string) {
@@ -729,6 +777,8 @@
     editFileContents = new Map()
     editBusy.clear()
     editError = ''
+    previewGen++
+    previewContents = new Map()
     mergeSides = null
     mergingPath = null
     activeFilePath = null
@@ -960,6 +1010,9 @@
     const match = searchMatches[currentMatchIdx]
     if (!match) return
     collapsedFiles.delete(match.filePath)
+    // Preview hides diff lines → search marks don't exist in DOM. Close it
+    // so the match is visible (same auto-reveal intent as the collapse delete).
+    if (previewContents.has(match.filePath)) closePreview(match.filePath)
     // tick() ensures Svelte has flushed DOM updates (e.g. expanding a collapsed file)
     // before we query for the scroll target
     await tick()
@@ -1176,6 +1229,8 @@
             editContent={editFileContents.get(filePath)}
             editBusy={editBusy.has(filePath)}
             onedit={canMutateFiles ? startEdit : undefined}
+            onpreview={diffTarget?.kind === 'single' && !hunkReview ? togglePreview : undefined}
+            previewContent={previewContents.get(filePath)}
             onmerge={canMutateFiles ? startMerge : undefined}
             ondiscard={canMutateFiles ? discardFile : undefined}
             onsavefile={saveFile}

@@ -82,6 +82,6 @@ export function highlightLines(lines: string[], lang: string): string[] {
   return out.length === lines.length ? out : lines.map(escapeHtml)
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }

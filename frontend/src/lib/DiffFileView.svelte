@@ -8,6 +8,8 @@
   import type { SearchMatch } from './DiffPanel.svelte'
   import type { ContextMenuItem, ContextMenuHandler } from './ContextMenu.svelte'
   import FileEditor from './FileEditor.svelte'
+  import MarkdownPreview from './MarkdownPreview.svelte'
+  import { escapeHtml } from './highlighter'
 
   interface Props {
     file: DiffFile
@@ -26,6 +28,10 @@
     editContent?: string
     editBusy?: boolean
     onedit?: (path: string) => void
+    /** Toggle markdown preview. undefined = disabled (multi-rev mode). Gated
+     *  on .md extension at the render site. */
+    onpreview?: (path: string) => void
+    previewContent?: string
     ondiscard?: (path: string, sourcePath?: string) => void
     onsavefile?: (path: string, content: string) => void
     oncanceledit?: (path: string) => void
@@ -67,7 +73,7 @@
     lines: { lineNum: number | null, content: string }[]
   }
 
-  let { file, fileStats, isCollapsed, isExpanded, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, annotationsForLine, onannotationclick, hunkReview = null }: Props = $props()
+  let { file, fileStats, isCollapsed, isExpanded, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, annotationsForLine, onannotationclick, hunkReview = null }: Props = $props()
 
   // ── Hunk review derived state ────────────────────────────────────────────
   let reviewFileState: SelectionState | null = $derived(
@@ -95,6 +101,7 @@
 
   let filePath = $derived(file.filePath)
   let isConflict = $derived(fileStats?.conflict ?? false)
+  let isMarkdown = $derived(/\.md$/i.test(filePath))
 
   // Hidden context exists if there are lines before the first hunk or between
   // hunks. We can't know trailing lines (no total-line-count in diff headers)
@@ -311,10 +318,6 @@
     oncontextmenu(items, e.clientX, e.clientY)
   }
 
-  function escapeHtml(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  }
-
   function highlightSearchInText(text: string, matches: LineMatch[], currentIdx: number): string {
     const sorted = [...matches].sort((a, b) => a.startCol - b.startCol)
     let result = ''
@@ -489,6 +492,9 @@
         {#if fileStats.deletions > 0}<span class="stat-del">-{fileStats.deletions}</span>{/if}
       </span>
     {/if}
+    {#if onpreview && isMarkdown && !editing && fileStats?.type !== 'D'}
+      <button class="edit-file-btn" onclick={(e: MouseEvent) => { e.stopPropagation(); onpreview(filePath) }} title="Render markdown (mermaid diagrams supported)">{previewContent !== undefined ? 'Source' : 'Preview'}</button>
+    {/if}
     {#if onedit && !editing && fileStats?.type !== 'D'}
       <button class="edit-file-btn" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); onedit(filePath) }} title="Edit this file (switches to split view)">{editBusy ? 'Loading…' : 'Edit'}</button>
     {/if}
@@ -520,7 +526,9 @@
     {/if}
   </div>
   {#if !isCollapsed}
-    {#if effectiveSplit}
+    {#if previewContent !== undefined}
+      <MarkdownPreview content={previewContent} />
+    {:else if effectiveSplit}
       <!-- Split (side-by-side) view -->
       {#if !isExpanded && hasHiddenContext}
         <button class="expand-btn" onclick={() => onexpand?.(filePath)} aria-label="Show full context for {filePath}">

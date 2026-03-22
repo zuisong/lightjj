@@ -10,6 +10,42 @@ actionable backlog is [BACKLOG.md](../BACKLOG.md).
 
 ---
 
+## Markdown preview v1.3.0 (2026-03-22)
+
+Per-file Preview toggle for `.md` files — rendered GFM + mermaid diagrams with zoom/pan. Two-round bughunter convergence.
+
+- [x] **beautiful-mermaid over official mermaid** — synchronous `renderMermaidSVG()` means `$derived` works directly (no async-effect dance). CSS-var theming: pass `{bg: 'var(--base)', fg: 'var(--text)'}` directly → SVG contains `fill="var(--base)"` which resolves against whichever `:root` theme is active. Theme toggle (`t` key) recolors diagrams with zero JS, zero re-render — same guarantee as `tok-*` syntax highlighting. Trade-off: 6 diagram types vs official's 20+; unsupported types fall through to raw `<pre>`.
+- [x] **Lazy-load as separate 1.5MB chunk** — `ensureMermaidLoaded()` promise-memoized; first preview shows raw ` ```mermaid ` blocks for ~100ms → chunk lands → `mermaidReady` flips → `$derived html` recomputes. Memo clears on rejection (`.then(()=>{}, ()=>{loadP=null})`) so transient failures retry — the `sync.Once`-caches-errors antipattern.
+- [x] **`previewGen` generation counter** — bumped by `closePreview()` which ALL four clear-sites call. `togglePreview`'s post-await checks `gen !== previewGen`. Bug trigger: SSH-latency (440ms) `fileShow` resolves AFTER the sync hunkReview-clear effect ran → preview re-appears in review mode with no dismiss button.
+- [x] **`reviewActive = $derived(!!hunkReview)`** — the clear-effect depended on `hunkReview` directly, but that's an object changing identity on every j/k keystroke. Effect re-fired ~every-frame. The boolean derived only flips on entry/exit. The existing `expandedDiffs` clear had the same latent issue, masked by its `size > 0` guard.
+- [x] **DOMPurify `FORBID_TAGS: ['style','link','form']` + `FORBID_ATTR: ['style']`** — `USE_PROFILES: {html:true}` allows `<style>`/`<link>` which create GLOBAL stylesheets. A reviewed `.md` could hide all buttons or overlay a phishing screen, invisible in diff view, only on preview.
+- [x] **`{passive: false}` on wheel listener** — panzoom's `zoomWithWheel` calls `preventDefault()`; without it wheel-zoom ALSO scrolls parent.
+- [x] **`scrollToMatch` closes preview** — search marks don't exist when MarkdownPreview replaces diff lines. Same auto-reveal intent as `collapsedFiles.delete`.
+- [x] **`escapeHtml` consolidated** — exported from `highlighter.ts`, imported in `markdown-render.ts` + `DiffFileView.svelte`. Was triplicated.
+
+---
+
+## Watcher/merge/divergence bughunt cluster (2026-03-20, ee03b73e)
+
+Three targeted `/hunter` runs from 2026-03-18 confirmed 13 bugs; fixed + 4 bughunter-found regressions on the fixes themselves. 20 new invariant tests.
+
+- [x] **`setStale(bool)` serializes Swap+broadcast under `staleMu`** — `atomic.Bool.Swap()` then `broadcast()` is not atomic; preemption between them emits sentinels out-of-order with no self-heal (edge fires once — handler clears, loop sets, client stuck on stale=true). All 4 loop sites + 2 handler calls go through the helper. `TestWatcher_SetStale_EdgeOnlyBroadcast` locks the invariant.
+- [x] **`sshPollLoop` needs BOTH `preCached` and `lastBroadcast`** — first CAS fix dropped the local `last` tracker as "redundant with `getOpId()`"; bughunter caught the regression. They answer DIFFERENT questions: `preCached` (shared-state read) = "did someone advance cachedOp DURING the SSH call?" → CAS guard. `lastBroadcast` (local, what-WE-sent) = "did we already tell subscribers about this?" → broadcast dedup. Collapsing them = silent between-tick drop (non-mutating tabs never refresh). `TestSSHPollLoop_CASGuardsConcurrentAdvance` + `TestSSHPollLoop_BroadcastsBetweenTickMutation` cover both. `seqRunner` grew a `hook func(callIdx int)` for mid-call injection.
+- [x] **`handleEvents` refreshes cachedOp if empty** — read-only sessions (no mutations, no watcher seed) → `getOpId()==""` → frontend's `everSawEvent` heuristic concluded watcher-dead → gave up reconnect. Refreshing on SSE-connect covers local+SSH in one place. `refreshOpId` SSH fallback got a 10s timeout (bughunter bug_003: `context.Background()` alone blocks SSE setup indefinitely on hang). Frontend `mark()` helper now counts stale/fresh events as watcher-alive too.
+- [x] **`planTake` branch order: `srcEmpty` before `from===to`** — an empty line tracks as zero-width (`line.from===line.to`), so the old order made the srcEmpty deletion path unreachable → arrow-click silently no-ops. Added `oppEmpty` (opposite-side block range) to distinguish the ambiguous zero-width case: theirs has `''` here (block content, replace) vs theirs has nothing (shared LCS, insert-before with trailing `\n`). Positionally identical. `full-pipeline round-trip` sweep: 7 shapes × diffBlocks × every-block ours→theirs-back = identity.
+- [x] **`invertedEffects` restoreBlock branch** — undo dispatched `restoreBlock`, but redo had no inverse → doc changes re-applied while source-tag stayed stale (arrow dimmed, counter wrong). The branch emits `restoreBlock.of({...pre-undo state})`.
+- [x] **M_START escalated-content guard** — jj escalates marker length to `max(7, longest-content-lookalike+1)` specifically BECAUSE content contains `<{7,}` runs; re-matching `{7,}` inside that region nulls on the line jj was protecting. Shorter runs (`<mLen`) route to content; `≥mLen` = nested/malformed → bail.
+- [x] **`nVersions = Math.max(...levels)`** — `versions[0].length` crashed on `versions[1][2].commit_id` when `alignable=false` left unaligned mismatched-width columns. Optional chaining + "—" placeholders for missing cells; Keep stays disabled via `!alignable`.
+- [x] **`fileUnion` from `versions.flat()`, not tip-only** — `diffRange(tip0, tip1)` compares full trees which inherit intermediate-level changes. Tip-only fileUnion excludes those → `refineRebaseKind` subtraction is a no-op → false `pure-rebase` HIGH confidence when stacked content differs.
+- [x] **`buildKeepPlan` scans ALL loser-column `v.bookmarks`** — conflicted-only subset missed count=1 bookmarks on loser commits → `--retain-bookmarks` auto-moved them to the abandoned commit's parent (= trunk for a stack root). Silent cascade-to-trunk. Per-level repoint targets same-level keeper (not tip). Sweep Invariant-6 now populates `v.bookmarks` directly (was trivially passing on empty).
+- [x] **`crossDiffError` separate from `error`** — cross-diff fetch failure hid Keep buttons. Cleared at effect top (bughunter bug_010: early-returns left stale error displayed). `.diff-error { color: var(--red) }` (bughunter bug_018: first fix added the class but not the rule).
+
+**Accepted (not fixed):** sentinel-drop-on-full-buffer (4-element + localhost = negligible; connect-time emit recovers). `+` marker diff-mode labeled false-positive (stem-check couples to jj output format; rare, falls back to raw editor).
+
+**Deferred:** `confirmRebaseDescendants` wrong target (per-descendant parent-level tracking; keeperTip correct for tip-off common case). Mid-stack descendant display tip-filtered. `commit_id.short()` TOCTOU.
+
+---
+
 ## SSH snapshot + PR-badge fallback (2026-03-17)
 
 - [x] **SSH mode now catches remote editor saves** — `sshPollLoop` switched from `CurrentOpId` (`--ignore-working-copy`) to new `PollOpId` builder (same args minus the flag). The implicit snapshot is the snapshot path SSH mode never had — all reads use `--ignore-working-copy` and `snapshotLoop` is local-only, so remote file edits were invisible until the user ran `jj` on the remote host. One SSH round trip does snapshot + op-id read. Stale-WC sentinel routing (`isStaleWCError` → `evStaleWC`/`evFreshWC`) copied from `snapshotLoop` since the poll can now hit it. `interval <= 0` gates the loop (parity with `snapshotLoop`'s pre-existing gate — also fixes a latent `time.NewTicker(0)` panic). No safety knob for multi-workspace — standard `jj op log` honors `snapshot.auto-update-stale`, exactly as safe as `jj st`. Defending against jj itself being broken is the wrong layer.

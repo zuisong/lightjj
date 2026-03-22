@@ -48,10 +48,14 @@ function targetCommitId(nav: ReturnType<typeof createRevisionNavigator>): string
 }
 
 beforeEach(() => {
-  mockApi.revision.mockReset()
-  mockApi.diff.mockReset()
-  mockApi.files.mockReset()
-  mockApi.description.mockReset()
+  // mockReset() alone makes the mock return undefined — a prior test's
+  // leaked navigateDeferred timer (50ms debounce) firing into THIS test's
+  // beforeEach would hit `undefined.catch()` at revision-navigator:97.
+  // Default to a resolved promise so the chain is always valid.
+  mockApi.revision.mockReset().mockResolvedValue({} as never)
+  mockApi.diff.mockReset().mockResolvedValue('' as never)
+  mockApi.files.mockReset().mockResolvedValue([] as never)
+  mockApi.description.mockReset().mockResolvedValue('' as never)
 })
 
 describe('revGen await-gap race', () => {

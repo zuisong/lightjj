@@ -38,4 +38,5 @@ export const FEATURES: TutorialFeature[] = [
   { version: '1.0.0', shortcut: '3 / 4', title: 'Oplog & evolog keyboard nav', description: 'j/k and Escape now work in both panels. Enter in oplog opens the undo/restore menu at the selected entry.' },
   { version: '1.1.0', shortcut: null, title: 'SSH mode catches remote edits', description: 'Auto-refresh in --remote mode now snapshots the remote working copy \u2014 editor saves on the remote host appear in the diff within --snapshot-interval (default 5s) without running jj there.' },
   { version: '1.1.0', shortcut: null, title: 'PR badges survive git refspec quirks', description: 'Repos with refspecs jj can\'t parse (like negative globs excluding CI branches) now fall back to plain git for remote URL lookup. PR badges and the Git modal\'s remote selector both work.' },
+  { version: '1.3.0', shortcut: null, title: 'Markdown preview with mermaid', description: '.md files get a Preview button in the diff header \u2014 rendered GFM with mermaid diagrams (wheel-zoom, drag-pan, double-click to reset). Theme-aware: diagrams recolor on t toggle with zero re-render.' },
 ]
