@@ -67,10 +67,18 @@ describe('renderMarkdown', () => {
       expect(html).toContain('mermaid-fallback')
     })
 
-    it('preserves SVG through DOMPurify', () => {
+    it('SVG bypasses sanitize via placeholder (preserves internal <style>)', () => {
       const html = renderMarkdown('```mermaid\ngraph TD; A-->B\n```')
-      // USE_PROFILES.svg keeps <svg>; without it DOMPurify strips to empty div
-      expect(html).toMatch(/<svg[^>]*>/)
+      expect(html).toContain('<svg')
+      expect(html).toContain('mermaid-block')
+      // The mock returns <svg data-src=...> — verify placeholder-replace worked
+      expect(html).not.toContain('data-mermaid=')
+    })
+
+    it('markdown <style> still stripped even though mermaid bypasses sanitize', () => {
+      const html = renderMarkdown('<style>body{display:none}</style>\n```mermaid\ngraph TD; A\n```')
+      expect(html).not.toContain('<style>body')
+      expect(html).toContain('<svg')  // mermaid survived, user <style> didn't
     })
 
     it('non-mermaid fences use default code block', () => {
