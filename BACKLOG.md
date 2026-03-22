@@ -38,6 +38,7 @@ The only non-trivial carryover from the 2026-03-20 fix cluster:
 
 ## Advanced features (roadmap 2.0)
 
+- [ ] **Merge mode + file history** (Large, phased v1.4→1.7) — Kaleidoscope-inspired: promote conflict resolution to `activeView='merge'` with a cross-file conflict queue, add per-file revision history browser with two-cursor compare. Key unlock: `jj resolve -r <rev> --tool` + `merge-args $base/$left/$right/$output` solves non-`@` resolution AND deprecates `reconstructSides()` marker parsing (pattern proven at `writeHunkToolConfig`). Full plan: [docs/plan-merge-mode.md](docs/plan-merge-mode.md).
 - [ ] **Mega-file virtualization** (Low) — manual expand of 5000-line file renders all lines. Auto-collapse at 500 + total-line collapse at 2000 mitigate; `@tanstack/virtual` on the per-hunk `{#each}` inside DiffFileView would be the full fix.
 - [ ] **Search across revisions** (Medium) — `jj log -r 'description(glob:"*query*")'` or tree-grep. Needs design.
 - [ ] **SSH remote repo browser** (Low) — discover repos on remote host, open as tabs.

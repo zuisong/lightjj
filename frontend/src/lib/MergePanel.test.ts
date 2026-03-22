@@ -48,11 +48,11 @@ describe('MergePanel — toolbar', () => {
 
   it('busy prop disables Save and Cancel buttons (cycle stays enabled)', () => {
     const { container } = render(MergePanel, { props: props({ busy: true }) })
-    // Template order: [cycle, save, cancel] — see MergePanel.svelte toolbar.
-    const [cycle, save, cancel] = container.querySelectorAll<HTMLButtonElement>('.merge-btn')
-    expect(save.disabled).toBe(true)
-    expect(cancel.disabled).toBe(true)
-    expect(cycle.disabled).toBe(false)  // pane toggle is harmless during save
+    const btns = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+    const byText = (t: string) => btns.find(b => b.textContent?.includes(t))!
+    expect(byText('Sav').disabled).toBe(true)   // 'Save' or 'Saving…'
+    expect(byText('Cancel').disabled).toBe(true)
+    expect(byText('◫').disabled).toBe(false)    // cycle — pane toggle harmless during save
   })
 
   it('Save button fires onsave with center content (seeded = theirs)', async () => {
@@ -131,6 +131,190 @@ describe('MergePanel — keyboard swallowing', () => {
     panel.dispatchEvent(ev)
     expect(spy).toHaveBeenCalled()
     expect(oncancel).not.toHaveBeenCalled()  // CM6 already handled; don't re-fire
+  })
+})
+
+describe('MergePanel — block navigation', () => {
+  // 3 differing lines → 3 blocks. Nav invariant: [/] wrap at boundaries,
+  // and [/] do NOT navigate when focus is inside the editable center pane
+  // (brackets are valid source characters).
+  const threeBlocks = () => props({
+    sides: sides('A\n1\nB\n2\nC\n3\nD', 'A\nX\nB\nY\nC\nZ\nD'),
+  })
+
+  function navPos(container: Element): string {
+    return container.querySelector('.merge-nav-pos')?.textContent?.trim() ?? ''
+  }
+
+  it('nav pill shows "1 of N" initially', () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    expect(navPos(container)).toBe('1 of 3')
+  })
+
+  it('nav pill hidden when ours === theirs (zero blocks)', () => {
+    const { container } = render(MergePanel, { props: props({
+      sides: sides('same', 'same'),
+    }) })
+    expect(container.querySelector('.merge-nav')).toBeNull()
+  })
+
+  it.each([
+    // [key-sequence, expected final "N of 3"]
+    [[']'], '2 of 3'],
+    [[']', ']'], '3 of 3'],
+    [[']', ']', ']'], '1 of 3'],          // wraps forward
+    [['['], '3 of 3'],                    // wraps backward from start
+    [['[', '['], '2 of 3'],
+    [[']', '[', ']'], '2 of 3'],          // mixed
+  ])('[/] wrap-around: %j → %s', async (keys, expected) => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const panel = container.querySelector('.merge-panel')!
+    for (const k of keys) {
+      await fireEvent.keyDown(panel, { key: k })
+    }
+    expect(navPos(container)).toBe(expected)
+  })
+
+  it('[/] inside center pane do NOT navigate (valid source chars)', async () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const center = container.querySelector('.merge-center')!
+    await fireEvent.keyDown(center, { key: ']' })
+    // Focus in center → bracket is a typed character, not nav. Position stays.
+    expect(navPos(container)).toBe('1 of 3')
+  })
+
+  it('toolbar nav buttons advance/retreat regardless of focus', async () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const [prev, next] = container.querySelectorAll<HTMLButtonElement>('.merge-nav-btn')
+    await fireEvent.click(next)
+    expect(navPos(container)).toBe('2 of 3')
+    await fireEvent.click(prev)
+    expect(navPos(container)).toBe('1 of 3')
+  })
+
+  it('arrow click updates currentBlockIdx (nav continuity)', async () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    // Click the 3rd ours-arrow. takeBlock(2, 'ours') should set currentBlockIdx=2.
+    const oursArrows = container.querySelectorAll<HTMLButtonElement>('.merge-arrow-ours')
+    expect(oursArrows.length).toBe(3)
+    await fireEvent.click(oursArrows[2])
+    expect(navPos(container)).toBe('3 of 3')
+  })
+
+  it('current-block ring follows navigation', async () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const panel = container.querySelector('.merge-panel')!
+    const rings = () => container.querySelectorAll('.merge-arrow-current')
+    // Initially block 0: 2 arrows (ours + theirs) have the ring.
+    expect(rings().length).toBe(2)
+    await fireEvent.keyDown(panel, { key: ']' })
+    // Still 2 — ring moved to block 1's pair.
+    expect(rings().length).toBe(2)
+    const oursArrows = container.querySelectorAll('.merge-arrow-ours')
+    expect(oursArrows[1].classList.contains('merge-arrow-current')).toBe(true)
+    expect(oursArrows[0].classList.contains('merge-arrow-current')).toBe(false)
+  })
+})
+
+describe('MergePanel — minimap', () => {
+  const threeBlocks = () => props({
+    sides: sides('A\n1\nB\n2\nC\n3\nD', 'A\nX\nB\nY\nC\nZ\nD'),
+  })
+
+  it('renders one chip per block', () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    expect(container.querySelectorAll('.merge-minimap-chip')).toHaveLength(3)
+  })
+
+  it('chip click scrolls to block and updates currentBlockIdx', async () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const chips = container.querySelectorAll<HTMLButtonElement>('.merge-minimap-chip')
+    await fireEvent.click(chips[2])
+    expect(container.querySelector('.merge-nav-pos')?.textContent?.trim()).toBe('3 of 3')
+    expect(chips[2].classList.contains('merge-minimap-current')).toBe(true)
+  })
+
+  it('chips seed with theirs-source color (center seeds with theirs)', () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const chips = container.querySelectorAll('.merge-minimap-chip')
+    for (const chip of chips) {
+      expect(chip.classList.contains('merge-minimap-theirs')).toBe(true)
+    }
+  })
+
+  it('chip color flips to ours after takeBlock', async () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const oursArrows = container.querySelectorAll<HTMLButtonElement>('.merge-arrow-ours')
+    await fireEvent.click(oursArrows[1])
+    const chips = container.querySelectorAll('.merge-minimap-chip')
+    expect(chips[1].classList.contains('merge-minimap-ours')).toBe(true)
+    expect(chips[0].classList.contains('merge-minimap-theirs')).toBe(true)  // unchanged
+  })
+
+  it('chip positions are proportional to line numbers (invariant: monotone top%)', () => {
+    const { container } = render(MergePanel, { props: threeBlocks() })
+    const chips = [...container.querySelectorAll<HTMLElement>('.merge-minimap-chip')]
+    const tops = chips.map(c => parseFloat(c.style.top))
+    // blocks[i].bFrom strictly increases → top% strictly increases
+    for (let i = 1; i < tops.length; i++) {
+      expect(tops[i]).toBeGreaterThan(tops[i - 1])
+    }
+  })
+})
+
+describe('MergePanel — takeAll', () => {
+  // The strongest invariant: after takeAll(side), Save emits exactly that
+  // side's content. This round-trips through planTake's separator-math for
+  // every block, so it catches position-drift bugs the per-block tests miss.
+  const threeBlocks = sides('A\n1\nB\n2\nC\n3\nD', 'A\nX\nB\nY\nC\nZ\nD')
+
+  it.each([
+    ['ours',   threeBlocks.ours],
+    ['theirs', threeBlocks.theirs],
+  ] as const)('takeAll(%s) → center content === sides.%s', async (side, expected) => {
+    const onsave = vi.fn()
+    const { container } = render(MergePanel, { props: { ...props({ onsave }), sides: threeBlocks } })
+    const btn = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+      .find(b => b.textContent?.toLowerCase().includes(`all ${side}`))!
+    await fireEvent.click(btn)
+    await fireEvent.click(container.querySelector('.merge-save')!)
+    expect(onsave).toHaveBeenCalledWith(expected)
+  })
+
+  it('takeAll flips every minimap chip to that side', async () => {
+    const { container } = render(MergePanel, { props: { ...props(), sides: threeBlocks } })
+    const allOurs = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+      .find(b => b.textContent?.includes('All ours'))!
+    await fireEvent.click(allOurs)
+    const chips = container.querySelectorAll('.merge-minimap-chip')
+    for (const chip of chips) {
+      expect(chip.classList.contains('merge-minimap-ours')).toBe(true)
+    }
+  })
+
+  it('takeAll hidden when zero blocks (identical sides)', () => {
+    const { container } = render(MergePanel, { props: props({
+      sides: sides('same', 'same'),
+    }) })
+    expect(container.querySelector('.merge-btn-ours')).toBeNull()
+    expect(container.querySelector('.merge-btn-theirs')).toBeNull()
+  })
+
+  it('takeAll buttons disabled during busy (bug_009 — no mutation mid-save)', () => {
+    const { container } = render(MergePanel, { props: { ...props({ busy: true }), sides: threeBlocks } })
+    const allOurs = container.querySelector<HTMLButtonElement>('.merge-btn-ours')!
+    const allTheirs = container.querySelector<HTMLButtonElement>('.merge-btn-theirs')!
+    expect(allOurs.disabled).toBe(true)
+    expect(allTheirs.disabled).toBe(true)
+  })
+
+  it('counter reaches N/N after takeAll(ours) — every block resolved', async () => {
+    const { container } = render(MergePanel, { props: { ...props(), sides: threeBlocks } })
+    const allOurs = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+      .find(b => b.textContent?.includes('All ours'))!
+    await fireEvent.click(allOurs)
+    expect(container.querySelector('.merge-counter')?.textContent?.trim()).toMatch(/3\/3/)
+    expect(container.querySelector('.merge-counter')?.classList.contains('merge-done')).toBe(true)
   })
 })
 

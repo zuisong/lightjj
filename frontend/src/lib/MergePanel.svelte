@@ -168,11 +168,18 @@
   let theirsArrows: ArrowSlot[] = $state([])
   let scrollTop = $state(0)
 
+  // Keyboard nav cursor. Updated by [/] keys and arrow clicks; drives the
+  // "Block N of M" pill and the .merge-arrow-current ring. Not derived from
+  // scrollTop — explicit nav is more predictable than viewport-nearest when
+  // multiple blocks fit on screen.
+  let currentBlockIdx = $state(0)
+
   // Immutable at mount (parent uses {#key mergingPath}). Flank content never
   // changes; only center edits matter and those are tracked via StateField.
   // untrack silences state_referenced_locally — prop IS mount-invariant here.
   const oursLines = untrack(() => sides.ours).split('\n')
   const theirsLines = untrack(() => sides.theirs).split('\n')
+  const totalLines = theirsLines.length  // center seeds with theirs → minimap scale
 
   // blocks[i] is the merge unit for arrow i. aFrom/aTo = ours lines,
   // bFrom/bTo = theirs (= initial center) lines. Both 1-indexed half-open.
@@ -404,6 +411,34 @@
       effects: applyBlock.of({ idx, side, newFrom: plan.newTrack.from, newTo: plan.newTrack.to }),
       scrollIntoView: true,
     })
+    currentBlockIdx = idx
+  }
+
+  /** Scroll center pane so block `i` is centered. Reads live position from
+   *  trackerField (remapped through all edits), not the static `blocks[]`. */
+  function scrollToBlock(i: number) {
+    if (!centerView || !trackerField || i < 0 || i >= blocks.length) return
+    const pos = centerView.state.field(trackerField)[i].from
+    centerView.dispatch({
+      effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+    })
+    currentBlockIdx = i
+  }
+
+  /** [/] nav: wraps at ends. No-op when blocks.length === 0 (no conflicts). */
+  function navBlock(delta: 1 | -1) {
+    if (blocks.length === 0) return
+    const n = blocks.length
+    scrollToBlock(((currentBlockIdx + delta) % n + n) % n)
+  }
+
+  /** Apply one side to every block. Synchronous dispatches land within CM6
+   *  history's newGroupDelay (500ms) → typically one Cmd+Z undoes the batch.
+   *  Empty-source blocks included — "take ours" when ours has nothing means
+   *  delete center content there (planTake's srcEmpty branch), which is the
+   *  correct semantics for "give me everything from the ours side". */
+  function takeAll(side: 'ours' | 'theirs') {
+    for (let i = 0; i < blocks.length; i++) takeBlock(i, side)
   }
 
   function save() {
@@ -449,6 +484,13 @@
       return
     }
     if (e.key === 'Escape') { tryCancel(); e.stopPropagation(); return }
+    // Block nav. [/] are valid source chars — only hijack when focus is NOT in
+    // the editable center pane. Toolbar nav buttons work regardless of focus.
+    // (Alt+] produces "'" on macOS, so an in-editor chord isn't portable.)
+    if (!centerEl?.contains(e.target as Node)) {
+      if (e.key === ']') { navBlock(1); e.preventDefault(); e.stopPropagation(); return }
+      if (e.key === '[') { navBlock(-1); e.preventDefault(); e.stopPropagation(); return }
+    }
     e.stopPropagation()
   }
 
@@ -477,9 +519,18 @@
       <span class="merge-counter" class:merge-done={pendingCount === 0}>
         {blocks.length - pendingCount}/{blocks.length}
       </span>
+      <div class="merge-nav">
+        <button class="merge-nav-btn" onclick={() => navBlock(-1)} title="Previous block ([)">‹</button>
+        <span class="merge-nav-pos">{currentBlockIdx + 1} of {blocks.length}</span>
+        <button class="merge-nav-btn" onclick={() => navBlock(1)} title="Next block (])">›</button>
+      </div>
     {/if}
     {#if error}<span class="merge-error" title={error}>⚠ {error}</span>{/if}
     <span class="merge-spacer"></span>
+    {#if blocks.length > 0}
+      <button class="merge-btn merge-btn-ours" onclick={() => takeAll('ours')} disabled={busy} title="Take ours for every block">→→ All ours</button>
+      <button class="merge-btn merge-btn-theirs" onclick={() => takeAll('theirs')} disabled={busy} title="Take theirs for every block">All theirs ←←</button>
+    {/if}
     <button class="merge-btn" onclick={cycle} title="Toggle pane visibility">
       {hiddenFlank === null ? '◫◫◫' : hiddenFlank === 'theirs' ? '◫◫▯' : '▯◫◫'}
     </button>
@@ -491,11 +542,15 @@
 
   <div class="merge-headers">
     {#if hiddenFlank !== 'ours'}
-      <div class="merge-header merge-header-ours">⬅ {sides.oursLabel || 'Ours (side #1)'}</div>
+      <div class="merge-header merge-header-ours">
+        ⬅ {#if sides.oursRef}<code class="merge-ref">{sides.oursRef.changeId.slice(0, 8)}</code> · {/if}{sides.oursLabel || 'Ours (side #1)'}
+      </div>
     {/if}
     <div class="merge-header merge-header-center">✎ Result</div>
     {#if hiddenFlank !== 'theirs'}
-      <div class="merge-header merge-header-theirs">{sides.theirsLabel || 'Theirs (side #2)'} ➡</div>
+      <div class="merge-header merge-header-theirs">
+        {#if sides.theirsRef}<code class="merge-ref">{sides.theirsRef.changeId.slice(0, 8)}</code> · {/if}{sides.theirsLabel || 'Theirs (side #2)'} ➡
+      </div>
     {/if}
   </div>
 
@@ -508,6 +563,7 @@
           <button
             class="merge-arrow merge-arrow-ours"
             class:merge-arrow-applied={slot.source === 'ours'}
+            class:merge-arrow-current={i === currentBlockIdx}
             style="transform: translateY({slot.y - scrollTop}px)"
             onclick={() => takeBlock(i, 'ours')}
             title={slot.source === 'ours' ? 'Already using ours' : 'Take ours for this hunk'}
@@ -524,6 +580,7 @@
           <button
             class="merge-arrow merge-arrow-theirs"
             class:merge-arrow-applied={slot.source === 'theirs'}
+            class:merge-arrow-current={i === currentBlockIdx}
             style="transform: translateY({slot.y - scrollTop}px)"
             onclick={() => takeBlock(i, 'theirs')}
             title={slot.source === 'theirs' ? 'Already using theirs' : 'Take theirs for this hunk'}
@@ -533,6 +590,22 @@
       {/each}
     </div>
     <div class="merge-pane" class:merge-hidden={hiddenFlank === 'theirs'} bind:this={theirsEl}></div>
+    <!-- Minimap: proportional chips showing where blocks sit in the file.
+         Positions from theirs-lines (immutable — "where are conflicts" doesn't
+         change during resolution, only the source color does). -->
+    <div class="merge-minimap">
+      {#each blocks as blk, i (i)}
+        {@const src = oursArrows[i]?.source ?? 'theirs'}
+        <button
+          class="merge-minimap-chip merge-minimap-{src}"
+          class:merge-minimap-current={i === currentBlockIdx}
+          style="top: {(blk.bFrom - 1) / totalLines * 100}%; height: max(3px, {(blk.bTo - blk.bFrom) / totalLines * 100}%)"
+          onclick={() => scrollToBlock(i)}
+          title="Block {i + 1}"
+          aria-label="Jump to block {i + 1}"
+        ></button>
+      {/each}
+    </div>
   </div>
 </div>
 
@@ -574,6 +647,35 @@
     color: var(--green);
   }
 
+  .merge-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--subtext0);
+  }
+  .merge-nav-pos {
+    padding: 0 6px;
+    min-width: 6ch;
+    text-align: center;
+  }
+  .merge-nav-btn {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid var(--surface1);
+    background: var(--surface0);
+    color: var(--text);
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1;
+    transition: background 120ms ease;
+  }
+  .merge-nav-btn:hover { background: var(--surface1); }
+
   .merge-error {
     font-size: 10px;
     padding: 2px 8px;
@@ -609,6 +711,14 @@
   .merge-save:hover {
     background: color-mix(in srgb, var(--green) 22%, var(--surface0));
   }
+  .merge-btn-ours {
+    border-color: color-mix(in srgb, var(--green) 30%, var(--surface1));
+    color: color-mix(in srgb, var(--green) 70%, var(--text));
+  }
+  .merge-btn-theirs {
+    border-color: color-mix(in srgb, var(--blue) 30%, var(--surface1));
+    color: color-mix(in srgb, var(--blue) 70%, var(--text));
+  }
 
   /* ── Pane headers ────────────────────────────────────────────────────── */
 
@@ -643,6 +753,11 @@
     border-right: 3px solid var(--blue);
     background: color-mix(in srgb, var(--blue) 4%, transparent);
     text-align: right;
+  }
+  .merge-ref {
+    font-family: var(--font-mono);
+    color: var(--amber);
+    font-size: 9px;
   }
 
   /* ── Pane layout ─────────────────────────────────────────────────────── */
@@ -733,6 +848,42 @@
   .merge-arrow-applied:hover {
     /* Re-apply on hover: subtle lift but stays muted */
     opacity: 0.6;
+  }
+  .merge-arrow-current {
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+  }
+  /* bug_005: applied arrows sit at opacity 0.25 — the amber ring inherits that
+     and becomes near-invisible. Keep the ring readable when both classes apply. */
+  .merge-arrow-current.merge-arrow-applied { opacity: 0.6; }
+
+  /* ── Minimap ─────────────────────────────────────────────────────────── */
+
+  .merge-minimap {
+    position: relative;
+    width: 12px;
+    flex-shrink: 0;
+    background: var(--crust);
+    border-left: 1px solid var(--surface0);
+  }
+  .merge-minimap-chip {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    padding: 0;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  /* Colors mirror .merge-from-* so the eye maps minimap → center highlight. */
+  .merge-minimap-theirs { background: var(--blue); opacity: 0.5; }
+  .merge-minimap-ours   { background: var(--green); opacity: 0.5; }
+  .merge-minimap-mixed  { background: var(--amber); opacity: 0.5; }
+  .merge-minimap-chip:hover { opacity: 0.8; }
+  /* bug_015: :hover (0,1,1) beat .current (0,1,0) — two-class selector wins. */
+  .merge-minimap-chip.merge-minimap-current {
+    opacity: 1;
+    outline: 1px solid var(--amber);
   }
 
   /* ── Diff highlights ─────────────────────────────────────────────────── */

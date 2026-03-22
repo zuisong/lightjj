@@ -383,3 +383,63 @@ describe('reconstructSides', () => {
     expect(r.theirs).toBe('# README\n-------\ntheirs\n%%%%%%%\nfooter')
   })
 })
+
+describe('reconstructSides — SideRef parsing', () => {
+  // jj emits `changeId commitId "description"` when it can attribute a side.
+  // change_id uses [k-z] alphabet (disambiguates from hex commit_id).
+
+  it.each([
+    // [marker-label-text, expected-ref | undefined]
+    ['wlykovwr 562576c8 "commit msg"',           { changeId: 'wlykovwr', commitId: '562576c8' }],
+    ['diff to: xyzmnopq 99aabbcc "to commit"',   { changeId: 'xyzmnopq', commitId: '99aabbcc' }],
+    ['diff from: klmnopqr 12345678 "from"',      { changeId: 'klmnopqr', commitId: '12345678' }],
+    ['Contents of side #1',                      undefined],
+    ['Changes from base to side #2',             undefined],
+    ['abc12345 562576c8 "hex-like changeId"',    undefined],  // change_id must be [k-z]
+    ['wlykovwr nothex "non-hex commit"',         undefined],
+  ])('parses %j → %j', (label, expected) => {
+    const raw = [
+      'common',
+      '<<<<<<<',
+      `+++++++ ${label}`,
+      'ours',
+      '+++++++ theirs-side',
+      'theirs',
+      '>>>>>>>',
+      'common',
+    ].join('\n')
+    const r = reconstructSides(raw)!
+    expect(r.oursRef).toEqual(expected)
+  })
+
+  it('both sides get refs independently', () => {
+    const raw = [
+      '<<<<<<<',
+      '+++++++ wlykovwr 562576c8 "ours commit"',
+      'ours',
+      '+++++++ xyzmnopq 99aabbcc "theirs commit"',
+      'theirs',
+      '>>>>>>>',
+    ].join('\n')
+    const r = reconstructSides(raw)!
+    expect(r.oursRef).toEqual({ changeId: 'wlykovwr', commitId: '562576c8' })
+    expect(r.theirsRef).toEqual({ changeId: 'xyzmnopq', commitId: '99aabbcc' })
+  })
+
+  it('\\\\\\\\\\\\\\ "to:" ref overrides %%%%%%% "from:" ref (same as label precedence)', () => {
+    const raw = [
+      '<<<<<<<',
+      '%%%%%%% diff from: zzzzzzzz 11111111 "base — should NOT be oursRef"',
+      '\\\\\\\\\\\\\\ diff to: wlykovwr 562576c8 "ours — the real ref"',
+      ' ctx',
+      '-old',
+      '+new',
+      '+++++++ xyzmnopq 99aabbcc "theirs"',
+      'theirs',
+      '>>>>>>>',
+    ].join('\n')
+    const r = reconstructSides(raw)!
+    // The "to:" ref is what :ours keeps → that's the one MergePanel should show.
+    expect(r.oursRef?.changeId).toBe('wlykovwr')
+  })
+})

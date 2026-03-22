@@ -30,44 +30,39 @@ The current flow forces: open DiffPanel → spot a conflict badge → click "Res
 
 **Goal:** Make the existing per-file editor feel like a polished tool before widening scope. Each item is self-contained.
 
-### 1.1 Conflict navigation within a file
+### 1.1 Conflict navigation within a file ✅
 
 Kaleidoscope's bottom-right "Conflict 1 of 10 ⬆ ⬇".
 
 - **Data:** Already in `blocks[]` — each `ChangeBlock` is one conflict. `pendingCount` already derived.
-- **UI:** Bottom-right nav pill in toolbar. `n`/`p` keyboard (or `]`/`[` to match vim-diff). Scrolls center pane to block `i`, flashes the highlight.
-- **Impl:** `scrollToBlock(i)` → `centerView.dispatch({ effects: EditorView.scrollIntoView(tracked[i].from, { y: 'center' }) })`. `currentBlockIdx` tracked via an `IntersectionObserver` on a sentinel decoration, or simpler: derived from `scrollTop` vs `tracked[i].from` line position.
+- **UI:** "N of M" nav pill in toolbar with ‹/› buttons. `]`/`[` keyboard (vim-diff style). Amber outline ring on current block's arrows.
+- **Impl:** `scrollToBlock(i)` → `centerView.dispatch({ effects: EditorView.scrollIntoView(tracked[i].from, { y: 'center' }) })`. `currentBlockIdx` is **explicit state**, not scrollTop-derived — predictable when multiple blocks fit on screen. Updated by `[`/`]`, nav buttons, and arrow clicks (nav continuity). Keys gated on `!centerEl.contains(target)` — `[`/`]` are valid source chars, can't hijack typing.
 
-### 1.2 Minimap gutter
+### 1.2 Minimap gutter ✅
 
 Kaleidoscope's right-edge color strip showing where conflicts sit in the file.
 
-- **Impl:** Absolute-positioned `<div class="merge-minimap">` right of theirs pane, height = pane height. Each block renders a colored chip at `y = (block.from / docLength) * paneHeight`, height = `(block.to - block.from) / docLength * paneHeight` (min 3px). Color = `source` (amber=theirs/unresolved, green=ours, subtext=mixed). Click-to-scroll.
-- **Cheap:** No new deps. ~40 lines.
+- **Impl:** 12px right-edge strip. Chips at `top = (blk.bFrom - 1) / totalLines * 100%`, `height = max(3px, (bTo - bFrom) / totalLines * 100%)`. Positions from **immutable theirs-lines** — "where are conflicts" doesn't change during resolution, only color does. Color from `oursArrows[i].source` (already reactive). Click → `scrollToBlock(i)`. Current chip gets amber outline + `opacity: 1`.
+- **~50 lines, zero new tracking.**
 
-### 1.3 Rich commit metadata in column headers
+### 1.3 Rich commit metadata in column headers ✅ (partial — refs only)
 
 Current headers show only `sides.oursLabel` (the quoted commit description from conflict markers). Kaleidoscope shows author + commit-id + date + message.
 
-- **Problem:** `reconstructSides()` extracts `extractSideLabel()` → just the quoted description. The full marker line looks like `wlykovwr 562576c8 "commit message"` — the change-id and commit-id are RIGHT THERE, we're throwing them away.
-- **Fix:** `conflict-extract.ts`: return `MergeSideMeta = { label, changeId?, commitId? }` instead of bare string. Parse with `/^(\w+)\s+(\w+)\s+"(.+)"/`.
-- **Enrichment:** `startMerge()` in DiffPanel fires `api.revision(commitId)` for each side (cached, so free on revisit) → `MergePanel` receives `{sides, oursCommit?, theirsCommit?}` → header shows `change_id · author · timestamp.ago() · message`.
-- **Fallback:** Marker format varies (`side #1` vs commit-ref). If regex misses, keep current behavior.
+- **Problem:** `reconstructSides()` extracted `extractSideLabel()` → just the quoted description. The full marker line looks like `wlykovwr 562576c8 "commit message"` — the change-id and commit-id were RIGHT THERE, we were throwing them away.
+- **Shipped:** `MergeSides` gains optional `oursRef?: {changeId, commitId}` / `theirsRef?`. `parseRef()` regex `/(?:diff (?:from|to):\s*)?([k-z]{8,})\s+([0-9a-f]{8,})\s+"(.+)"/` — the `[k-z]` alphabet is jj's change-id disambiguation from hex commit-id. `setLabel()` helper consolidates the 3 label-setting sites. Headers render `<code>changeId</code> · label` when ref present.
+- **Deferred:** `api.revision(commitId)` enrichment for author/date. The refs-only version is 80% of the value at 20% of the complexity.
+- **Fallback:** Generic "side #N" markers → no ref → header shows label only (unchanged).
 
-### 1.4 "Take all ours" / "Take all theirs" bulk actions
+### 1.4 "Take all ours" / "Take all theirs" bulk actions ✅
 
-- Toolbar buttons: `→→ All ours` / `All theirs ←←`.
-- Loop `takeBlock(i, side)` over all `blocks`. Already idempotent, so safe.
-- Add a single `history` transaction annotation so one Cmd+Z undoes the batch (wrap in `centerView.dispatch({ annotations: Transaction.addToHistory.of(true) })` per-block OR build one composite changeset — the latter is cleaner but needs `planTake` to return the full plan list first, then dispatch once).
+- Toolbar buttons: `→→ All ours` / `All theirs ←←` (green/blue tinted to match flank colors).
+- `takeAll(side)` loops `takeBlock(i, side)`. Synchronous dispatches land within CM6's `newGroupDelay` (500ms) → typically one Cmd+Z undoes the batch. Empty-source blocks included — "take ours" when ours has nothing = delete center content (planTake's srcEmpty branch), semantically correct.
+- **Invariant test:** `takeAll(side) → save() emits sides[side]`. Round-trips through every block's planTake separator-math.
 
-### 1.5 Keyboard-first block navigation
+### 1.5 Keyboard-first block navigation — DEFERRED
 
-Current: mouse-only arrows.
-
-- `]` / `[` → next/prev block (scrolls + highlights)
-- `h` / `l` (or `←` / `→`) → take ours / take theirs **for the current block** (the one under cursor or last-navigated)
-- `Space` → toggle block source (ours ↔ theirs)
-- Gate behind a "nav mode" so normal CM6 editing isn't hijacked. Toggle via `Esc` (nav) / `i` or click (edit) — vim-modal style.
+`]`/`[` (from 1.1) already work when focus is outside the center pane — clicking a flank or toolbar = nav keys active; clicking center = editing active. That's a natural nav/edit split without explicit modal state. Adding `h`/`l`/`Space` + an `i`/`Esc` toggle is over-engineering until a user asks for it. YAGNI.
 
 ## Phase 2 — Merge Mode (`activeView='merge'`)
 
@@ -213,10 +208,10 @@ jj's conflict model supports "take both" (concatenate) for additive conflicts (e
 | 4.4 | Auto-resolve trivial | S | base-relative LCS |
 
 **Suggested batching:**
-- **v1.3.0:** Phase 1 complete (MergePanel polish). Low-risk, touches one component.
-- **v1.4.0:** Phase 2 (merge mode). New `activeView`, backend endpoint, one new component.
-- **v1.5.0:** Phase 3 (file history). Standalone feature, minimal coupling.
-- **v1.6.0:** Phase 4 cherry-picked by demand.
+- **v1.4.0:** Phase 1 complete (MergePanel polish). Low-risk, touches one component.
+- **v1.5.0:** Phase 2 (merge mode). New `activeView`, backend endpoint, one new component.
+- **v1.6.0:** Phase 3 (file history). Standalone feature, minimal coupling.
+- **v1.7.0:** Phase 4 cherry-picked by demand.
 
 ## Open questions
 

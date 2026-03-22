@@ -120,7 +120,12 @@
   let previewGen = 0
 
   function closePreview(path: string) {
-    previewGen++
+    // NO gen bump — single-file close. All callers guard on has(path) so
+    // there's never an in-flight fetch for THIS path; editBusy prevents
+    // same-file double-click. Bumping the GLOBAL gen here would invalidate
+    // OTHER files' in-flight fetches (close CHANGELOG → README's pending
+    // fetch silently drops). Bulk clears (nav reset, hunkReview entry)
+    // bump previewGen at their own sites.
     previewContents = new Map([...previewContents].filter(([p]) => p !== path))
   }
 

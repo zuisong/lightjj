@@ -13,12 +13,30 @@
 
 import { extractSideLabel } from './conflict-parser'
 
+/** Commit refs parsed from a conflict-marker label. Present when jj emits
+ *  `changeId commitId "description"` format; absent for the generic
+ *  "Contents of side #N" / "Changes from base to side #N" forms. */
+export interface SideRef { changeId: string; commitId: string }
+
 export interface MergeSides {
   base: string
   ours: string
   theirs: string
   oursLabel: string
   theirsLabel: string
+  oursRef?: SideRef
+  theirsRef?: SideRef
+}
+
+// jj's label format after optional "diff from:"/"diff to:" prefix:
+//   wlykovwr 562576c8 "commit description"
+// change_id is [k-z] (jj uses k-z to disambiguate from hex commit_id),
+// commit_id is [0-9a-f]. Both ≥8 chars (short form).
+const REF_RE = /(?:diff (?:from|to):\s*)?([k-z]{8,})\s+([0-9a-f]{8,})\s+"(.+)"/
+
+function parseRef(lbl: string): SideRef | undefined {
+  const m = lbl.match(REF_RE)
+  return m ? { changeId: m[1], commitId: m[2] } : undefined
 }
 
 // Marker pattern. Only M_START is a static regex — it discovers the marker
@@ -70,6 +88,16 @@ export function reconstructSides(raw: string): MergeSides | null {
   const theirs: string[] = []
   let oursLabel = ''
   let theirsLabel = ''
+  let oursRef: SideRef | undefined
+  let theirsRef: SideRef | undefined
+
+  // Sets label + ref for the current side. Called from each marker handler.
+  const setLabel = (lbl: string) => {
+    const label = extractSideLabel(lbl)
+    const ref = parseRef(lbl)
+    if (sideNum === 1) { oursLabel = label; if (ref) oursRef = ref }
+    else { theirsLabel = label; if (ref) theirsRef = ref }
+  }
 
   let mode: Mode = 'out'
   let sideNum = 0 // 1 = ours, 2 = theirs. 0 = not yet in a side section.
@@ -133,16 +161,12 @@ export function reconstructSides(raw: string): MergeSides | null {
       // %%%%%%% label is "from: <base>" — provisional, overwritten by \\\\\\\
       // "to:" sub-marker below if present. Fallback is correct for the
       // "Changes from base to side #N" format (no sub-marker, names result).
-      const label = extractSideLabel(lbl)
-      if (sideNum === 1) oursLabel = label
-      else theirsLabel = label
+      setLabel(lbl)
       continue
     }
     if (mode === 'diff' && (lbl = matchMarker(line, '\\', mLen)) !== null) {
       // \\\\\\\ "to:" names what this diff transforms INTO — the real side label.
-      const label = extractSideLabel(lbl)
-      if (sideNum === 1) oursLabel = label
-      else theirsLabel = label
+      setLabel(lbl)
       continue
     }
     // The + marker CAN follow a %%%%%%% section (Diff-style: diff then snapshot).
@@ -159,9 +183,7 @@ export function reconstructSides(raw: string): MergeSides | null {
       sideNum++
       if (sideNum > 2) return null
       mode = 'snap'
-      const label = extractSideLabel(lbl)
-      if (sideNum === 1) oursLabel = label
-      else theirsLabel = label
+      setLabel(lbl)
       continue
     }
     // M_BASE only appears in Snapshot style — NEVER after a %%%%%%% section
@@ -221,5 +243,7 @@ export function reconstructSides(raw: string): MergeSides | null {
     theirs: theirs.join('\n'),
     oursLabel,
     theirsLabel,
+    oursRef,
+    theirsRef,
   }
 }
