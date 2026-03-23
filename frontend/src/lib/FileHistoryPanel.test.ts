@@ -53,9 +53,9 @@ const kd = (c: ReturnType<typeof render>['component'], key: string) =>
   (c as { handleKeydown: (e: KeyboardEvent) => boolean }).handleKeydown(new KeyboardEvent('keydown', { key }))
 
 describe('FileHistoryPanel', () => {
-  it('fetches history for the given path on mount', async () => {
+  it('fetches history for the given path on mount (mutable-scoped by default)', async () => {
     await mount()
-    expect(mockHistory).toHaveBeenCalledWith('src/lib/api.ts')
+    expect(mockHistory).toHaveBeenCalledWith('src/lib/api.ts', false)
   })
 
   it('j/k moves cursorB, clamps at bounds', async () => {

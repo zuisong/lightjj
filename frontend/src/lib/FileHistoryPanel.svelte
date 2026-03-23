@@ -12,13 +12,19 @@
   let { path, onclose }: Props = $props()
 
   // ── Revision list ────────────────────────────────────────────────────────
+  // Two-tier: mutable-only is instant but shows only your WIP. full=true drops
+  // the scope — complete history but slow on large repos (files() has no index,
+  // 20+s on repos with 100k+ commits). User opts in via "Load full" button.
+  let full = $state(false)
   const history = createLoader(
-    (p: string) => api.fileHistory(p),
+    ([p, f]: [string, boolean]) => api.fileHistory(p, f),
     [] as LogEntry[],
   )
-  $effect(() => { history.load(path) })
+  $effect(() => { history.load([path, full]) })
 
   let revisions = $derived(history.value)
+  // Sparse = mutable-only found few commits; prompt the user to load full.
+  let sparse = $derived(!full && !history.loading && revisions.length < 5)
 
   // ── Two-cursor state ─────────────────────────────────────────────────────
   // cursorB moves with j/k; pinnedA is fixed until Space re-pins.
@@ -140,11 +146,14 @@
       onmouseleave={() => hoveredIdx = -1}
     >
       {#if history.loading && revisions.length === 0}
-        <div class="fh-empty">Loading history…</div>
+        <div class="fh-empty">Loading {full ? 'full ' : ''}history…{#if full}<br><small>This can take a while on large repos.</small>{/if}</div>
       {:else if history.error}
         <div class="fh-empty fh-error">{history.error}</div>
       {:else if revisions.length === 0}
-        <div class="fh-empty">No revisions touch this file.</div>
+        <div class="fh-empty">
+          No mutable revisions touch this file.
+          {#if !full}<br><button class="fh-load-full" onclick={() => full = true}>Load full history</button>{/if}
+        </div>
       {:else}
         {#each revisions as rev, i (rev.commit.commit_id)}
           {@const c = rev.commit}
@@ -163,6 +172,12 @@
             <span class="fh-age">{relativeTime(c.timestamp)}</span>
           </button>
         {/each}
+        {#if sparse}
+          <div class="fh-sparse">
+            <small>Only {revisions.length} mutable commit{revisions.length === 1 ? '' : 's'} — showing your WIP only.</small>
+            <button class="fh-load-full" onclick={() => full = true}>Load full history</button>
+          </div>
+        {/if}
       {/if}
     </div>
 
@@ -318,6 +333,25 @@
     color: var(--subtext0);
     font-family: var(--font-mono);
   }
+  .fh-sparse {
+    padding: 10px;
+    text-align: center;
+    color: var(--subtext0);
+    border-top: 1px solid var(--surface0);
+  }
+  .fh-sparse small { display: block; margin-bottom: 6px; font-size: 10px; }
+  .fh-load-full {
+    padding: 4px 10px;
+    border: 1px solid var(--surface1);
+    border-radius: 4px;
+    background: var(--surface0);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .fh-load-full:hover { background: var(--surface1); }
+
   .fh-empty {
     padding: 16px;
     text-align: center;

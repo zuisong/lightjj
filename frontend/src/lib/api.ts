@@ -859,8 +859,10 @@ export const api = {
 
   // Commits touching a file — same LogEntry[] shape as log(), powers the
   // file-history panel's revision list. Server-side does root-file: escaping.
-  fileHistory: (path: string) =>
-    request<LogEntry[]>(`/api/file-history?path=${encodeURIComponent(path)}`),
+  // Default scopes to mutable() (instant); full=true drops the scope (slow on
+  // large repos — jj's files() predicate has no index, scans every commit).
+  fileHistory: (path: string, full = false) =>
+    request<LogEntry[]>(`/api/file-history?path=${encodeURIComponent(path)}${full ? '&full=1' : ''}`),
 
   staleImmutable: () => request<StaleImmutableGroup[]>('/api/stale-immutable'),
 
