@@ -5,6 +5,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('beautiful-mermaid', () => ({
   renderMermaidSVG: vi.fn((src: string) => {
     if (src.includes('INVALID')) throw new Error('parse fail')
+    // Mirror the real parser's first-line-must-be-header constraint so the
+    // %%{init} strip test has teeth.
+    if (!/^(graph|flowchart|stateDiagram|sequenceDiagram|classDiagram|erDiagram)/.test(src.trimStart())) {
+      throw new Error('Invalid mermaid header')
+    }
     return `<svg data-src="${src.slice(0, 20)}"></svg>`
   }),
 }))
@@ -59,6 +64,19 @@ describe('renderMarkdown', () => {
       const html = renderMarkdown('```mermaid\nINVALID SYNTAX\n```')
       expect(html).toContain('mermaid-fallback')
       expect(html).not.toContain('<svg')
+    })
+
+    it('strips %%{init} directive so diagram-type header reaches line 1', () => {
+      const src = '```mermaid\n'
+        + '%%{init: {"theme": "base", "themeVariables": {\n'
+        + '  "primaryColor":"#F2F0E5"\n'
+        + '}}}%%\n'
+        + 'flowchart TD\n'
+        + '  A --> B\n'
+        + '```'
+      const html = renderMarkdown(src)
+      expect(html).toContain('<svg')
+      expect(html).not.toContain('mermaid-fallback')
     })
 
     it('falls back to <pre> when over line limit', () => {

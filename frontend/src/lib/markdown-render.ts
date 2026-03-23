@@ -32,10 +32,20 @@ const THEME = {
   transparent: true,
 } as const
 
+// Strip mermaid %%{...}%% directive blocks (typically %%{init: {...}}%% for
+// theme overrides). beautiful-mermaid's parser expects the diagram-type
+// header on line 1; a multi-line init block pushes it down → "Invalid
+// mermaid header" throw → silent fallback to <pre>. The directive is for
+// mermaid.js's native theming which THEME below already replaces, so
+// dropping it is semantically correct.
+const DIRECTIVE_RE = /%%\{[\s\S]*?\}%%\s*\n?/g
+
 function tryRenderDiagram(src: string): string | null {
-  if (!renderer || src.split('\n').length > DIAGRAM_LINE_LIMIT) return null
+  if (!renderer) return null
+  const stripped = src.replace(DIRECTIVE_RE, '')
+  if (stripped.split('\n').length > DIAGRAM_LINE_LIMIT) return null
   try {
-    return renderer(src, THEME)
+    return renderer(stripped, THEME)
   } catch {
     return null
   }
