@@ -502,6 +502,7 @@
     ...STATIC_PRESETS.map(p => ({ label: `View: ${p.label}`, hint: p.revset, category: 'Navigation', action: () => applyRevsetExample(p.revset) })),
     { label: 'Jump to working copy (@)', shortcut: '@', category: 'Navigation', action: () => { if (workingCopyIndex >= 0) selectRevision(workingCopyIndex) }, when: () => workingCopyIndex >= 0 },
     { label: 'Next file / Previous file', shortcut: '] / [', category: 'Navigation', action: noop, infoOnly: true },
+    { label: 'Toggle markdown preview', shortcut: 'm', category: 'Navigation', action: () => diffPanelRef?.togglePreviewActive(), when: () => !inlineMode },
 
     // Revisions
     { label: 'Refresh revisions', shortcut: 'r', category: 'Revisions', action: userRefresh, when: () => !inlineMode },
@@ -1858,6 +1859,7 @@
       case '/': e.preventDefault(); revsetInputEl?.focus(); break
       case ']': e.preventDefault(); diffPanelRef?.stepFile(1); break
       case '[': e.preventDefault(); diffPanelRef?.stepFile(-1); break
+      case 'm': e.preventDefault(); diffPanelRef?.togglePreviewActive(); break
       case 'E': e.preventDefault(); toggleEvolog(); break
       case 'O': e.preventDefault(); toggleOplog(); break
       case '@': e.preventDefault(); if (workingCopyIndex >= 0) selectRevision(workingCopyIndex); break

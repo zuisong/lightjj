@@ -900,6 +900,15 @@
     scrollToFile(path, { expand: false, smooth: false })
   }
 
+  // Keyboard `m` — toggle markdown preview for the currently-visible file.
+  // Uses activeFilePath (same state [/] stepping tracks via IntersectionObserver).
+  // Mirrors the onpreview gate at the template call site: single-rev + no
+  // hunk-review. togglePreview itself guards editBusy/diffTarget.
+  export function togglePreviewActive() {
+    if (!activeFilePath || hunkReview || !/\.md$/i.test(activeFilePath)) return
+    void togglePreview(activeFilePath)
+  }
+
   // Reset collapsed files when diff changes significantly (e.g., multi-select)
   export function resetCollapsed() {
     collapsedFiles.clear()

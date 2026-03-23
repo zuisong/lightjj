@@ -24,6 +24,17 @@
 
   let { changeId, onkeep, onsplit, onsquash, onabandon, onclose }: Props = $props()
 
+  // Escape-to-close. divergence.active is in anyModalOpen so keyboard-gate
+  // swallows the key at :57 before escapeStack runs; without this handler
+  // Escape is a silent no-op. Auto-focus makes the key reachable immediately
+  // — {#key changeId} remount in App.svelte resets panelEl to undefined so
+  // this fires once per open.
+  let panelEl = $state<HTMLDivElement>()
+  $effect(() => { panelEl?.focus() })
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') { e.preventDefault(); onclose() }
+  }
+
   // --- Group classification ---
   // One api.divergence() call on mount gives us everything. Finding the group
   // containing changeId routes to stack or single rendering.
@@ -319,7 +330,9 @@
   }
 </script>
 
-<div class="panel divergence-panel">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions --
+     keydown is for Escape-to-close only; buttons inside handle their own clicks. -->
+<div class="panel divergence-panel" role="region" aria-label="Divergence resolution" tabindex="-1" bind:this={panelEl} onkeydown={handleKeydown}>
   <div class="panel-header">
     <span class="panel-title">
       Divergence
@@ -608,7 +621,7 @@
 {/snippet}
 
 <style>
-  .divergence-panel { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+  .divergence-panel { display: flex; flex-direction: column; flex: 1; overflow: hidden; outline: none; }
 
   .panel-header {
     display: flex; align-items: center; justify-content: space-between;

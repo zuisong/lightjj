@@ -406,7 +406,10 @@
               <span class="mode-badge badge-source">&lt;&lt; {split.review ? 'review' : 'split'} &gt;&gt;</span>
             {/if}
             {#if entry.commit.divergent}
-              <span class="divergent-badge">divergent</span>
+              <span class="alert-badge">divergent</span>
+            {/if}
+            {#if entry.commit.conflicted}
+              <span class="alert-badge">conflict</span>
             {/if}
             <span class="node-line-content">
               {#if entry.commit.is_working_copy}
@@ -1039,7 +1042,10 @@
     border: 1px solid var(--amber);
   }
 
-  .divergent-badge {
+  /* Shared red-alert treatment for divergent + conflict — both are "this commit
+   * needs attention" states that block clean shipping. The ×-glyph in GraphSvg
+   * is the gutter indicator for conflict; this badge makes it scannable. */
+  .alert-badge {
     font-size: 10px;
     font-weight: 700;
     padding: 0 4px;
