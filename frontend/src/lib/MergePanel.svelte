@@ -580,6 +580,9 @@
     <div class="merge-gutter merge-gutter-ours" class:merge-hidden={hiddenFlank === 'ours'}>
       {#each oursArrows as slot, i (i)}
         {#if !slot.empty}
+          <div class="merge-ribbon merge-ribbon-ours"
+               class:merge-ribbon-applied={slot.source === 'ours'}
+               style="transform: translateY({slot.y - scrollTop + 9}px)"></div>
           <button
             class="merge-arrow merge-arrow-ours"
             class:merge-arrow-applied={slot.source === 'ours'}
@@ -597,6 +600,9 @@
     <div class="merge-gutter merge-gutter-theirs" class:merge-hidden={hiddenFlank === 'theirs'}>
       {#each theirsArrows as slot, i (i)}
         {#if !slot.empty}
+          <div class="merge-ribbon merge-ribbon-theirs"
+               class:merge-ribbon-applied={slot.source === 'theirs'}
+               style="transform: translateY({slot.y - scrollTop + 9}px)"></div>
           <button
             class="merge-arrow merge-arrow-theirs"
             class:merge-arrow-applied={slot.source === 'theirs'}
@@ -786,6 +792,9 @@
     display: flex;
     flex: 1;
     min-height: 0;
+    /* Clip arrows/ribbons that translateY beyond top/bottom — gutter itself
+       is overflow:visible so ribbons can extend horizontally into panes. */
+    overflow: hidden;
   }
   .merge-pane {
     flex: 1;
@@ -806,7 +815,10 @@
     position: relative;
     width: 22px;
     flex-shrink: 0;
-    overflow: hidden;
+    /* overflow:visible — ribbons extend ±40px into adjacent panes. Arrows
+       are translateY()'d and clipped vertically by .merge-panes (min-height:0
+       flex child). */
+    overflow: visible;
     background: var(--crust);
   }
   .merge-gutter-ours {
@@ -876,6 +888,32 @@
   /* bug_005: applied arrows sit at opacity 0.25 — the amber ring inherits that
      and becomes near-invisible. Keep the ring readable when both classes apply. */
   .merge-arrow-current.merge-arrow-applied { opacity: 0.6; }
+
+  /* Ribbons: horizontal lines connecting each block across panes so the eye
+     can follow which hunks align. Sibling of .merge-arrow at same translateY
+     (+9px centers on the 18px arrow). Each side extends TOWARD center — they
+     meet in the middle to form a bridge. Large fixed extension (600px) relies
+     on .merge-panes overflow:hidden to clip at container edge; actual visible
+     length = adjacent pane width. */
+  .merge-ribbon {
+    position: absolute;
+    top: 0;
+    height: 1px;
+    pointer-events: none;
+    opacity: 0.4;
+    transition: opacity 120ms ease;
+  }
+  .merge-ribbon-ours {
+    left: 11px;      /* gutter center */
+    right: -600px;   /* extend right into center pane */
+    background: linear-gradient(90deg, var(--green), transparent);
+  }
+  .merge-ribbon-theirs {
+    left: -600px;    /* extend left into center pane */
+    right: 11px;
+    background: linear-gradient(-90deg, var(--blue), transparent);
+  }
+  .merge-ribbon-applied { opacity: 0.12; }
 
   /* ── Minimap ─────────────────────────────────────────────────────────── */
 

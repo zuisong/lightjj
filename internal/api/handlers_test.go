@@ -739,7 +739,7 @@ func TestHandleConflicts_CustomRevset(t *testing.T) {
 func TestHandleFileHistory(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	// Verify the handler builds the files() revset with root-file: escaping.
-	runner.Expect(jj.FileLog("src/main.go", 100)).SetOutput([]byte(""))
+	runner.Expect(jj.FileLog("src/main.go", 100, false)).SetOutput([]byte(""))
 	defer runner.Verify()
 
 	srv := newTestServer(runner)
@@ -1681,7 +1681,7 @@ func TestHandleWorkspaces(t *testing.T) {
 
 func TestPickCurrentWorkspace(t *testing.T) {
 	pathMap := map[string]string{
-		"default":         "/repo/main",
+		"default":      "/repo/main",
 		"ws-secondary": "/repo/ws-two",
 	}
 	tests := []struct {
@@ -1702,12 +1702,12 @@ func TestPickCurrentWorkspace(t *testing.T) {
 		// no entry. If exactly one candidate is unmapped AND no other
 		// candidate's path matches us → the unmapped one is us by elimination.
 		{"primary not in index, other paths don't match → elimination",
-			[]string{"primary", "ws-secondary"}, "/code/bigrepo", "primary"},
+			[]string{"primary", "ws-secondary"}, "/some/other/root", "primary"},
 		{"two unmapped → can't eliminate → honest empty",
-			[]string{"primary", "other-unmapped"}, "/code/bigrepo", ""},
+			[]string{"primary", "other-unmapped"}, "/some/other/root", ""},
 		// Edge: neither is in index. Elimination needs exactly one unmapped.
 		{"both candidates unmapped → honest empty",
-			[]string{"a", "b"}, "/code/bigrepo", ""},
+			[]string{"a", "b"}, "/some/other/root", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -295,6 +295,7 @@
   let mergeResolved = $state(new Set<string>())
   let mergeSides: MergeSides | null = $state(null)
   let mergeBusy = $state(false)
+  let mergeQueueLoading = $state(false)
 
   // File history overlay — right-click file → "View history". Null = closed.
   // {#key fileHistoryPath} remounts the panel per path (fresh cursors free).
@@ -625,7 +626,7 @@
     const MAX = 10
 
     // Path: single-letter per component except last, then drop leading letters
-    // until ≤MAX. /home/alice/src/lightjj → /U/i/3/lightjj → …/lightjj
+    // until ≤MAX. /home/alice/src/lightjj → /h/a/s/lightjj → …/lightjj
     const parts = path.split(/[/\\]/)
     const last = parts.pop() || path
     const letters = parts.map(p => p.slice(0, 1))
@@ -1223,6 +1224,9 @@
     mergeCurrent = null
     mergeSides = null
     activeView = 'merge'
+    // Stale-while-revalidate: keep the old queue visible during re-fetch so
+    // re-entry doesn't flash empty. Loading flag drives the empty-state text.
+    mergeQueueLoading = true
     try {
       conflictQueue = await api.conflicts()
     } catch (e) {
@@ -1230,6 +1234,8 @@
       // bug_013: user may have navigated away during the await (pressed 1/2).
       // Only reset if still in merge view — otherwise we clobber their nav.
       if (activeView === 'merge') activeView = 'log'
+    } finally {
+      mergeQueueLoading = false
     }
   }
 
@@ -1880,12 +1886,12 @@
         return true
       case '1': e.preventDefault(); switchToLogView(); return true
       case '2': e.preventDefault(); switchToBranchesView(); return true
-      // 3/4 open bottom drawers. Switch to log first so the drawer actually
+      // 4/5 open bottom drawers. Switch to log first so the drawer actually
       // renders (evolog/oplog are gated on activeView==='log' — they'd steal
       // vertical space from the bookmarks panel otherwise).
-      case '3': e.preventDefault(); switchToLogView(); toggleOplog(); return true
-      case '4': e.preventDefault(); switchToLogView(); toggleEvolog(); return true
-      case '5': e.preventDefault(); switchToMergeView(); return true
+      case '3': e.preventDefault(); switchToMergeView(); return true
+      case '4': e.preventDefault(); switchToLogView(); toggleOplog(); return true
+      case '5': e.preventDefault(); switchToLogView(); toggleEvolog(); return true
     }
     return false
   }
@@ -2145,7 +2151,7 @@
             class:toolbar-nav-active={activeView === 'merge'}
             onclick={() => { if (!inlineMode) switchToMergeView() }}
             disabled={inlineMode}
-          >⧉ Merge <kbd class="nav-hint">5</kbd></button>
+          >⧉ Merge <kbd class="nav-hint">3</kbd></button>
         </nav>
         <span class="toolbar-divider"></span>
         <!-- Drawer toggles — semantically distinct from the nav tabs above
@@ -2156,7 +2162,7 @@
           class:toolbar-nav-active={oplogOpen}
           onclick={() => { if (!inlineMode) { switchToLogView(); toggleOplog() } }}
           disabled={inlineMode}
-        >⟲ Oplog <kbd class="nav-hint">3</kbd></button>
+        >⟲ Oplog <kbd class="nav-hint">4</kbd></button>
         <!-- Not gated on selectedRevision — toggleEvolog already handles the
              null case (panel opens empty, populates once a revision is
              selected). Disabled-during-initial-load was confusing. -->
@@ -2165,7 +2171,7 @@
           class:toolbar-nav-active={evologOpen}
           onclick={() => { if (!inlineMode) { switchToLogView(); toggleEvolog() } }}
           disabled={inlineMode}
-        >◐ Evolog <kbd class="nav-hint">4</kbd></button>
+        >◐ Evolog <kbd class="nav-hint">5</kbd></button>
         <span class="toolbar-divider"></span>
         <button class="toolbar-search" onclick={() => { closeModals(); paletteOpen = true }} title="Command palette ({cmdKey}K)">
           <span class="toolbar-search-text">Search…</span>
@@ -2340,9 +2346,12 @@
             <ConflictQueue
               bind:this={conflictQueueRef}
               entries={conflictQueue}
+              loading={mergeQueueLoading}
               resolved={mergeResolved}
               current={mergeCurrent}
               onselect={item => { mergeCurrent = item; loadMergeFile(item) }}
+              oncontextmenu={showContextMenu}
+              onopenfile={editorConfigured ? handleOpenFile : undefined}
             />
             {#if mergeSides && mergeCurrent}
               {#key `${mergeCurrent.commitId}:${mergeCurrent.path}`}
@@ -2357,11 +2366,20 @@
             {:else if mergeCurrent && mergeBusy}
               <div class="merge-mode-empty">Loading conflict…</div>
             {:else if mergeCurrent}
-              <!-- bug_049: mergeSides null + not busy = reconstructSides returned null -->
+              <!-- bug_049: mergeSides null + not busy = reconstructSides returned null.
+                   Inner <div> because .merge-mode-empty is display:flex (centering) —
+                   inline text + <br> + <code> get flex-item-ified and reorder. -->
               <div class="merge-mode-empty">
-                {mergeCurrent.path}<br>
-                Unsupported conflict format ({mergeCurrent.sides}-way or git-style).<br>
-                Edit the file directly or use <code>jj resolve</code>.
+                <div>
+                  <code>{mergeCurrent.path}</code>
+                  {#if mergeCurrent.sides > 2}
+                    <p><strong>{mergeCurrent.sides}-way conflict</strong> — the 3-pane editor only handles 2-sided conflicts.</p>
+                    <p>This usually means an unresolved 2-way conflict earlier in the stack propagated here. Resolve it at the <em>earliest</em> conflicted commit — descendants often auto-resolve.</p>
+                  {:else}
+                    <p><strong>Unsupported marker format</strong> — this 2-sided conflict uses git-style markers (<code>=======</code>) rather than jj's native format.</p>
+                  {/if}
+                  <p>Alternatively: edit the file directly, or use <code>jj resolve</code>.</p>
+                </div>
               </div>
             {:else}
               <div class="merge-mode-empty">Select a conflict from the queue.</div>

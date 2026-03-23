@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ConflictEntry } from './api'
+  import type { ContextMenuItem, ContextMenuHandler } from './ContextMenu.svelte'
 
   interface QueueItem {
     commitId: string
@@ -15,9 +16,13 @@
     /** Called with the flat-index position when j/k or click moves selection. */
     onselect: (item: QueueItem) => void
     current?: QueueItem | null
+    loading?: boolean
+    oncontextmenu?: ContextMenuHandler
+    /** Open-in-$EDITOR callback. Undefined = editor not configured (item disabled). */
+    onopenfile?: (path: string) => void
   }
 
-  let { entries, resolved, onselect, current = null }: Props = $props()
+  let { entries, resolved, onselect, current = null, loading = false, oncontextmenu, onopenfile }: Props = $props()
 
   // Flatten commit-grouped entries into a navigable list. Each file becomes one
   // queue item; commit headers are rendered separately (they're not navigable).
@@ -85,10 +90,28 @@
     return false
   }
 
-  // Auto-select first item on mount so MergePanel has something to show.
+  // Auto-select first item so MergePanel has something to show. Gated on
+  // !loading — stale-while-revalidate means flat can be populated with OLD
+  // entries during re-fetch; selecting from those before fresh data arrives
+  // would load a file that may not be in the new queue.
   $effect(() => {
-    if (flat.length > 0 && !current) select(0)
+    if (flat.length > 0 && !current && !loading) select(0)
   })
+
+  function openContextMenu(e: MouseEvent, i: number) {
+    if (!oncontextmenu) return
+    e.preventDefault()
+    // Sync keyboard index to right-clicked row (BookmarksPanel pattern).
+    select(i)
+    const path = flat[i].path
+    const items: ContextMenuItem[] = [
+      { label: 'Copy file path', action: () => navigator.clipboard.writeText(path) },
+      onopenfile
+        ? { label: 'Open in editor', action: () => onopenfile(path) }
+        : { label: 'Open in editor (not configured)', disabled: true },
+    ]
+    oncontextmenu(items, e.clientX, e.clientY)
+  }
 </script>
 
 <div class="cq-root">
@@ -115,6 +138,7 @@
         class:cq-resolved={resolved.has(key(item))}
         data-idx={i}
         onclick={() => select(i)}
+        oncontextmenu={e => openContextMenu(e, i)}
       >
         <span class="cq-dot">{resolved.has(key(item)) ? '●' : '○'}</span>
         <span class="cq-path">{item.path}</span>
@@ -122,7 +146,7 @@
       </button>
     {/each}
     {#if flat.length === 0}
-      <div class="cq-empty">No conflicts.</div>
+      <div class="cq-empty">{loading ? 'Loading conflicts…' : 'No conflicts.'}</div>
     {/if}
   </div>
   {#if flat.length > 0}

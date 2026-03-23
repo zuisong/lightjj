@@ -12,7 +12,7 @@ lightjj is invisible to non-default remote bookmarks in three places:
 2. **View toggle** — "Tracked" uses `tracked_remote_bookmarks()` which excludes untracked upstream refs. Most fork users never `jj bookmark track` upstream branches.
 3. **BookmarksPanel** — shows one remote per bookmark row (`shownRemote`). Extra remotes at different commits were invisible (partly fixed: extra remote lines now render when commit_ids differ).
 
-A large repo fork (example-fork) has 14 upstream branches and 1 local — none of upstream's positions are visible in the revision graph.
+A large-repo fork has 14 upstream branches and 1 local — none of upstream's positions are visible in the revision graph.
 
 ## Design
 

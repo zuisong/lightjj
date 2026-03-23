@@ -16,3 +16,7 @@ frontend/.svelte-kit/
 
 # OS
 .DS_Store
+
+# Local tooling — never commit
+.claude/
+.superpowers/

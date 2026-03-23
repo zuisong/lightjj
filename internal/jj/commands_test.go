@@ -632,7 +632,9 @@ func TestConflictList(t *testing.T) {
 		args := ConflictList("")
 		assert.Equal(t, "log", args[0])
 		assert.Contains(t, args, "-r")
-		assert.Contains(t, args, "conflicts()")
+		// & mutable() is the 60× speedup on large repos — jj can evaluate
+		// the cheap set filter first, skip immutable-tree walk.
+		assert.Contains(t, args, "conflicts() & mutable()")
 		assert.Contains(t, args, "--ignore-working-copy")
 		assert.Contains(t, args, "--no-graph")
 		joined := strings.Join(args, " ")
@@ -668,19 +670,28 @@ func TestParseConflictList(t *testing.T) {
 }
 
 func TestFileLog(t *testing.T) {
-	args := FileLog("src/main.go", 50)
-	joined := strings.Join(args, " ")
-	// Must use root-file: (not file:) — file: is cwd-relative, breaks in SSH
-	// mode + secondary workspaces per CLAUDE.md.
-	assert.Contains(t, joined, `files(root-file:"src/main.go")`)
-	assert.Contains(t, joined, "--limit 50")
-	// Reuses LogGraph's template — same prefix markers, same parse path.
-	assert.Contains(t, joined, JJUIPrefix)
+	t.Run("default (mutable-scoped)", func(t *testing.T) {
+		args := FileLog("src/main.go", 50, false)
+		joined := strings.Join(args, " ")
+		// Must use root-file: (not file:) — file: is cwd-relative, breaks in SSH
+		// mode + secondary workspaces per CLAUDE.md.
+		assert.Contains(t, joined, `files(root-file:"src/main.go")`)
+		// mutable() intersection is the large repo speedup — 20s → 0.3s.
+		assert.Contains(t, joined, `mutable() & files`)
+		assert.Contains(t, joined, "--limit 50")
+		assert.Contains(t, joined, JJUIPrefix)
+	})
+
+	t.Run("full=true drops mutable scope", func(t *testing.T) {
+		joined := strings.Join(FileLog("src/main.go", 50, true), " ")
+		assert.NotContains(t, joined, "mutable()")
+		assert.Contains(t, joined, `files(root-file:"src/main.go")`)
+	})
 }
 
 func TestFileLog_EscapesQuotes(t *testing.T) {
 	// Paths with " must be escaped to not break the revset string literal.
-	args := FileLog(`weird"name.go`, 10)
+	args := FileLog(`weird"name.go`, 10, false)
 	joined := strings.Join(args, " ")
 	assert.Contains(t, joined, `root-file:`)
 	assert.NotContains(t, joined, `weird"name.go")`) // unescaped would close early

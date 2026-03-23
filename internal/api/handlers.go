@@ -349,7 +349,8 @@ func (s *Server) handleFileHistory(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "path query param required")
 		return
 	}
-	output, err := s.Runner.Run(r.Context(), jj.FileLog(path, 100))
+	full := r.URL.Query().Get("full") == "1"
+	output, err := s.Runner.Run(r.Context(), jj.FileLog(path, 100, full))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return

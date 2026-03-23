@@ -536,8 +536,18 @@ func Resolve(revision string, file string, tool string) CommandArgs {
 // FileLog returns LogGraph args scoped to commits touching path. Thin wrapper
 // — the revset does all the work. Kept server-side so EscapeFileName's quote
 // handling stays the single source of truth (paths can contain " and \).
-func FileLog(path string, limit int) CommandArgs {
-	return LogGraph("files("+EscapeFileName(path)+")", limit)
+//
+// The mutable() intersection is a large repo-scale speedup: files() alone is
+// O(commits×tree-diff) with no index — 20+ seconds on large repos. mutable()
+// evaluates first (cheap set check), then files() only runs on those commits.
+// Trade-off: shows only the user's own mutable history by default. Callers
+// wanting full history pass full=true (accepts the slow scan).
+func FileLog(path string, limit int, full bool) CommandArgs {
+	revset := "files(" + EscapeFileName(path) + ")"
+	if !full {
+		revset = "mutable() & " + revset
+	}
+	return LogGraph(revset, limit)
 }
 
 // ConflictList returns args for a jj log call emitting every conflicted
@@ -551,7 +561,11 @@ func FileLog(path string, limit int) CommandArgs {
 // only needs path + side_count for the list UI.
 func ConflictList(revset string) CommandArgs {
 	if revset == "" {
-		revset = "conflicts()"
+		// `& mutable()` is a 60× speedup on large repos — jj evaluates the
+		// cheap mutable() filter first, then checks conflicts only on those.
+		// conflicts() alone scans every commit. Also semantically correct:
+		// the user can only RESOLVE mutable conflicts anyway.
+		revset = "conflicts() & mutable()"
 	}
 	tmpl := `self.commit_id().short() ++ "\x1E" ++ ` +
 		`self.change_id().short() ++ "\x1E" ++ ` +
