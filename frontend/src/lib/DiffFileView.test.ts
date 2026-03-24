@@ -316,7 +316,8 @@ describe('DiffFileView', () => {
       })
       const btn = container.querySelector('.expand-btn')!
       await fireEvent.click(btn)
-      expect(onexpand).toHaveBeenCalledWith('test.go')
+      // First button = gap before hunk 0. Second arg is the gap index.
+      expect(onexpand).toHaveBeenCalledWith('test.go', 0)
     })
   })
 

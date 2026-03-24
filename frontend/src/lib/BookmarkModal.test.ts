@@ -45,7 +45,7 @@ async function renderSettled(props: ReturnType<typeof defaultProps>) {
 }
 
 function modal(): HTMLElement {
-  return document.querySelector('.bm-modal')!
+  return document.querySelector('.modal')!
 }
 
 function items(): NodeListOf<Element> {

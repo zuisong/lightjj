@@ -216,10 +216,10 @@
 </script>
 
 {#if open}
-  <div class="git-backdrop" onclick={close} role="presentation"></div>
+  <div class="modal-backdrop" onclick={close} role="presentation"></div>
   <div
     bind:this={modalEl}
-    class="git-modal"
+    class="modal"
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
@@ -227,7 +227,7 @@
     aria-describedby="git-footer"
     tabindex="-1"
   >
-    <div class="git-header">
+    <div class="modal-header">
       Git
       <span class="git-header-hint"><kbd>/</kbd> to filter</span>
     </div>
@@ -247,7 +247,7 @@
     <input
       bind:this={inputEl}
       bind:value={query}
-      class="git-input"
+      class="modal-input"
       class:git-input-collapsed={inputCollapsed}
       type="text"
       placeholder="Filter..."
@@ -308,43 +308,6 @@
 {/if}
 
 <style>
-  .git-backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    z-index: 100;
-  }
-
-  .git-modal {
-    position: fixed;
-    top: 20%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 520px;
-    max-height: 420px;
-    background: var(--base);
-    border: 1px solid var(--surface1);
-    border-radius: 8px;
-    box-shadow: var(--shadow-heavy);
-    z-index: 101;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    outline: none;
-  }
-
-  .git-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    padding: 10px 16px 6px;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--subtext0);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
   .git-header-hint {
     font-weight: 400;
     text-transform: none;
@@ -377,16 +340,7 @@
     border-color: var(--overlay0);
   }
 
-  .git-input {
-    width: 100%;
-    background: var(--mantle);
-    color: var(--text);
-    border: none;
-    border-bottom: 1px solid var(--surface0);
-    padding: 8px 16px;
-    font-family: inherit;
-    font-size: 13px;
-    outline: none;
+  .modal-input {
     transition: max-height 0.12s ease, padding 0.12s ease, opacity 0.12s ease;
     max-height: 40px;
   }
@@ -398,8 +352,6 @@
     border-bottom-width: 0;
     opacity: 0;
   }
-
-  .git-input::placeholder { color: var(--surface2); }
 
   .git-results {
     overflow-y: auto;

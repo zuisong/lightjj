@@ -623,15 +623,7 @@
 <style>
   .divergence-panel { display: flex; flex-direction: column; flex: 1; overflow: hidden; outline: none; }
 
-  .panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    height: 34px; padding: 0 12px;
-    background: var(--mantle); border-bottom: 1px solid var(--surface0);
-    flex-shrink: 0; user-select: none;
-  }
   .panel-title {
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--subtext1);
     display: flex; align-items: center; gap: 8px;
   }
   .kind-badge {
@@ -644,12 +636,6 @@
     padding: 1px 6px; border-radius: 3px;
     background: var(--amber); color: var(--crust);
   }
-  .close-btn {
-    background: transparent; border: none; color: var(--subtext0);
-    font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;
-  }
-  .close-btn:hover { color: var(--text); }
-
   .panel-content { flex: 1; overflow-y: auto; padding: 12px; position: relative; }
 
   .merge-warning {

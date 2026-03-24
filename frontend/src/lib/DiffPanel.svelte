@@ -4,6 +4,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { api, diffTargetKey, type FileChange, type DiffTarget } from './api'
   import { parseDiffContent, type DiffFile, type DiffLine } from './diff-parser'
+  import { expandGaps, type ExpandedDiff } from './context-expand'
   import type { WordSpan } from './word-diff'
   import {
     derivedCache, collapseStateCache, parseDiffCached, lruSet,
@@ -83,8 +84,16 @@
   let activeFilePath: string | null = $state(null)
   let collapsedFiles = new SvelteSet<string>()
 
-  // Expanded files: store full-context DiffFile per file path
+  // Full-context cache (lazy-fetched per file) + per-gap reveal sets.
+  // expandedDiffs stores the --context 10000 fetch result; revealedGaps
+  // tracks which gaps (gap i = before hunk i; gap N = after last) are shown.
+  // expandGaps() merges adjacent hunks with revealed gaps between them.
   let expandedDiffs: Map<string, DiffFile> = $state(new Map())
+  let revealedGaps: Map<string, Set<number>> = $state(new Map())
+  function resetExpandState() {
+    expandedDiffs = new Map()
+    revealedGaps = new Map()
+  }
 
   // Expansion merges adjacent hunks into one — but hunkReview's cursor/
   // selection is keyed by RAW diff hunk indices. onexpand is gated off
@@ -97,7 +106,7 @@
   let reviewActive = $derived(!!hunkReview)
   $effect(() => {
     if (!reviewActive) return
-    if (untrack(() => expandedDiffs.size) > 0) expandedDiffs = new Map()
+    if (untrack(() => expandedDiffs.size + revealedGaps.size) > 0) resetExpandState()
     // Unconditional bump — in-flight fetch may be the ONLY pending preview
     // (map empty now, would populate post-resolve).
     previewGen++
@@ -688,14 +697,24 @@
     return fileMap
   }
 
-  // Build effective file list that substitutes expanded versions.
-  // Short-circuit to parsedDiff when nothing is expanded — .map() allocates
-  // a fresh array, so without this the derivation $effect re-runs on every
-  // revisit even though parsedDiffCache returned the same DiffFile[].
+  // Per-file expanded result (merged hunks + gapMap). Undefined = no expansion.
+  let expandedByPath: Map<string, ExpandedDiff> = $derived.by(() => {
+    if (revealedGaps.size === 0) return new Map()
+    const m = new Map<string, ExpandedDiff>()
+    for (const f of parsedDiff) {
+      const gaps = revealedGaps.get(f.filePath)
+      const full = expandedDiffs.get(f.filePath)
+      if (gaps && full) m.set(f.filePath, expandGaps(f, full, gaps))
+    }
+    return m
+  })
+
+  // Effective file list for the derivation $effect (highlights/word-diffs).
+  // Short-circuit to parsedDiff when nothing is expanded so ref-equality holds.
   let effectiveFiles = $derived(
-    expandedDiffs.size === 0
+    expandedByPath.size === 0
       ? parsedDiff
-      : parsedDiff.map(f => expandedDiffs.get(f.filePath) ?? f)
+      : parsedDiff.map(f => expandedByPath.get(f.filePath)?.file ?? f)
   )
 
   // Drive both derivations from one effect. Keyed by activeRevisionId
@@ -709,9 +728,9 @@
   // Word-diff isn't deferred — LCS is cheaper and has no immediate phase.
   // activeRevisionId is derived from diffTarget which is in phase with
   // diffContent (same $state write in App) — reading it here is safe.
-  // Context-expansion handling: expandFile mutates expandedDiffs →
-  // effectiveFiles recomputes with one substituted entry → call update()
-  // for that file only, preserving all other highlighted/word-diffed entries.
+  // Context-expansion handling: expandGap mutates revealedGaps →
+  // expandedByPath → effectiveFiles recomputes with one substituted entry →
+  // call update() for that file only, preserving all other entries.
   let lastDerivationFiles: DiffFile[] | undefined
   $effect(() => {
     const files = effectiveFiles
@@ -785,7 +804,7 @@
     lastCollapseCacheKey = diffTarget?.kind === 'single' ? diffTarget.changeId : null
 
     collapsedFiles.clear()
-    expandedDiffs = new Map()
+    resetExpandState()
     editingFiles.clear()
     editFileContents = new Map()
     editBusy.clear()
@@ -833,25 +852,39 @@
   })
 
   // --- Expand context ---
-  async function expandFile(filePath: string) {
+  // gapIdx: which gap to reveal (i = before hunk i; hunks.length = trailing).
+  // -1 = reveal ALL gaps (context-menu "full context" action).
+  async function expandGap(filePath: string, gapIdx: number) {
     const capturedId = activeRevisionId
     if (!capturedId) return
-    try {
-      const result = await api.diff(capturedId, filePath, 10000)
-      // Guard: navigation during the await would clear expandedDiffs via the
-      // reset effect; writing now would re-add a stale-revision entry.
-      if (activeRevisionId !== capturedId) return
-      const parsed = parseDiffContent(result.diff)
-      if (parsed.length > 0) {
-        // Changing expandedDiffs triggers effectiveFiles → the derivation
-        // $effect's single-file-delta path handles highlights + word-diffs.
+    const orig = parsedDiff.find(f => f.filePath === filePath)
+    if (!orig) return
+
+    // Lazy-fetch full context on first reveal for this file.
+    if (!expandedDiffs.has(filePath)) {
+      try {
+        const result = await api.diff(capturedId, filePath, 10000)
+        if (activeRevisionId !== capturedId) return
+        const parsed = parseDiffContent(result.diff)
+        if (parsed.length === 0) return
         expandedDiffs = new Map(expandedDiffs).set(filePath, parsed[0])
-        // Expansion can reveal matches BEFORE the current one → indices shift.
-        if (searchOpen) currentMatchIdx = 0
+      } catch {
+        return  // silently fail — unexpanded diff stays visible
       }
-    } catch {
-      // Silently fail — the unexpanded diff remains visible
     }
+
+    // Re-check after potential await: nav OR review-mode entry mid-fetch
+    // clears state; re-adding here would shift hunkReview indices.
+    if (activeRevisionId !== capturedId || reviewActive) return
+    const next = new Set(revealedGaps.get(filePath) ?? [])
+    if (gapIdx < 0) {
+      for (let i = 0; i <= orig.hunks.length; i++) next.add(i)
+    } else {
+      next.add(gapIdx)
+    }
+    revealedGaps = new Map(revealedGaps).set(filePath, next)
+    // Expansion can reveal search matches BEFORE the current → indices shift.
+    if (searchOpen) currentMatchIdx = 0
   }
 
   // --- Collapse helpers ---
@@ -1158,18 +1191,18 @@
   {#if parsedDiff.length > 0}
     <div class="diff-toolbar">
       <div class="diff-toolbar-left">
-        <button class="toolbar-btn-sm" onclick={collapseAll}>Collapse all</button>
-        <button class="toolbar-btn-sm" onclick={expandAll}>Expand all</button>
+        <button class="btn btn-sm" onclick={collapseAll}>Collapse all</button>
+        <button class="btn btn-sm" onclick={expandAll}>Expand all</button>
       </div>
-      <div class="diff-toggle-pill">
+      <div class="seg">
         <button
-          class="toggle-pill-btn"
-          class:toggle-active={!splitView}
+          class="seg-btn"
+          class:active={!splitView}
           onclick={() => splitView = false}
         >Unified</button>
         <button
-          class="toggle-pill-btn"
-          class:toggle-active={splitView}
+          class="seg-btn"
+          class:active={splitView}
           onclick={() => splitView = true}
         >Split</button>
       </div>
@@ -1235,18 +1268,22 @@
       <div class="diff-content">
         {#each parsedDiff as file (file.filePath)}
           {@const filePath = file.filePath}
-          {@const effectiveFile = expandedDiffs.get(filePath) ?? file}
+          {@const expanded = expandedByPath.get(filePath)}
+          {@const effectiveFile = expanded?.file ?? file}
+          <!-- N hunks → N+1 gaps; `file` = parsedDiff original (pre-merge) -->
+          {@const allRevealed = (revealedGaps.get(filePath)?.size ?? 0) > file.hunks.length}
           <DiffFileView
             file={effectiveFile}
             fileStats={fileStatsMap.get(filePath)}
             isCollapsed={collapsedFiles.has(filePath)}
-            isExpanded={expandedDiffs.has(filePath)}
+            isExpanded={allRevealed}
+            gapMap={expanded?.gapMap}
             splitView={hunkReview ? false : splitView}
             {hunkReview}
             highlightedLines={highlights.byFile.get(filePath) ?? EMPTY_HL}
             wordDiffs={wordDiffs.byFile.get(filePath) ?? EMPTY_WD}
             ontoggle={toggleFile}
-            onexpand={hunkReview ? undefined : expandFile}
+            onexpand={hunkReview ? undefined : expandGap}
             searchMatches={matchesByFile.get(filePath) ?? EMPTY_MATCHES}
             {currentMatchIdx}
             editing={editingFiles.has(filePath)}
@@ -1279,7 +1316,7 @@
               highlightedLines={EMPTY_HL}
               wordDiffs={EMPTY_WD}
               ontoggle={toggleFile}
-              onexpand={expandFile}
+              onexpand={expandGap}
               onmerge={canMutateFiles ? startMerge : undefined}
               searchMatches={matchesByFile.get(cf.path) ?? EMPTY_MATCHES}
               {currentMatchIdx}
@@ -1325,26 +1362,6 @@
   .diff-panel {
     flex: 1;
     min-width: 0;
-  }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 34px;
-    padding: 0 12px;
-    background: var(--mantle);
-    border-bottom: 1px solid var(--surface0);
-    flex-shrink: 0;
-    user-select: none;
-  }
-
-  .panel-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--subtext1);
   }
 
   .header-change-id {
@@ -1566,51 +1583,6 @@
     display: flex;
     align-items: center;
     gap: 4px;
-  }
-
-  .toolbar-btn-sm {
-    background: transparent;
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    padding: 2px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-  }
-
-  .toolbar-btn-sm:hover {
-    background: var(--surface0);
-    color: var(--text);
-  }
-
-  .diff-toggle-pill {
-    display: flex;
-    background: var(--surface0);
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid var(--surface1);
-  }
-
-  .toggle-pill-btn {
-    background: transparent;
-    border: none;
-    color: var(--subtext0);
-    padding: 3px 10px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 500;
-  }
-
-  .toggle-pill-btn:hover:not(.toggle-active) {
-    color: var(--text);
-  }
-
-  .toggle-pill-btn.toggle-active {
-    background: var(--bg-active);
-    color: var(--amber);
-    font-weight: 600;
   }
 
   /* --- Search bar --- */

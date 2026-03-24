@@ -147,7 +147,7 @@ describe('GitModal', () => {
       mockRemotes.mockResolvedValue([])
 
       const { container } = render(GitModal, { props: defaultProps({ open: false }) })
-      expect(container.querySelector('.git-modal')).not.toBeInTheDocument()
+      expect(container.querySelector('.modal')).not.toBeInTheDocument()
     })
 
     it('loading state shows Loading...', () => {
@@ -195,7 +195,7 @@ describe('GitModal', () => {
         expect(container.querySelectorAll('.git-item').length).toBeGreaterThan(1)
       })
 
-      const modal = container.querySelector('.git-modal')!
+      const modal = container.querySelector('.modal')!
       await fireEvent.keyDown(modal, { key: 'ArrowDown' })
 
       const items = container.querySelectorAll('.git-item')
@@ -212,7 +212,7 @@ describe('GitModal', () => {
         expect(container.querySelectorAll('.git-item').length).toBeGreaterThan(1)
       })
 
-      const modal = container.querySelector('.git-modal')!
+      const modal = container.querySelector('.modal')!
       await fireEvent.keyDown(modal, { key: 'ArrowDown' })
       await fireEvent.keyDown(modal, { key: 'ArrowDown' })
       await fireEvent.keyDown(modal, { key: 'ArrowUp' })
@@ -232,7 +232,7 @@ describe('GitModal', () => {
         expect(container.querySelectorAll('.git-item').length).toBeGreaterThan(0)
       })
 
-      const modal = container.querySelector('.git-modal')!
+      const modal = container.querySelector('.modal')!
       await fireEvent.keyDown(modal, { key: 'Enter' })
 
       expect(onexecute).toHaveBeenCalledTimes(1)
@@ -247,7 +247,7 @@ describe('GitModal', () => {
 
       const { container } = render(GitModal, { props: defaultProps({ onexecute }) })
       await waitFor(() => expect(container.querySelectorAll('.git-item').length).toBeGreaterThan(0))
-      const modal = container.querySelector('.git-modal')!
+      const modal = container.querySelector('.modal')!
 
       // '1' → first bookmark push
       await fireEvent.keyDown(modal, { key: '1' })
@@ -261,7 +261,7 @@ describe('GitModal', () => {
 
       const { container } = render(GitModal, { props: defaultProps({ onexecute }) })
       await waitFor(() => expect(container.querySelectorAll('.git-item').length).toBeGreaterThan(0))
-      const modal = container.querySelector('.git-modal')!
+      const modal = container.querySelector('.modal')!
 
       await fireEvent.keyDown(modal, { key: 'a' })
       expect(onexecute).toHaveBeenLastCalledWith('push', ['--all', '--remote', 'origin'])
@@ -274,7 +274,7 @@ describe('GitModal', () => {
 
       const { container } = render(GitModal, { props: defaultProps({ onexecute }) })
       await waitFor(() => expect(container.querySelectorAll('.git-item').length).toBeGreaterThan(0))
-      const modal = container.querySelector('.git-modal')!
+      const modal = container.querySelector('.modal')!
 
       await fireEvent.keyDown(modal, { key: 'a', metaKey: true })
       expect(onexecute).not.toHaveBeenCalled()
@@ -290,10 +290,10 @@ describe('GitModal', () => {
         expect(container.querySelectorAll('.git-item').length).toBeGreaterThan(0)
       })
 
-      const modal = container.querySelector('.git-modal')!
+      const modal = container.querySelector('.modal')!
       await fireEvent.keyDown(modal, { key: 'Escape' })
 
-      expect(container.querySelector('.git-modal')).toBeNull()
+      expect(container.querySelector('.modal')).toBeNull()
     })
   })
 })

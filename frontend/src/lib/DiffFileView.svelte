@@ -16,11 +16,15 @@
     fileStats: FileChange | undefined
     isCollapsed: boolean
     isExpanded: boolean
+    /** Maps effective (post-merge) gap index → original gap index. Undefined =
+     *  identity (no gaps revealed yet). See context-expand.ts. */
+    gapMap?: number[]
     splitView: boolean
     highlightedLines: Map<string, string>
     wordDiffs: Map<string, Map<number, WordSpan[]>>
     ontoggle: (path: string) => void
-    onexpand?: (path: string) => void
+    /** gapIdx: which gap to reveal (original-diff index via gapMap). -1 = all. */
+    onexpand?: (path: string, gapIdx: number) => void
     onmerge?: (file: string) => void
     searchMatches?: { item: SearchMatch; index: number }[]
     currentMatchIdx?: number
@@ -75,7 +79,12 @@
     lines: { lineNum: number | null, content: string }[]
   }
 
-  let { file, fileStats, isCollapsed, isExpanded, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, annotationsForLine, onannotationclick, hunkReview = null }: Props = $props()
+  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, annotationsForLine, onannotationclick, hunkReview = null }: Props = $props()
+
+  // Translate effective (rendered) gap index → original. When no gaps are
+  // revealed, gapMap is undefined → identity. After revealing, hunks merge so
+  // rendered indices shift; gapMap from expandGaps() tracks the mapping.
+  const origGap = (i: number) => gapMap?.[i] ?? i
 
   // ── Hunk review derived state ────────────────────────────────────────────
   let reviewFileState: SelectionState | null = $derived(
@@ -308,7 +317,7 @@
       { separator: true },
     ]
     if (!isExpanded && onexpand) {
-      items.push({ label: 'Expand full context', action: () => onexpand?.(filePath) })
+      items.push({ label: 'Expand full context', action: () => onexpand?.(filePath, -1) })
     }
     items.push({ label: isCollapsed ? 'Expand' : 'Collapse', action: () => ontoggle(filePath) })
     if (ondiscard) {
@@ -540,7 +549,7 @@
     {:else if effectiveSplit}
       <!-- Split (side-by-side) view -->
       {#if !isExpanded && hasHiddenContext}
-        <button class="expand-btn" onclick={() => onexpand?.(filePath)} aria-label="Show full context for {filePath}">
+        <button class="expand-btn" onclick={() => onexpand?.(filePath, -1)} aria-label="Show full context for {filePath}">
           <span class="expand-dots" aria-hidden="true">···</span>
           <span class="expand-label">full context</span>
         </button>
@@ -600,7 +609,7 @@
         {@const hunkIsCursor = hunkReview?.cursor?.path === filePath && hunkReview.cursor.idx === hunkIdx}
         {#if !isExpanded}
           {#if hunkIdx === 0 && hunk.newStart > 1}
-            <button class="expand-btn" onclick={() => onexpand?.(filePath)} aria-label="Show {hunk.newStart - 1} hidden lines above">
+            <button class="expand-btn" onclick={() => onexpand?.(filePath, origGap(0))} aria-label="Show {hunk.newStart - 1} hidden lines above">
               <span class="expand-dots" aria-hidden="true">···</span>
               <span class="expand-label">{hunk.newStart - 1} lines</span>
             </button>
@@ -609,7 +618,7 @@
             {@const prev = file.hunks[hunkIdx - 1]}
             {@const gap = hunk.newStart - (prev.newStart + prev.newCount)}
             {#if gap > 0}
-              <button class="expand-btn" onclick={() => onexpand?.(filePath)} aria-label="Show {gap} hidden lines">
+              <button class="expand-btn" onclick={() => onexpand?.(filePath, origGap(hunkIdx))} aria-label="Show {gap} hidden lines">
                 <span class="expand-dots" aria-hidden="true">···</span>
                 <span class="expand-label">{gap} lines</span>
               </button>
@@ -680,7 +689,7 @@
              (newStart=1) has hidden trailing lines but hasHiddenContext
              misses it. Showing the button when there IS no trailing context
              is harmless — expanded view just shows the same hunk. -->
-        <button class="expand-btn" onclick={() => onexpand?.(filePath)} aria-label="Show full file context">
+        <button class="expand-btn" onclick={() => onexpand?.(filePath, origGap(file.hunks.length))} aria-label="Show full file context">
           <span class="expand-dots" aria-hidden="true">···</span>
           <span class="expand-label">rest of file</span>
         </button>
@@ -954,13 +963,23 @@
   }
 
   .diff-line {
-    padding: 0 12px 0 0;
+    /* Hanging indent keeps soft-wrapped lines clear of the line-number gutter:
+       padding-left pushes ALL lines right, negative text-indent pulls only the
+       FIRST line back — so .line-num spans sit in the padding zone and wraps
+       start at the content column. --diff-gutter-w approximates
+       2×line-num (unified) + 1ch prefix; split-col overrides to 1×line-num. */
+    --diff-gutter-w: 11ch;
+    padding: 0 12px 0 var(--diff-gutter-w);
+    text-indent: calc(-1 * var(--diff-gutter-w));
     white-space: pre-wrap;
     word-break: break-all;
     border-left: 3px solid transparent;
     /* Match CodeMirror's default tabSize so side-by-side split view aligns */
     tab-size: 4;
   }
+  /* text-indent is inherited — reset for inline-blocks or their own content
+     would be negatively indented. */
+  .diff-line > :global(*) { text-indent: 0; }
 
   .line-num {
     display: inline-block;
@@ -1067,6 +1086,7 @@
     font-size: 12px;
     line-height: 1.5;
   }
+  .split-col .diff-line { --diff-gutter-w: 6ch; }
 
   .split-left {
     border-right: 1px solid var(--surface0);

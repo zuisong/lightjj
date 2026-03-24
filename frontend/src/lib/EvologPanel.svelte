@@ -92,9 +92,9 @@
     </span>
     <div class="panel-actions">
       {#if selectedRevision}
-        <button class="header-btn" onclick={onrefresh}>Refresh</button>
+        <button class="btn" onclick={onrefresh}>Refresh</button>
       {/if}
-      <button class="header-btn" onclick={onclose}>Close</button>
+      <button class="btn" onclick={onclose}>Close</button>
     </div>
   </div>
 
@@ -164,26 +164,6 @@
     min-height: 0;
   }
 
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 34px;
-    padding: 0 12px;
-    background: var(--mantle);
-    border-bottom: 1px solid var(--surface0);
-    flex-shrink: 0;
-    user-select: none;
-  }
-
-  .panel-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--subtext1);
-  }
-
   .header-change-id {
     color: var(--amber);
     text-transform: none;
@@ -202,23 +182,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .header-btn {
-    background: transparent;
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    padding: 2px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    transition: all 0.15s ease;
-  }
-
-  .header-btn:hover {
-    background: var(--surface0);
-    color: var(--text);
   }
 
   .evolog-body {

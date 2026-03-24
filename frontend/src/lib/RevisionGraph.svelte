@@ -635,26 +635,6 @@
     min-height: 0;
   }
 
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 34px;
-    padding: 0 12px;
-    background: var(--mantle);
-    border-bottom: 1px solid var(--surface0);
-    flex-shrink: 0;
-    user-select: none;
-  }
-
-  .panel-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--subtext1);
-  }
-
   .panel-badge {
     background: var(--surface0);
     color: var(--subtext0);

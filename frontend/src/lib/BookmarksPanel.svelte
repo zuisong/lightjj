@@ -424,7 +424,7 @@
 {#snippet commitLine(ref: import('./api').BookmarkRemote, isRemote: boolean)}
   <div class="bp-commit-line" class:bp-commit-remote={isRemote}>
     <span class="bp-cid">{ref.commit_id.slice(0, 8)}</span>
-    <span class="bp-desc">{ref.description || '(no description)'}</span>
+    <span class="bp-desc" class:placeholder-text={!ref.description}>{ref.description || '(no description)'}</span>
     {#if ref.ago}<span class="bp-ago">{ref.ago}</span>{/if}
     {#if isRemote}<span class="bp-remote-tag">@{ref.remote}</span>{/if}
   </div>

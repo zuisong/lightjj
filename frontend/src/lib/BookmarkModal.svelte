@@ -218,10 +218,10 @@
 </script>
 
 {#if open}
-  <div class="bm-backdrop" onclick={close} role="presentation"></div>
+  <div class="modal-backdrop" onclick={close} role="presentation"></div>
   <div
     bind:this={modalEl}
-    class="bm-modal"
+    class="modal"
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
@@ -229,14 +229,14 @@
     aria-describedby="bm-footer"
     tabindex="-1"
   >
-    <div class="bm-header">
+    <div class="modal-header">
       Bookmarks
       <span class="bm-header-hint"><kbd>/</kbd> to filter</span>
     </div>
     <input
       bind:this={inputEl}
       bind:value={query}
-      class="bm-input"
+      class="modal-input"
       class:bm-input-collapsed={inputCollapsed}
       type="text"
       placeholder="Filter..."
@@ -322,43 +322,6 @@
 {/if}
 
 <style>
-  .bm-backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    z-index: 100;
-  }
-
-  .bm-modal {
-    position: fixed;
-    top: 20%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 520px;
-    max-height: 420px;
-    background: var(--base);
-    border: 1px solid var(--surface1);
-    border-radius: 8px;
-    box-shadow: var(--shadow-heavy);
-    z-index: 101;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    outline: none;
-  }
-
-  .bm-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    padding: 10px 16px 6px;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--subtext0);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
   .bm-header-hint {
     font-weight: 400;
     text-transform: none;
@@ -366,16 +329,7 @@
     color: var(--surface2);
   }
 
-  .bm-input {
-    width: 100%;
-    background: var(--mantle);
-    color: var(--text);
-    border: none;
-    border-bottom: 1px solid var(--surface0);
-    padding: 8px 16px;
-    font-family: inherit;
-    font-size: 13px;
-    outline: none;
+  .modal-input {
     transition: max-height 0.12s ease, padding 0.12s ease, opacity 0.12s ease;
     max-height: 40px;
   }
@@ -389,8 +343,6 @@
     border-bottom-width: 0;
     opacity: 0;
   }
-
-  .bm-input::placeholder { color: var(--surface2); }
 
   .bm-results {
     overflow-y: auto;

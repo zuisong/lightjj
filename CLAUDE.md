@@ -98,6 +98,7 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     divergence-refined.ts  — PURE — computeRefinedKind(group, diffLoading, crossDiffFiles, fileUnion) → RefinedKind (full taxonomy decision tree extracted from DivergencePanel $derived). findCrossColumnMerge(group) detects `jj new keeper loser` manual reconciliations (tip-level only — documented gap). Full truth-table coverage in divergence-refined.test.ts.
     divergence-strategy.ts — recommend(group, refinedKind) → ranked Strategy[] (keep/squash + confidence + reason). Mirrors jj-guide Strategies 1+3. Conservative: 'high' only for pure-rebase+live-hint. Squash gated on non-stack (tip-only resolution leaves intermediates divergent). Immutable-sibling: hardcoded buttons in panel, not Strategy[] — split-identity (metaedit --update-change-id) vs abandon-mutable.
     diff-parser.ts         — Unified diff parser
+    context-expand.ts      — PURE — expandGaps(original, fullContext, revealedSet) → {file, gapMap}. Merges adjacent hunks when the gap between them is revealed; gapMap tracks effective→original index shift so subsequent gap clicks resolve correctly. DiffPanel tracks revealedGaps per path, lazy-fetches --context 10000 on first reveal.
     conflict-parser.ts     — jj conflict marker parser; diff-side labels use \\\\\\\ "to:" value (what :ours keeps), not %%%%%%% "from:"
     split-view.ts          — Side-by-side diff alignment
     word-diff.ts           — Word-level inline diff computation
@@ -164,6 +165,13 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
 
 - **Svelte 5 runes** — use `$state()`, `$derived()`, `$effect()`. No Svelte 4 stores.
 - **api.ts is the single API boundary** — all backend calls go through the `api` object in `src/lib/api.ts`. Don't use raw `fetch()` in components.
+- **Shared UI primitives in `theme.css`** — Don't redefine these per-component; the `.panel-header` pattern was copy-pasted 5× before consolidation. Component CSS adds only layout/positioning overrides.
+  - Buttons: `.btn` (ghost), `.btn-sm` (compact), `.btn-primary` (filled amber), `.btn-danger` (red outline → fill on hover)
+  - Toggle: `.seg`/`.seg-btn`/`.active` (segmented control)
+  - Panel chrome: `.panel-header`, `.panel-title`
+  - Modal chrome: `.modal-backdrop`, `.modal`, `.modal-header`, `.modal-input`
+  - Misc: `.close-btn` (borderless ×), `.placeholder-text` (dimmed "(no description)"), `.nav-hint` (kbd badge)
+  - **Known name collisions (deferred)**: `DivergencePanel` defines scoped `.btn-primary` as GREEN (not amber) and `.btn-danger` as FILLED (not ghost) — needs `.btn-success`/`.btn-danger-filled` variants or a design decision before migrating. `StatusBar .mode-badge` vs `RevisionGraph .mode-badge` use the same name with different semantics.
 - **Cache by `commit_id`, not `change_id`.** Per-revision data (diff, files, description) is keyed by `commit_id` — a content hash of tree + parents + message. If the commit_id hasn't changed, the cached data is provably valid. No op-id suffix, no clear-on-mutation. `jj new` / `jj abandon` (leaf) / `jj undo` leave existing commit_ids unchanged → **zero** cache invalidation. Only rewrites (describe, rebase, squash) change commit_ids, and then only for the rewritten commit and its descendants. Pass `commit.commit_id` to `api.diff()`/`files()`/`description()`/`revision()`; use `effectiveId()` (change_id) only for mutations and UI-state that should survive rewrites.
 - **pnpm, not npm** — the project uses pnpm for package management.
 - **Graph rendering uses flattened lines.** Each graph line (node or connector) is its own DOM row at identical height. Node lines show commit content; description lines show the description; connector lines are just gutter characters. This ensures pixel-perfect continuous graph pipes. **Graph rows use a fixed `height: 18px`** to guarantee identical sizing across all modes (normal, rebase, squash, split). This prevents inline badges, buttons, or text from influencing row height. All inline elements (badges, `@` indicator, action buttons) must fit within 18px. Content is clipped by `overflow: hidden`. Never change this to `min-height` or remove the fixed height — it's the only way to prevent sub-pixel height differences between modes that break graph pipe continuity.

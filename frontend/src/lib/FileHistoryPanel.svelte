@@ -132,7 +132,7 @@
 <div class="fh-root">
   <div class="fh-header">
     <span class="fh-title">File history: <code>{path}</code></span>
-    <button class="fh-close" onclick={onclose} title="Close (Escape)">✕</button>
+    <button class="close-btn" onclick={onclose} title="Close (Escape)">✕</button>
   </div>
 
   <div class="fh-body">
@@ -253,16 +253,6 @@
     font-family: var(--font-mono);
     color: var(--text);
   }
-  .fh-close {
-    border: none;
-    background: transparent;
-    color: var(--subtext0);
-    cursor: pointer;
-    font-size: 14px;
-    padding: 2px 6px;
-  }
-  .fh-close:hover { color: var(--text); }
-
   .fh-body {
     display: flex;
     flex: 1;

@@ -8,14 +8,20 @@
   const ROW_H = 18    // matches fixed row height
   const NODE_R = 4    // node circle radius
   const WC_R = 5      // working copy node radius (larger)
-  const LINE_W = 1.5  // lane line stroke width
+  // Integer stroke width: a 1.5px stroke centered at x=5 spans 4.25→5.75,
+  // straddling pixel boundaries → anti-alias blur. 2px at x=5 spans 4→6
+  // exactly → crisp. Combined with shape-rendering:crispEdges on <line>
+  // (not curves/circles — those want AA) for pixel-grid snapping.
+  const LINE_W = 2
   const GRAPH_COLORS = 8  // number of --graph-N vars in theme.css
 
   // Opacity tiers per design language (Tier 3: muted, decorative)
   const LINE_OPACITY = 0.45
   const NODE_OPACITY = 0.8
   const ELIDED_OPACITY = 0.3
-  const BG_OPACITY = 0.2
+  // Gap between lane-line segment and node edge. Clears the largest node
+  // (@ outer ring at WC_R+1=6) so hollow nodes don't have a line through them.
+  const NODE_GAP = 7
 
   const NODE_CHARS = new Set(['@', '○', '◆', '×', '◌'])
 
@@ -168,9 +174,13 @@
 
     {:else if NODE_CHARS.has(cell.char)}
       <g>
-        <!-- Background lane line for continuity -->
-        <line x1={x} y1={0} x2={x} y2={ROW_H}
-          stroke={color} stroke-width={LINE_W} opacity={BG_OPACITY} />
+        <!-- Lane-line continuity: two segments at LINE_OPACITY so the joint
+             with adjacent │ rows is seamless (was a single 0.2-opacity line
+             that dimmed at every node + showed through hollow @/◌). -->
+        <line x1={x} y1={0} x2={x} y2={cy - NODE_GAP}
+          stroke={color} stroke-width={LINE_W} opacity={LINE_OPACITY} />
+        <line x1={x} y1={cy + NODE_GAP} x2={x} y2={ROW_H}
+          stroke={color} stroke-width={LINE_W} opacity={LINE_OPACITY} />
 
         {#if cell.char === '@'}
           <!-- Working copy: amber concentric circle (matches sidebar icon) -->
@@ -187,10 +197,11 @@
         {:else if cell.char === '×'}
           <!-- Conflict: semantic red, no graph opacity -->
           <circle cx={x} cy={cy} r={NODE_R} fill="var(--red)" />
+          <!-- Diagonals opt out of crispEdges (would stair-step) -->
           <line x1={x - 2} y1={cy - 2} x2={x + 2} y2={cy + 2}
-            stroke="var(--base)" stroke-width={1.5} />
+            stroke="var(--base)" stroke-width={1.5} shape-rendering="auto" />
           <line x1={x + 2} y1={cy - 2} x2={x - 2} y2={cy + 2}
-            stroke="var(--base)" stroke-width={1.5} />
+            stroke="var(--base)" stroke-width={1.5} shape-rendering="auto" />
 
         {:else if cell.char === '◌'}
           <!-- Hidden: subtler than normal nodes -->
@@ -215,5 +226,10 @@
     flex-shrink: 0;
     display: block;
     overflow: visible;
+  }
+  /* Snap straight lines to the pixel grid. Scoped to <line> only —
+     paths (curves) and circles stay anti-aliased or they'd look jagged. */
+  .graph-svg line {
+    shape-rendering: crispEdges;
   }
 </style>

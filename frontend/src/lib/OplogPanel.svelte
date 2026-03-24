@@ -102,8 +102,8 @@
   <div class="panel-header">
     <span class="panel-title">Operation Log <kbd class="nav-hint">j</kbd><kbd class="nav-hint">k</kbd><kbd class="nav-hint">Enter</kbd></span>
     <div class="panel-actions">
-      <button class="header-btn" onclick={onrefresh}>Refresh</button>
-      <button class="header-btn" onclick={onclose}>Close</button>
+      <button class="btn" onclick={onrefresh}>Refresh</button>
+      <button class="btn" onclick={onclose}>Close</button>
     </div>
   </div>
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -116,7 +116,7 @@
     {:else if error}
       <div class="empty-state error-state">
         <span>⚠ {error}</span>
-        <button class="header-btn" onclick={onrefresh}>Retry</button>
+        <button class="btn" onclick={onrefresh}>Retry</button>
       </div>
     {:else}
       {#each entries as op, i (op.id)}
@@ -162,47 +162,10 @@
     border-top: none;
   }
 
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 34px;
-    padding: 0 12px;
-    background: var(--mantle);
-    border-bottom: 1px solid var(--surface0);
-    flex-shrink: 0;
-    user-select: none;
-  }
-
-  .panel-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--subtext1);
-  }
-
   .panel-actions {
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .header-btn {
-    background: transparent;
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    padding: 2px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    transition: all 0.15s ease;
-  }
-
-  .header-btn:hover {
-    background: var(--surface0);
-    color: var(--text);
   }
 
   .oplog-content {

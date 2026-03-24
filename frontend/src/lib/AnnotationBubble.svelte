@@ -88,7 +88,7 @@
       {#if lineContext}
         <span class="bubble-context">{lineContext.filePath}:{lineContext.lineNum}</span>
       {/if}
-      <button class="bubble-close" onclick={() => { open = false; onclose() }} aria-label="Close">×</button>
+      <button class="close-btn" onclick={() => { open = false; onclose() }} aria-label="Close">×</button>
     </div>
     <textarea
       bind:this={textareaEl}
@@ -157,17 +157,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
-  .bubble-close {
-    background: transparent;
-    border: none;
-    color: var(--subtext0);
-    font-size: 16px;
-    cursor: pointer;
-    padding: 0 4px;
-    line-height: 1;
-  }
-  .bubble-close:hover { color: var(--text); }
 
   .bubble-input {
     width: 100%;

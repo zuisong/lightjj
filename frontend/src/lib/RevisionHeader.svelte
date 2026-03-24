@@ -42,15 +42,15 @@
     </div>
     <div class="panel-actions">
       {#if descIsMultiline}
-        <button class="header-btn desc-expand-btn" onclick={() => descExpanded = !descExpanded} title={descExpanded ? 'Collapse description' : 'Expand description'}>
+        <button class="btn desc-expand-btn" onclick={() => descExpanded = !descExpanded} title={descExpanded ? 'Collapse description' : 'Expand description'}>
           <svg class="desc-expand-icon" class:desc-expand-open={descExpanded} width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,4.5 6,7.5 9,4.5"/></svg>
         </button>
       {/if}
-      <button class="header-btn" onclick={onstartdescribe} title="Edit description (e)">
+      <button class="btn" onclick={onstartdescribe} title="Edit description (e)">
         Describe
       </button>
       {#if revision.commit.divergent}
-        <button class="header-btn divergent-btn" onclick={onresolveDivergence} title="Resolve divergent commit">
+        <button class="btn btn-danger" onclick={onresolveDivergence} title="Resolve divergent commit">
           Divergence
         </button>
       {/if}
@@ -140,32 +140,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .header-btn {
-    background: transparent;
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    padding: 2px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    transition: all 0.15s ease;
-  }
-
-  .header-btn:hover {
-    background: var(--surface0);
-    color: var(--text);
-  }
-
-  .divergent-btn {
-    color: var(--red);
-    border-color: var(--red);
-  }
-
-  .divergent-btn:hover {
-    background: var(--bg-error);
   }
 
   .desc-expand-btn {

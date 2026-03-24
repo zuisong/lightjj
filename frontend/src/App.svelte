@@ -2112,25 +2112,25 @@
         </button>
       </div>
       <div class="toolbar-right">
-        <button class="toolbar-btn" onclick={() => { if (!inlineMode) handleUndo() }} disabled={inlineMode || mutating} title="Undo (u)">
+        <button class="btn" onclick={() => { if (!inlineMode) handleUndo() }} disabled={inlineMode || mutating} title="Undo (u)">
           Undo
         </button>
-        <button class="toolbar-btn" onclick={() => { if (!inlineMode) handleCommit() }} disabled={inlineMode || mutating} title="Commit (c)">
+        <button class="btn" onclick={() => { if (!inlineMode) handleCommit() }} disabled={inlineMode || mutating} title="Commit (c)">
           Commit
         </button>
         <span class="toolbar-divider"></span>
-        <button class="toolbar-btn" onclick={() => { if (!inlineMode) handleGitOp('fetch', []) }} disabled={inlineMode || mutating} title="Fetch (f)">
+        <button class="btn" onclick={() => { if (!inlineMode) handleGitOp('fetch', []) }} disabled={inlineMode || mutating} title="Fetch (f)">
           Fetch
         </button>
-        <button class="toolbar-btn" onclick={() => { if (!inlineMode) handleGitOp('push', []) }} disabled={inlineMode || mutating} title="Push (p)">
+        <button class="btn" onclick={() => { if (!inlineMode) handleGitOp('push', []) }} disabled={inlineMode || mutating} title="Push (p)">
           Push
         </button>
-        <button class="toolbar-btn" onclick={() => { if (!inlineMode) openModal('git') }} disabled={inlineMode || mutating} title="Git operations (g)">
+        <button class="btn" onclick={() => { if (!inlineMode) openModal('git') }} disabled={inlineMode || mutating} title="Git operations (g)">
           Git…
         </button>
         <span class="toolbar-divider"></span>
         <button
-          class="toolbar-btn toolbar-theme"
+          class="btn toolbar-theme"
           onclick={toggleTheme}
           title="Toggle theme (t)"
         >
@@ -2842,29 +2842,6 @@
 
   .toolbar-ws-unavailable {
     opacity: 0.5;
-  }
-
-  .toolbar-btn {
-    padding: 3px 10px;
-    background: transparent;
-    border: 1px solid var(--surface1);
-    border-radius: 4px;
-    color: var(--subtext0);
-    font-family: inherit;
-    font-size: 11px;
-    cursor: pointer;
-    line-height: 1.4;
-  }
-
-  .toolbar-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    color: var(--text);
-    border-color: var(--surface2);
-  }
-
-  .toolbar-btn:disabled {
-    opacity: 0.35;
-    cursor: default;
   }
 
   .toolbar-theme {

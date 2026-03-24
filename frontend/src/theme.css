@@ -241,6 +241,186 @@ body {
   --syn-atom:     #fe640b;
 }
 
+/* --- Shared UI primitives ---------------------------------------------------
+   Button/toggle/badge classes used across components. Component-scoped styles
+   had drifted (same ghost button defined 5× with different padding/radius);
+   these are the canonical versions. Component CSS may still add positioning
+   or layout, but visual treatment (bg/border/hover/disabled) lives here. */
+
+/* Ghost button — the default. Transparent bg, subtle border, brightens on
+   hover. Used for toolbar actions, panel headers, file-row actions. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--surface1);
+  border-radius: 4px;
+  color: var(--subtext0);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background-color var(--anim-duration) var(--anim-ease),
+              color var(--anim-duration) var(--anim-ease),
+              border-color var(--anim-duration) var(--anim-ease);
+}
+.btn:hover:not(:disabled) {
+  background: var(--surface0);
+  color: var(--text);
+  border-color: var(--surface2);
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Compact variant for dense contexts (file headers, inline actions). */
+.btn-sm {
+  padding: 2px 8px;
+  font-size: 10px;
+}
+
+/* Filled accent — commits an action (Save, Commit, Keep). */
+.btn-primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--base);
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--bg-btn-primary-hover);
+  border-color: var(--bg-btn-primary-hover);
+  color: var(--base);
+}
+
+/* Destructive — abandon, discard, delete. Ghost by default; fills on hover
+   so the danger reads only when the user is about to commit to it. */
+.btn-danger {
+  color: var(--red);
+  border-color: var(--red);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--bg-error);
+  color: var(--red);
+  border-color: var(--red);
+}
+
+/* Segmented toggle (Unified|Split, Log|Tracked). Container + segments. */
+.seg {
+  display: inline-flex;
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.seg-btn {
+  padding: 3px 10px;
+  background: transparent;
+  border: none;
+  color: var(--subtext0);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.seg-btn:hover:not(.active) { color: var(--text); }
+.seg-btn.active {
+  background: var(--bg-active);
+  color: var(--amber);
+  font-weight: 600;
+}
+
+/* Panel chrome — header bar with uppercase title. Used by RevisionGraph,
+   DiffPanel, EvologPanel, OplogPanel, DivergencePanel (was 5× copy-paste). */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 12px;
+  background: var(--mantle);
+  border-bottom: 1px solid var(--surface0);
+  flex-shrink: 0;
+  user-select: none;
+}
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--subtext1);
+}
+
+/* Modal chrome — backdrop, container, header. GitModal/BookmarkModal were
+   byte-identical; CommandPalette/WelcomeModal/BookmarkInput override
+   width/top/radius per-component but share the base. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  z-index: 100;
+}
+.modal {
+  position: fixed;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 520px;
+  max-height: 420px;
+  background: var(--base);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  box-shadow: var(--shadow-heavy);
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  outline: none;
+}
+.modal-header {
+  padding: 10px 16px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--subtext0);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.modal-input {
+  width: 100%;
+  padding: 8px 16px;
+  background: var(--mantle);
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--surface0);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.modal-input::placeholder { color: var(--surface2); }
+
+/* Borderless × close button. DivergencePanel/FileHistoryPanel/AnnotationBubble. */
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.close-btn:hover { color: var(--text); }
+
+/* Placeholder text for absent values — "(no description)", "(empty)".
+   Recedes below normal text; no italic (synthesized oblique reads heavier
+   at small sizes, inverting the hierarchy). */
+.placeholder-text {
+  color: var(--overlay0);
+}
+
 /* Subtle keyboard hint shown next to panel titles (Revisions, Evolog, etc.).
    Passive UI chrome — never competes with semantic amber/green/red.
    Used via <kbd class="nav-hint">j</kbd><kbd class="nav-hint">k</kbd>. */
