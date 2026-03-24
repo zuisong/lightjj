@@ -13,9 +13,8 @@
 
   let html = $derived((void mermaidReady, renderMarkdown(content)))
 
-  // Re-wire panzoom after every html change. Returned cleanup calls
-  // pz.destroy() on the prior batch — panzoom attaches document-level
-  // pointermove/up that survive {@html} subtree replacement.
+  // Re-wire pan/zoom after every html change. Returned cleanup removes
+  // the prior batch's listeners — they survive {@html} subtree replacement.
   $effect(() => {
     void html
     if (!container) return

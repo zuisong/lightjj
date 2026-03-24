@@ -12,3 +12,12 @@ globalThis.IntersectionObserver = class {
   disconnect() {}
   takeRecords() { return [] }
 } as unknown as typeof IntersectionObserver
+
+// jsdom doesn't implement ResizeObserver — virtual.svelte.ts uses it for
+// viewport height tracking. No-op: tests that need viewportH set clientHeight
+// on the mock element, which the factory reads synchronously on attach.
+globalThis.ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver

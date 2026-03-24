@@ -13,10 +13,6 @@ vi.mock('beautiful-mermaid', () => ({
     return `<svg data-src="${src.slice(0, 20)}"></svg>`
   }),
 }))
-vi.mock('@panzoom/panzoom', () => ({
-  default: vi.fn(() => ({ zoomWithWheel: vi.fn(), reset: vi.fn() })),
-}))
-
 import { renderMarkdown, ensureMermaidLoaded, wirePanzoom } from './markdown-render'
 
 describe('renderMarkdown', () => {
@@ -108,18 +104,56 @@ describe('renderMarkdown', () => {
 })
 
 describe('wirePanzoom', () => {
+  const mkContainer = (n = 1) => {
+    const div = document.createElement('div')
+    div.innerHTML = '<div class="mermaid-block"><svg></svg></div>'.repeat(n)
+    // jsdom lacks setPointerCapture; stub on the canvas elements
+    for (const block of div.querySelectorAll('.mermaid-block')) {
+      ;(block as any).setPointerCapture = vi.fn()
+      ;(block as any).releasePointerCapture = vi.fn()
+    }
+    return div
+  }
+
   it('no-ops on container without mermaid blocks', () => {
     const div = document.createElement('div')
     div.innerHTML = '<p>no diagrams</p>'
-    expect(() => wirePanzoom(div)).not.toThrow()
+    const cleanup = wirePanzoom(div)
+    expect(() => cleanup()).not.toThrow()
   })
 
-  it('wires each .mermaid-block > svg', async () => {
-    await ensureMermaidLoaded()
-    const div = document.createElement('div')
-    div.innerHTML = '<div class="mermaid-block"><svg></svg></div><div class="mermaid-block"><svg></svg></div>'
+  it('drag translates the svg', () => {
+    const div = mkContainer()
     wirePanzoom(div)
-    const pz = (await import('@panzoom/panzoom')).default
-    expect(pz).toHaveBeenCalledTimes(2)
+    const block = div.querySelector('.mermaid-block')!
+    const svg = div.querySelector('svg')!
+    block.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 10, clientY: 10, pointerId: 1 }))
+    block.dispatchEvent(new PointerEvent('pointermove', { clientX: 30, clientY: 25, pointerId: 1 }))
+    expect(svg.style.transform).toBe('translate(20px,15px) scale(1)')
+    block.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }))
+    block.dispatchEvent(new PointerEvent('pointermove', { clientX: 100, clientY: 100, pointerId: 1 }))
+    expect(svg.style.transform).toBe('translate(20px,15px) scale(1)')  // released → ignored
+  })
+
+  it('dblclick resets transform', () => {
+    const div = mkContainer()
+    wirePanzoom(div)
+    const block = div.querySelector('.mermaid-block')!
+    const svg = div.querySelector('svg')!
+    block.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 0, clientY: 0, pointerId: 1 }))
+    block.dispatchEvent(new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 1 }))
+    block.dispatchEvent(new MouseEvent('dblclick'))
+    expect(svg.style.transform).toBe('translate(0px,0px) scale(1)')
+  })
+
+  it('cleanup removes listeners', () => {
+    const div = mkContainer()
+    const cleanup = wirePanzoom(div)
+    const block = div.querySelector('.mermaid-block')!
+    const svg = div.querySelector('svg')!
+    cleanup()
+    block.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 0, clientY: 0, pointerId: 1 }))
+    block.dispatchEvent(new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 1 }))
+    expect(svg.style.transform).toBe('')  // untouched after cleanup
   })
 })

@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
-  import { createVirtualizer } from '@tanstack/svelte-virtual'
+  import { createWindower } from './virtual.svelte'
   import { effectiveId, type LogEntry, type PullRequest, type RemoteRef, type RemoteVisibility } from './api'
   import { targetModeLabel, type RebaseMode, type SquashMode, type SplitMode } from './modes.svelte'
   import GraphSvg from './GraphSvg.svelte'
@@ -235,31 +234,17 @@
 
   let shouldVirtualize = $derived(flatLines.length > VIRTUALIZE_THRESHOLD)
 
-  // Virtualizer is always created (observers are cheap) but only USED above
-  // threshold. getScrollElement closes over the bind:this ref — tanstack
-  // polls it and attaches once non-null. setOptions in the effect keeps
-  // count reactive to revisions changes.
-  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
-    count: 0,
-    getScrollElement: () => scrollEl ?? null,
-    estimateSize: () => ROW_HEIGHT,
+  // Windower is always created (observers are cheap) but only USED above
+  // threshold. count and scrollEl passed as getters → reactive without
+  // $effect glue. No untrack dance needed — createWindower uses runes
+  // directly, not a self-notifying Svelte-4 store.
+  const windower = createWindower({
+    count: () => flatLines.length,
+    scrollEl: () => scrollEl,
+    rowHeight: ROW_HEIGHT,
     // Generous overscan — j/k navigation is the hot path, rendering a few
     // extra rows is cheaper than mount/unmount churn on every keypress.
     overscan: 10,
-  })
-
-  // flatLines.length is the ONLY intended dep. untrack covers both the store
-  // read (self-loop, see CLAUDE.md "untrack() Svelte-4-store reads") AND the
-  // setOptions call — its internal _willUpdate calls getScrollElement() which
-  // reads scrollEl (a $state). scrollEl is stable post-mount but keeping the
-  // dep graph explicit prevents surprises on refactors.
-  $effect(() => {
-    const count = flatLines.length
-    untrack(() => {
-      const v = $virtualizer
-      v.setOptions({ count })
-      v.measure()
-    })
   })
 
   // Hover is tracked in JS, not via CSS :hover. The :hover pseudo-class
@@ -292,16 +277,15 @@
   // (via shouldVirtualize and the findIndex scan) — the latter means post-
   // loadLog reflow also scrolls-to-selection, which is intentional.
   // Virtualized path uses scrollToIndex (selected row may not be in DOM);
-  // eager path queries DOM. untrack($virtualizer): scrollToIndex fires
-  // scroll observers → store notify → would re-fire this on every scroll.
+  // eager path queries DOM.
   $effect(() => {
     if (selectedIndex < 0) return
     if (shouldVirtualize) {
-      // Selection is by entryIndex; virtualizer scrolls by flatLines index.
+      // Selection is by entryIndex; windower scrolls by flatLines index.
       // findIndex is O(n) but n~1500 max = <2μs; cheaper than a $derived Map
       // built unconditionally (including below threshold where it's unused).
       const idx = flatLines.findIndex(l => l.isNode && l.entryIndex === selectedIndex)
-      if (idx >= 0) untrack(() => $virtualizer).scrollToIndex(idx, { align: 'auto' })
+      if (idx >= 0) windower.scrollToIndex(idx)
     } else {
       scrollEl?.querySelector('.graph-row.node-row.selected')?.scrollIntoView({ block: 'nearest' })
     }
@@ -504,7 +488,7 @@
         class="revision-list"
         class:refreshing={isRefreshing}
         class:virtual-list={shouldVirtualize}
-        style={shouldVirtualize ? `height:${$virtualizer.getTotalSize()}px` : undefined}
+        style={shouldVirtualize ? `height:${windower.totalHeight}px` : undefined}
         onmousemove={onListMouseMove}
         onmouseleave={onListMouseLeave}
         role="listbox"
@@ -512,20 +496,10 @@
         aria-label="Revision list"
       >
         {#if shouldVirtualize}
-          <!-- flatLines[item.index] can be undefined for one frame when
-               revisions shrinks: template renders BEFORE the setOptions
-               $effect fires (post-effect in Svelte 5), so virtual items hold
-               the OLD (larger) count while flatLines is already shorter.
-               Guard + skip stale items; next tick setOptions corrects. -->
-          {#each $virtualizer.getVirtualItems() as item (flatLines[item.index]
-            ? `${flatLines[item.index].eid}:${flatLines[item.index].lineKey}`
-            : item.key)}
-            {@const line = flatLines[item.index]}
-            {#if line}
-              <div class="virtual-row" style="transform:translateY({item.start}px)">
-                {@render graphRow(line)}
-              </div>
-            {/if}
+          {#each windower.items as item (`${flatLines[item.index].eid}:${flatLines[item.index].lineKey}`)}
+            <div class="virtual-row" style="transform:translateY({item.start}px)">
+              {@render graphRow(flatLines[item.index])}
+            </div>
           {/each}
         {:else}
           {#each flatLines as line (`${line.eid}:${line.lineKey}`)}

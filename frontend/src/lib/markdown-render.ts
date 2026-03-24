@@ -2,20 +2,17 @@ import { marked, type Tokens } from 'marked'
 import DOMPurify from 'dompurify'
 import { escapeHtml } from './highlighter'
 
-// beautiful-mermaid + panzoom lazy-loaded together — ~300KB chunk (mostly
-// elkjs), only fetched on first preview. Subsequent previews hit module cache.
-// Promise-memoized so concurrent callers share one import.
+// beautiful-mermaid lazy-loaded — ~300KB chunk (mostly elkjs), only fetched
+// on first preview. Subsequent previews hit module cache. Promise-memoized
+// so concurrent callers share one import.
 type Renderer = typeof import('beautiful-mermaid').renderMermaidSVG
-type Panzoom = typeof import('@panzoom/panzoom').default
 let loadP: Promise<void> | null = null
 let renderer: Renderer | null = null
-let panzoom: Panzoom | null = null
 
 export const ensureMermaidLoaded = () =>
-  loadP ??= Promise.all([
-    import('beautiful-mermaid').then(m => renderer = m.renderMermaidSVG),
-    import('@panzoom/panzoom').then(m => panzoom = m.default),
-  ]).then(() => {}, () => { loadP = null })  // clear memo on reject → next preview retries
+  loadP ??= import('beautiful-mermaid')
+    .then(m => { renderer = m.renderMermaidSVG })
+    .catch(() => { loadP = null })  // clear memo on reject → next preview retries
 
 // Sync render blocks the main thread via elkjs FakeWorker. README-scale
 // diagrams (<200 lines) are sub-frame; huge architecture diagrams fall through
@@ -95,19 +92,79 @@ export function renderMarkdown(src: string): string {
   )
 }
 
-// Called post-mount from MarkdownPreview's $effect. Wires wheel-zoom +
-// drag-pan + dblclick-reset on each rendered SVG. Returns cleanup that calls
-// pz.destroy() — panzoom attaches pointermove/pointerup at DOCUMENT level
-// (panzoom.es.js bind()), so {@html} subtree replacement alone doesn't release
-// them. No-op cleanup if not loaded yet (first-render raw-fallback path).
-export function wirePanzoom(container: HTMLElement): () => void {
-  if (!panzoom) return () => {}
-  const instances: ReturnType<Panzoom>[] = []
-  for (const svg of container.querySelectorAll<SVGSVGElement>('.mermaid-block > svg')) {
-    const pz = panzoom(svg, { maxScale: 5, minScale: 0.3, canvas: true })
-    svg.parentElement!.addEventListener('wheel', pz.zoomWithWheel, { passive: false })
-    svg.addEventListener('dblclick', () => pz.reset())
-    instances.push(pz)
+const MIN_SCALE = 0.3
+const MAX_SCALE = 5
+const WHEEL_STEP = 0.0015
+// deltaMode 1 (DOM_DELTA_LINE) = Firefox w/ mouse wheel; 2 (PAGE) = some a11y
+// configs. Normalize to pixel-equivalent so WHEEL_STEP is calibrated once.
+const DELTA_MODE_SCALE = [1, 40, 800]
+
+// Zoom-to-cursor: CSS `translate(tx,ty) scale(s)` maps SVG-local P to screen
+// point (P·s + t). Cursor at screen (cx,cy) → local point ((cx-tx)/s, ...).
+// To keep that local point at (cx,cy) after scaling by factor f, solve for t':
+//   ((cx-tx)/s)·(s·f) + tx' = cx  ⇒  tx' = cx − (cx−tx)·f
+function wireSvg(svg: SVGSVGElement, canvas: HTMLElement): () => void {
+  let tx = 0, ty = 0, s = 1
+  const apply = () => svg.style.transform = `translate(${tx}px,${ty}px) scale(${s})`
+  svg.style.transformOrigin = '0 0'
+
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault()
+    const dy = e.deltaY * (DELTA_MODE_SCALE[e.deltaMode] ?? 1)
+    const f = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s * (1 - dy * WHEEL_STEP))) / s
+    const r = canvas.getBoundingClientRect()
+    const cx = e.clientX - r.left, cy = e.clientY - r.top
+    tx = cx - (cx - tx) * f
+    ty = cy - (cy - ty) * f
+    s *= f
+    apply()
   }
-  return () => instances.forEach(pz => pz.destroy())
+
+  let dragStart: { x: number, y: number, tx: number, ty: number } | null = null
+  const onDown = (e: PointerEvent) => {
+    if (e.button !== 0) return
+    dragStart = { x: e.clientX, y: e.clientY, tx, ty }
+    canvas.setPointerCapture(e.pointerId)
+  }
+  const onMove = (e: PointerEvent) => {
+    if (!dragStart) return
+    tx = dragStart.tx + (e.clientX - dragStart.x)
+    ty = dragStart.ty + (e.clientY - dragStart.y)
+    apply()
+  }
+  const onUp = (e: PointerEvent) => {
+    dragStart = null
+    canvas.releasePointerCapture(e.pointerId)
+  }
+  const onReset = () => { tx = 0; ty = 0; s = 1; apply() }
+
+  canvas.addEventListener('wheel', onWheel, { passive: false })
+  canvas.addEventListener('pointerdown', onDown)
+  canvas.addEventListener('pointermove', onMove)
+  canvas.addEventListener('pointerup', onUp)
+  // pointercancel (touch gesture stolen, system dialog mid-drag) does NOT
+  // fire pointerup — without this, stale dragStart makes the next move jump.
+  canvas.addEventListener('pointercancel', onUp)
+  canvas.addEventListener('dblclick', onReset)
+
+  return () => {
+    canvas.removeEventListener('wheel', onWheel)
+    canvas.removeEventListener('pointerdown', onDown)
+    canvas.removeEventListener('pointermove', onMove)
+    canvas.removeEventListener('pointerup', onUp)
+    canvas.removeEventListener('pointercancel', onUp)
+    canvas.removeEventListener('dblclick', onReset)
+  }
+}
+
+// Called post-mount from MarkdownPreview's $effect. Wires wheel-zoom +
+// drag-pan + dblclick-reset on each rendered SVG. Returns cleanup —
+// setPointerCapture keeps move/up on the canvas itself (not document), so
+// {@html} subtree replacement would orphan them without explicit removal.
+export function wirePanzoom(container: HTMLElement): () => void {
+  const cleanups: Array<() => void> = []
+  for (const svg of container.querySelectorAll<SVGSVGElement>('.mermaid-block > svg')) {
+    cleanups.push(wireSvg(svg, svg.parentElement!))
+  }
+  return () => cleanups.forEach(fn => fn())
 }
