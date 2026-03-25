@@ -83,14 +83,20 @@
   let panelContentEl: HTMLElement | undefined = $state(undefined)
   let fileTabsEl: HTMLElement | undefined = $state(undefined)
   let fileTabsOverflow = $state(false)
+  function measureTabsOverflow() {
+    const el = untrack(() => fileTabsEl)
+    fileTabsOverflow = !!el && el.scrollHeight - el.clientHeight > 2
+  }
   $effect(() => {
-    void changedFiles.length
-    void fileTabsEl
     const el = fileTabsEl
     if (!el) { fileTabsOverflow = false; return }
-    requestAnimationFrame(() => {
-      fileTabsOverflow = el.scrollHeight - el.clientHeight > 2
-    })
+    const ro = new ResizeObserver(measureTabsOverflow)
+    ro.observe(el)
+    return () => ro.disconnect()
+  })
+  $effect(() => {
+    void changedFiles.length
+    measureTabsOverflow()
   })
   let activeFilePath: string | null = $state(null)
   let collapsedFiles = new SvelteSet<string>()

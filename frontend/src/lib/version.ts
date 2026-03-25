@@ -28,6 +28,9 @@ export interface UpdateInfo { latest: string; url: string }
 
 let updatePromise: Promise<UpdateInfo | null> | null = null
 
+/** Test-only reset. */
+export function _resetUpdateCheck() { updatePromise = null }
+
 export function checkForUpdate(): Promise<UpdateInfo | null> {
   if (updatePromise) return updatePromise
   updatePromise = (async () => {
@@ -35,7 +38,10 @@ export function checkForUpdate(): Promise<UpdateInfo | null> {
       const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
         headers: { 'Accept': 'application/vnd.github.v3+json' },
       })
-      if (!res.ok) return null
+      if (!res.ok) {
+        updatePromise = null  // transient (rate-limit, network) — allow retry on next tab-switch remount
+        return null
+      }
       const data = await res.json()
       const tag: string = data.tag_name ?? ''
       const latest = parseSemver(tag.replace(/^v/, ''))
@@ -46,6 +52,7 @@ export function checkForUpdate(): Promise<UpdateInfo | null> {
       }
       return null
     } catch {
+      updatePromise = null
       return null
     }
   })()

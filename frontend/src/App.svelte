@@ -2732,7 +2732,6 @@
     flex-shrink: 0;
     user-select: none;
     gap: 8px;
-    overflow: hidden;
   }
 
   .toolbar-left {
@@ -2741,7 +2740,6 @@
     gap: 8px;
     min-width: 0;
     flex: 1;
-    overflow: hidden;
   }
 
   .toolbar-right {
@@ -2900,6 +2898,9 @@
     display: flex;
     align-items: center;
     gap: 1px;
+    /* Clip nav buttons on narrow screens — scoped here (not .toolbar/.toolbar-left)
+       so the absolutely-positioned workspace dropdown isn't clipped by an ancestor. */
+    overflow: hidden;
   }
 
   .toolbar-nav-btn {

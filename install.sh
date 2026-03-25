@@ -23,9 +23,10 @@ detect_platform() {
         *)             echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
     esac
 
-    # macOS: only arm64 binary available (Intel runs via Rosetta)
-    if [ "$OS" = "macos" ]; then
-        ARCH="arm64"
+    # macOS: only arm64 binary available
+    if [ "$OS" = "macos" ] && [ "$ARCH" != "arm64" ]; then
+        echo "Intel macOS not supported — use 'go install github.com/${REPO}/cmd/lightjj@latest'" >&2
+        exit 1
     fi
 
     BINARY="lightjj-${OS}-${ARCH}"
@@ -35,8 +36,12 @@ download() {
     URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
     echo "Downloading ${BINARY}..."
     mkdir -p "$INSTALL_DIR"
-    curl -fsSL "$URL" -o "${INSTALL_DIR}/lightjj"
-    chmod +x "${INSTALL_DIR}/lightjj"
+    TMP=$(mktemp "${INSTALL_DIR}/.lightjj.XXXXXX")
+    trap 'rm -f "$TMP"' EXIT INT TERM HUP
+    curl -fsSL "$URL" -o "$TMP"
+    chmod +x "$TMP"
+    mv "$TMP" "${INSTALL_DIR}/lightjj"
+    trap - EXIT INT TERM HUP
 }
 
 sign_macos() {
