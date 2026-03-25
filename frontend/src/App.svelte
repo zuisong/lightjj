@@ -417,6 +417,12 @@
     if (mutating) return mutationProgress || 'Working...'
     if (loading) return revisions.length > 0 ? 'Refreshing...' : 'Loading revisions...'
     if (diffLoading) return 'Loading diff...'
+    if (activeView === 'branches') {
+      const bms = bookmarksPanel.value
+      const local = bms.filter(b => b.local).length
+      const remoteOnly = bms.length - local
+      return `${bms.length} bookmark${bms.length !== 1 ? 's' : ''} · ${local} local · ${remoteOnly} remote-only`
+    }
     const count = revisions.length
     const wc = workingCopyEntry
     const checked = checkedRevisions.size > 0 ? `${checkedRevisions.size} checked | ` : ''
@@ -2239,6 +2245,7 @@
             onselect={diffFrozen || activeView !== 'log' ? selectRevisionCursorOnly : selectRevision}
             onrangecheck={rangeCheck}
             oncontextmenu={openRevisionContextMenu}
+            onresolvedivergence={(cid) => divergence.enter(cid)}
             onnewfromchecked={handleNewFromChecked}
             onabandonchecked={handleAbandonChecked}
             onclearchecks={clearChecksAndReload}

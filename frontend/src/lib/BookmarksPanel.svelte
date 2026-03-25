@@ -782,7 +782,7 @@
   .bp-dot-hollow { background: transparent; border: 1px solid var(--overlay0); }
 
   .bp-name {
-    width: 280px;
+    width: 200px;
     flex-shrink: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -791,7 +791,7 @@
   }
 
   .bp-sync {
-    width: 150px;
+    width: 100px;
     flex-shrink: 0;
     font-size: 11px;
     color: var(--subtext0);

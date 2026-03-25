@@ -549,6 +549,7 @@
       if (e.key === ']') { navBlock(1); e.preventDefault(); e.stopPropagation(); return }
       if (e.key === '[') { navBlock(-1); e.preventDefault(); e.stopPropagation(); return }
       if (e.key === 'b') { takeBoth(currentBlockIdx); e.preventDefault(); e.stopPropagation(); return }
+      if (e.key === 'h') { cycle(); e.preventDefault(); e.stopPropagation(); return }
     }
     e.stopPropagation()
   }
@@ -590,7 +591,7 @@
       <button class="merge-btn merge-btn-ours" onclick={() => takeAll('ours')} disabled={busy} title="Take ours for every block">→→ All ours</button>
       <button class="merge-btn merge-btn-theirs" onclick={() => takeAll('theirs')} disabled={busy} title="Take theirs for every block">All theirs ←←</button>
     {/if}
-    <button class="merge-btn" onclick={cycle} title="Toggle pane visibility">
+    <button class="merge-btn" onclick={cycle} title="Toggle pane visibility (h)">
       {hiddenFlank === null ? '◫◫◫' : hiddenFlank === 'theirs' ? '◫◫▯' : '▯◫◫'}
     </button>
     <button class="merge-btn merge-save" onclick={save} disabled={busy} title="Save (⌘S)">

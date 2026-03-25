@@ -25,6 +25,7 @@
     onselect: (index: number) => void
     onrangecheck: (from: number, to: number) => void
     oncontextmenu: (changeId: string, x: number, y: number) => void
+    onresolvedivergence: (changeId: string) => void
     onnewfromchecked: () => void
     onabandonchecked: () => void
     onclearchecks: () => void
@@ -40,7 +41,7 @@
 
   let {
     revisions, selectedIndex, checkedRevisions, loading, mutating, viewLabel, lastCheckedIndex,
-    onselect, onrangecheck, oncontextmenu,
+    onselect, onrangecheck, oncontextmenu, onresolvedivergence,
     onnewfromchecked, onabandonchecked, onclearchecks,
     onbookmarkclick,
     rebase, squash, split,
@@ -390,7 +391,9 @@
               <span class="mode-badge badge-source">&lt;&lt; {split.review ? 'review' : 'split'} &gt;&gt;</span>
             {/if}
             {#if entry.commit.divergent}
-              <span class="alert-badge">divergent</span>
+              <button class="alert-badge alert-badge-click" title="Resolve divergence"
+                onclick={(e) => { e.stopPropagation(); onresolvedivergence(entry.commit.change_id) }}
+              >divergent</button>
             {/if}
             {#if entry.commit.conflicted}
               <span class="alert-badge">conflict</span>
@@ -1010,6 +1013,15 @@
     background: var(--badge-danger-bg, rgba(235, 100, 100, 0.15));
     color: var(--red);
     border: 1px solid var(--red);
+  }
+  .alert-badge-click {
+    font-family: inherit;
+    cursor: pointer;
+    margin: 0;
+  }
+  .alert-badge-click:hover {
+    background: var(--red);
+    color: var(--base);
   }
 
   /* Shared treatment for "(empty)" and "(no description)" — both annotate absence.
