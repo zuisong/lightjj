@@ -2733,11 +2733,20 @@
     gap: 8px;
   }
 
-  .toolbar-left,
+  .toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
   .toolbar-right {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
   }
 
   .toolbar-logo {
@@ -2759,12 +2768,13 @@
   .update-dot {
     position: absolute;
     top: -3px;
-    right: -3px;
-    width: 8px;
-    height: 8px;
+    right: -4px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
-    background: var(--red);
+    background: #ef5350;
     border: 1.5px solid var(--base);
+    box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.3);
   }
 
   .toolbar-logo-text {
