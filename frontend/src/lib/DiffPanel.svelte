@@ -2,7 +2,7 @@
   import { tick, untrack, onDestroy } from 'svelte'
   import type { Snippet } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
-  import { api, diffTargetKey, type FileChange, type DiffTarget } from './api'
+  import { api, diffTargetKey, FILE_TYPE_LABELS, type FileChange, type DiffTarget } from './api'
   import { parseDiffContent, type DiffFile, type DiffLine } from './diff-parser'
   import { expandGaps, type ExpandedDiff } from './context-expand'
   import type { WordSpan } from './word-diff'
@@ -81,6 +81,17 @@
 
   // --- Local state ---
   let panelContentEl: HTMLElement | undefined = $state(undefined)
+  let fileTabsEl: HTMLElement | undefined = $state(undefined)
+  let fileTabsOverflow = $state(false)
+  $effect(() => {
+    void changedFiles.length
+    void fileTabsEl
+    const el = fileTabsEl
+    if (!el) { fileTabsOverflow = false; return }
+    requestAnimationFrame(() => {
+      fileTabsOverflow = el.scrollHeight - el.clientHeight > 2
+    })
+  })
   let activeFilePath: string | null = $state(null)
   let collapsedFiles = new SvelteSet<string>()
 
@@ -1142,29 +1153,31 @@
           {#if totalStats.del > 0}<span class="stat-del">-{totalStats.del}</span>{/if}
         </span>
       {/if}
-      <div class="file-tabs" role="navigation" aria-label="Changed files">
-        {#each changedFiles as file (file.path)}
-          <button
-            class="file-tab"
-            class:file-tab-active={activeFilePath === file.path}
-            onclick={() => scrollToFile(file.path)}
-            title={file.path}
-            aria-current={activeFilePath === file.path ? 'true' : undefined}
-          >
-            {#if file.conflict}
-              <span class="file-dot dot-C"></span>
-            {:else}
-              <span class="file-dot" class:dot-A={file.type === 'A'} class:dot-D={file.type === 'D'} class:dot-M={file.type === 'M'}></span>
-            {/if}
-            <span class="file-tab-name">{file.path.split('/').pop()}</span>
-            {#if file.additions > 0 || file.deletions > 0}
-              <span class="file-tab-stats">
-                {#if file.additions > 0}<span class="stat-add">+{file.additions}</span>{/if}
-                {#if file.deletions > 0}<span class="stat-del">-{file.deletions}</span>{/if}
-              </span>
-            {/if}
-          </button>
-        {/each}
+      <div class="file-tabs-wrapper" class:has-overflow={fileTabsOverflow}>
+        <div class="file-tabs" role="navigation" aria-label="Changed files" bind:this={fileTabsEl}>
+          {#each changedFiles as file (file.path)}
+            <button
+              class="file-tab"
+              class:file-tab-active={activeFilePath === file.path}
+              onclick={() => scrollToFile(file.path)}
+              title={file.path}
+              aria-current={activeFilePath === file.path ? 'true' : undefined}
+            >
+              {#if file.conflict}
+                <span class="file-dot dot-C" title="Conflicted"></span>
+              {:else}
+                <span class="file-dot" class:dot-A={file.type === 'A'} class:dot-D={file.type === 'D'} class:dot-M={file.type === 'M'} title={FILE_TYPE_LABELS[file.type] ?? file.type}></span>
+              {/if}
+              <span class="file-tab-name">{file.path.split('/').pop()}</span>
+              {#if file.additions > 0 || file.deletions > 0}
+                <span class="file-tab-stats">
+                  {#if file.additions > 0}<span class="stat-add">+{file.additions}</span>{/if}
+                  {#if file.deletions > 0}<span class="stat-del">-{file.deletions}</span>{/if}
+                </span>
+              {/if}
+            </button>
+          {/each}
+        </div>
       </div>
     </div>
   {/if}
@@ -1416,6 +1429,25 @@
 
   .total-stats .stat-add { color: var(--green); }
   .total-stats .stat-del { color: var(--red); }
+
+  .file-tabs-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .file-tabs-wrapper.has-overflow::after {
+    content: '▾';
+    position: absolute;
+    bottom: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: var(--subtext0);
+    pointer-events: none;
+    z-index: 1;
+    line-height: 1;
+  }
 
   .file-tabs {
     display: flex;

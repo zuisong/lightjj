@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SvelteSet } from 'svelte/reactivity'
-  import type { FileChange } from './api'
+  import { FILE_TYPE_LABELS, type FileChange } from './api'
   import type { ContextMenuHandler } from './ContextMenu.svelte'
 
   interface Props {
@@ -118,9 +118,9 @@
       >
         <span class="file-check-indicator">{selected.has(file.path) ? '✓' : ' '}</span>
         {#if file.conflict}
-          <span class="file-dot dot-C"></span>
+          <span class="file-dot dot-C" title="Conflicted"></span>
         {:else}
-          <span class="file-dot" class:dot-A={file.type === 'A'} class:dot-D={file.type === 'D'} class:dot-M={file.type === 'M'}></span>
+          <span class="file-dot" class:dot-A={file.type === 'A'} class:dot-D={file.type === 'D'} class:dot-M={file.type === 'M'} title={FILE_TYPE_LABELS[file.type] ?? file.type}></span>
         {/if}
         <span class="file-select-path">{file.path}</span>
         {#if file.additions > 0 || file.deletions > 0}

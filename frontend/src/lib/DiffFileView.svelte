@@ -2,7 +2,7 @@
   import type { DiffFile, DiffHunk, DiffLine } from './diff-parser'
   import { toSplitView, type SplitLine } from './split-view'
   import type { WordSpan } from './word-diff'
-  import type { FileChange, Annotation } from './api'
+  import { FILE_TYPE_LABELS, type FileChange, type Annotation } from './api'
   import { findConflicts } from './conflict-parser'
   import { hunkKey, fileSelectionState, type SelectionState } from './hunk-apply'
   import type { SearchMatch } from './DiffPanel.svelte'
@@ -488,7 +488,7 @@
       <span class="collapse-icon" class:is-collapsed={isCollapsed} aria-hidden="true"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor"><path d="M2 1L6 4L2 7z"/></svg></span>
     {/if}
     {#if fileStats}
-      <span class="file-type-badge" class:badge-A={fileStats.type === 'A'} class:badge-M={fileStats.type === 'M'} class:badge-D={fileStats.type === 'D'} class:badge-R={fileStats.type === 'R'}>{fileStats.type}</span>
+      <span class="file-type-badge" class:badge-A={fileStats.type === 'A'} class:badge-M={fileStats.type === 'M'} class:badge-D={fileStats.type === 'D'} class:badge-R={fileStats.type === 'R'} title={FILE_TYPE_LABELS[fileStats.type] ?? fileStats.type}>{fileStats.type}</span>
     {/if}
     <span class="diff-file-path">
       {#if filePath.includes('/')}

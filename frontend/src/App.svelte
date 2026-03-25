@@ -2029,7 +2029,7 @@
             <button
               class="toolbar-ws-btn"
               onclick={() => { if (workspaceList.length > 1) wsDropdownOpen = !wsDropdownOpen }}
-              title={workspaceList.length > 1 ? 'Switch workspace (w)' : currentWorkspace}
+              title={workspaceList.length > 1 ? `Workspace: ${currentWorkspace} — switch (w)` : `Workspace: ${currentWorkspace}`}
             >
               <span class="toolbar-ws-glyph">◇</span>
               <span class="toolbar-ws-name">{currentWorkspace}</span>

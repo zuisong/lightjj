@@ -1,10 +1,13 @@
 .PHONY: install build frontend dev clean
 
+VERSION := $(shell cat version.txt)
+LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+
 install: frontend
-	go install ./cmd/lightjj
+	go install $(LDFLAGS) ./cmd/lightjj
 
 build: frontend
-	go build -o lightjj ./cmd/lightjj
+	go build $(LDFLAGS) -o lightjj ./cmd/lightjj
 
 frontend:
 	cd frontend && pnpm install && pnpm run build

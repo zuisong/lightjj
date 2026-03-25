@@ -627,6 +627,8 @@ export interface FileChange {
   conflict_sides: number // 2 for 2-sided, 3+ for N-way. 0 if unknown.
 }
 
+export const FILE_TYPE_LABELS: Record<string, string> = { A: 'Added', D: 'Deleted', M: 'Modified', R: 'Renamed', C: 'Copied' }
+
 export interface OpEntry {
   id: string
   description: string
