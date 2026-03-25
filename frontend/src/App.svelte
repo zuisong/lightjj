@@ -2732,6 +2732,7 @@
     flex-shrink: 0;
     user-select: none;
     gap: 8px;
+    overflow: hidden;
   }
 
   .toolbar-left {
@@ -2764,6 +2765,7 @@
   .logo-icon {
     position: relative;
     display: flex;
+    overflow: visible;
   }
 
   .update-dot {
@@ -2774,8 +2776,10 @@
     height: 9px;
     border-radius: 50%;
     background: #ef5350;
-    border: 1.5px solid var(--base);
+    border: 1.5px solid var(--crust);
     box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.3);
+    z-index: 1;
+    pointer-events: none;
   }
 
   .toolbar-logo-text {
@@ -2908,6 +2912,7 @@
     font-size: 11px;
     cursor: pointer;
     line-height: 1.4;
+    white-space: nowrap;
   }
 
   .toolbar-nav-btn:hover:not(.toolbar-nav-active) {
