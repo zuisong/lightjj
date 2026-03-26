@@ -1222,6 +1222,9 @@
       <div class="diff-toolbar-left">
         <button class="btn btn-sm" onclick={collapseAll}>Collapse all</button>
         <button class="btn btn-sm" onclick={expandAll}>Expand all</button>
+        {#if diffTarget?.kind === 'single'}
+          <span class="ann-hint"><kbd class="nav-hint">Alt</kbd>+click line to annotate</span>
+        {/if}
       </div>
       <div class="seg">
         <button
@@ -1464,14 +1467,17 @@
   .file-tabs-wrapper.has-overflow::after {
     content: '▾';
     position: absolute;
-    bottom: -2px;
+    bottom: 0;
     left: 50%;
-    transform: translateX(-50%);
-    font-size: 10px;
+    transform: translateX(-50%) translateY(50%);
+    font-size: 9px;
     color: var(--subtext0);
+    background: var(--surface0);
+    padding: 0 6px;
+    border-radius: 0 0 4px 4px;
+    line-height: 14px;
     pointer-events: none;
     z-index: 1;
-    line-height: 1;
   }
 
   .file-tabs {
@@ -1640,6 +1646,12 @@
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+  .ann-hint {
+    font-size: 10px;
+    color: var(--overlay0);
+    padding: 1px 6px;
+    user-select: none;
   }
 
   /* --- Search bar --- */

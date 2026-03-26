@@ -2,7 +2,7 @@
 
 Open items only. Done-item narratives live in [docs/CHANGELOG-ARCHIVE.md](docs/CHANGELOG-ARCHIVE.md).
 
-Last shipped: **2026-03-28** v1.7.4 — multi-select mouse (Cmd/Ctrl-click toggle-check, Shift-click anchors from cursor), branches-view keyboard parity (Space/@/n on visible graph, E/O call switchToLogView).
+Last shipped: **2026-03-30** v1.8.3 — uniform Alt+click annotation entry across diff source view and markdown preview (was preview-only). Toolbar hint for discoverability.
 
 ## Divergence deferred (low-impact, from 2026-03-18 bughunt)
 

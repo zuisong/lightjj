@@ -266,6 +266,13 @@
     return { lineNum, content }
   }
 
+  /** Alt+click on any diff line → quick-annotate (mirrors markdown preview's wireAnnotations). */
+  function handleAltClick(e: MouseEvent, annLine: number | null, rawContent: string): void {
+    if (!e.altKey || annLine === null || !onannotationclick) return
+    e.preventDefault()
+    onannotationclick(annLine, rawContent, e)
+  }
+
   function handleLineContextMenu(e: MouseEvent, line: DiffLine, lineNumbers: (number | null)[]): void {
     if (!onlinecontext) return
     e.preventDefault()
@@ -423,6 +430,7 @@
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
       data-search-match-current={hasCurrent ? 'true' : undefined}
+      onclick={(e) => handleAltClick(e, annLine, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
     >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{@html highlightSearchInText(displayContent, lm, currentMatchIdx)}</div>
   {:else if highlightedLines.has(hlKey)}
@@ -433,6 +441,7 @@
       class:diff-context={!inConflict && line.type === 'context'}
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
+      onclick={(e) => handleAltClick(e, annLine, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
     >{@render gutter(lineNumbers, rawContent, annLine)}{@html highlightedLines.get(hlKey)}</div>
   {:else if spans}
@@ -442,6 +451,7 @@
       class:diff-remove={!inConflict && line.type === 'remove'}
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
+      onclick={(e) => handleAltClick(e, annLine, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
     >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{#each spans as span}{#if span.changed}<span
           class="word-change"
@@ -454,6 +464,7 @@
       class:diff-context={!inConflict && line.type === 'context'}
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
+      onclick={(e) => handleAltClick(e, annLine, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
     >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{displayContent}</div>
   {/if}
