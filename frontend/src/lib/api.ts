@@ -887,7 +887,11 @@ export const api = {
   diffRange: (from: string, to: string, files?: string[]) => {
     const params = new URLSearchParams({ from, to })
     if (files?.length) files.forEach(f => params.append('files', f))
-    return request<{ diff: string }>(`/api/diff-range?${params}`)
+    // Both ends are commit_ids (content hashes) — the diff is immutable for
+    // a given pair, so commit_id-keyed caching is safe per the same principle
+    // as api.diff. \x1F delimiter because paths can contain : and |.
+    const key = `range:${from}\x1F${to}\x1F${files ? [...files].sort().join('\x1F') : ''}`
+    return cachedRequest<{ diff: string }>(key, `/api/diff-range?${params}`)
   },
 
   // Mutations

@@ -698,8 +698,7 @@ func TestFileLog_EscapesQuotes(t *testing.T) {
 }
 
 func TestIndexChangedPaths(t *testing.T) {
-	assert.Equal(t, []string{"debug", "index-changed-paths"}, IndexChangedPaths(0))
-	assert.Equal(t, []string{"debug", "index-changed-paths", "-n", "50000"}, IndexChangedPaths(50000))
+	assert.Equal(t, []string{"debug", "index-changed-paths"}, IndexChangedPaths())
 }
 
 func TestParseConflictList_EmptyAndMalformed(t *testing.T) {

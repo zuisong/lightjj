@@ -49,6 +49,8 @@
     oncontextmenu?: ContextMenuHandler
     /** Open in $EDITOR. undefined = disabled (SSH mode). */
     onopenfile?: (path: string, line?: number) => void
+    onfilehistory?: (path: string) => void
+    oncompare?: (path: string) => void
     /** Lookup annotations for a new-side line number. Called per-line during
      *  render — MUST be O(1) (backed by a Map, not a filter). Empty array =
      *  no badge. Returned severity drives badge color. */
@@ -79,7 +81,7 @@
     lines: { lineNum: number | null, content: string }[]
   }
 
-  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, annotationsForLine, onannotationclick, hunkReview = null }: Props = $props()
+  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, onfilehistory, oncompare, annotationsForLine, onannotationclick, hunkReview = null }: Props = $props()
 
   // Translate effective (rendered) gap index → original. When no gaps are
   // revealed, gapMap is undefined → identity. After revealing, hunks merge so
@@ -314,6 +316,8 @@
       canOpen
         ? { label: 'Open in editor', action: () => onopenfile!(filePath) }
         : { label: onopenfile ? 'Open in editor' : 'Open in editor (not configured)', disabled: true },
+      ...(onfilehistory ? [{ label: 'View history', action: () => onfilehistory(filePath) }] : []),
+      ...(oncompare ? [{ label: 'Compare to…', action: () => oncompare(filePath) }] : []),
       { separator: true },
     ]
     if (!isExpanded && onexpand) {

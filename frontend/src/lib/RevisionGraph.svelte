@@ -3,6 +3,7 @@
   import { createWindower } from './virtual.svelte'
   import { effectiveId, type LogEntry, type PullRequest, type RemoteRef, type RemoteVisibility } from './api'
   import { targetModeLabel, type RebaseMode, type SquashMode, type SplitMode } from './modes.svelte'
+  import { relativeTime } from './time-format'
   import GraphSvg from './GraphSvg.svelte'
 
   // All graph rows are height:18px (enforced below for graph pipe continuity —
@@ -49,27 +50,6 @@
   }: Props = $props()
 
   let anyModeActive = $derived(rebase.active || squash.active || split.active)
-
-  /** Format jj timestamp ("2026-03-17 22:05:32.000 -07:00") as compact relative age. */
-  function relativeTime(ts: string): string {
-    // jj format: "YYYY-MM-DD HH:MM:SS.mmm ±HH:MM"
-    // Convert to ISO 8601 for Date parsing: replace space with T, drop millis timezone space
-    const isoish = ts.replace(' ', 'T').replace(/\.(\d{3})\s+([+-])/, '.$1$2')
-    const date = new Date(isoish)
-    if (isNaN(date.getTime())) return ''
-    const secs = Math.floor((Date.now() - date.getTime()) / 1000)
-    if (secs < 60) return 'now' // also covers clock skew (negative secs)
-    const mins = Math.floor(secs / 60)
-    if (mins < 60) return `${mins}m`
-    const hrs = Math.floor(mins / 60)
-    if (hrs < 24) return `${hrs}h`
-    const days = Math.floor(hrs / 24)
-    if (days < 30) return `${days}d`
-    const months = Math.floor(days / 30)
-    if (months < 12) return `${months}mo`
-    const years = Math.floor(days / 365)
-    return `${years}y`
-  }
 
   // Stale-while-revalidate: when we already have revisions, don't blank the
   // list during reloads — dim it and show a thin progress bar instead.

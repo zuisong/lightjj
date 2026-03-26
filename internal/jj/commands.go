@@ -557,16 +557,8 @@ func FileLog(path string, limit int, full bool) CommandArgs {
 // segment-based and persists; re-running appends new commits only. Under
 // `debug` because jj hasn't promoted it to stable yet (jj#7250).
 //
-// limit bounds commits to index (0 = unlimited). Partial indexes still
-// accelerate files() for the covered range. The handler passes 0 — for
-// monorepo-scale repos the frontend suggests running the CLI directly
-// where jj's TTY-gated progress bar shows.
-func IndexChangedPaths(limit int) CommandArgs {
-	args := []string{"debug", "index-changed-paths"}
-	if limit > 0 {
-		args = append(args, "-n", strconv.Itoa(limit))
-	}
-	return args
+func IndexChangedPaths() CommandArgs {
+	return []string{"debug", "index-changed-paths"}
 }
 
 // ConflictList returns args for a jj log call emitting every conflicted

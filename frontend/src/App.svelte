@@ -300,9 +300,15 @@
   })
 
   // File history overlay — right-click file → "View history". Null = closed.
-  // {#key fileHistoryPath} remounts the panel per path (fresh cursors free).
+  // {#key fileHistoryPath} remounts per path (fresh cursors free).
   let fileHistoryPath: string | null = $state(null)
+  let fileHistoryPin: string | null = $state(null)
   let fileHistoryRef: FileHistoryPanel | undefined = $state()
+
+  function openFileHistory(path: string) {
+    fileHistoryPath = path
+    fileHistoryPin = diffTarget?.kind === 'single' ? diffTarget.commitId : null
+  }
 
   let currentWorkspace: string = $state('')
   let workspaceList: Workspace[] = $state([])
@@ -2371,7 +2377,7 @@
             onjjmutation={withMutation}
             oncontextmenu={showContextMenu}
             onopenfile={editorConfigured ? handleOpenFile : undefined}
-            onfilehistory={path => fileHistoryPath = path}
+            onfilehistory={openFileHistory}
           >
             {#snippet header()}
               <!-- {#key} resets RevisionHeader local state (descExpanded) on nav.
@@ -2497,7 +2503,8 @@
         <FileHistoryPanel
           bind:this={fileHistoryRef}
           path={fileHistoryPath}
-          onclose={() => fileHistoryPath = null}
+          initialPin={fileHistoryPin}
+          onclose={() => { fileHistoryPath = null; fileHistoryPin = null }}
         />
       {/key}
     </div>

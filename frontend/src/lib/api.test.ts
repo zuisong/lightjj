@@ -900,3 +900,26 @@ describe('request() empty-body handling', () => {
     expect(result).toEqual([{ id: 'a1' }])
   })
 })
+
+describe('diffRange caching', () => {
+  it('caches by commit_id pair', async () => {
+    mockFetch.mockResolvedValue(mockResponse({ diff: 'd1' }))
+    await api.diffRange('a', 'b')
+    await api.diffRange('a', 'b')
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('file order does not affect cache key', async () => {
+    mockFetch.mockResolvedValue(mockResponse({ diff: 'd1' }))
+    await api.diffRange('a', 'b', ['x.ts', 'y.ts'])
+    await api.diffRange('a', 'b', ['y.ts', 'x.ts'])
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not mutate caller files array', async () => {
+    mockFetch.mockResolvedValue(mockResponse({ diff: 'd1' }))
+    const files = ['b.ts', 'a.ts']
+    await api.diffRange('x', 'y', files)
+    expect(files).toEqual(['b.ts', 'a.ts']) // unsorted
+  })
+})

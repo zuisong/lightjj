@@ -16,6 +16,7 @@
   import { createDiffDerivation } from './diff-derivation.svelte'
   import { createLoader } from './loader.svelte'
   import DiffFileView, { type DiffLineInfo } from './DiffFileView.svelte'
+  import FileComparePicker from './FileComparePicker.svelte'
   import { reconstructSides, type MergeSides } from './conflict-extract'
   import FileSelectionPanel from './FileSelectionPanel.svelte'
   import type { ContextMenuItem, ContextMenuHandler } from './ContextMenu.svelte'
@@ -135,6 +136,14 @@
   let editFileContents = $state(new Map<string, string>())
   let editBusy = new SvelteSet<string>()  // concurrency guard + loading indicator
   let editError = $state('')  // last error message (shown in status bar area)
+
+  // --- Inline compare picker ---
+  // Right-click file header → "Compare to…" → rail + diff mounted below that
+  // file. Single path at a time; navigating revisions clears it (reset block).
+  let comparePickerPath: string | null = $state(null)
+  function toggleCompare(p: string) {
+    comparePickerPath = comparePickerPath === p ? null : p
+  }
 
   // --- Markdown preview ---
   // Presence = previewing. Simpler than editing (read-only, no busy/dirty);
@@ -828,6 +837,7 @@
     editError = ''
     previewGen++
     previewContents = new Map()
+    comparePickerPath = null
     mergeSides = null
     mergingPath = null
     activeFilePath = null
@@ -1319,9 +1329,18 @@
             onlinecontext={openDiffLineContextMenu}
             {oncontextmenu}
             {onopenfile}
+            {onfilehistory}
+            oncompare={diffTarget?.kind === 'single' ? toggleCompare : undefined}
             annotationsForLine={diffTarget?.kind === 'single' ? annotationsForFile(filePath) : undefined}
             onannotationclick={(ln, content, e) => handleAnnotationClick(filePath, ln, content, e)}
           />
+          {#if comparePickerPath === filePath && diffTarget?.kind === 'single'}
+            <FileComparePicker
+              path={filePath}
+              against={diffTarget.commitId}
+              onclose={() => comparePickerPath = null}
+            />
+          {/if}
         {/each}
         {#each conflictOnlyFiles as cf (cf.path)}
           {@const conflictFile = conflictFileDiffs.get(cf.path)}
