@@ -28,6 +28,13 @@ var allowedGitPushFlags = map[string]bool{
 	"--remote":   true,
 	"--dry-run":  true,
 	"--tracked":  true,
+	// Gerrit reviewers, GitLab MR options. validateFlags splits on `=` so
+	// both `--option=k=v` and `--option k=v` pass. The VALUE is not
+	// validated — git sends it opaquely to the remote's post-receive hook.
+	// Same trust boundary as the user running `git push -o ...` directly;
+	// lightjj is localhost-bound single-user so there's no confused deputy.
+	"--option": true,
+	"-o":       true,
 }
 
 var allowedGitFetchFlags = map[string]bool{
@@ -730,6 +737,7 @@ type rebaseRequest struct {
 	TargetMode      string   `json:"target_mode"`
 	SkipEmptied     bool     `json:"skip_emptied"`
 	IgnoreImmutable bool     `json:"ignore_immutable"`
+	SimplifyParents bool     `json:"simplify_parents"`
 }
 
 var validSourceModes = map[string]bool{"-r": true, "-s": true, "-b": true}
@@ -772,7 +780,11 @@ func (s *Server) handleRebase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	revs := jj.FromIDs(req.Revisions)
-	s.runMutation(w, r, jj.Rebase(revs, req.Destination, sourceMode, targetMode, req.SkipEmptied, req.IgnoreImmutable))
+	s.runMutation(w, r, jj.Rebase(revs, req.Destination, sourceMode, targetMode, jj.RebaseOptions{
+		SkipEmptied:     req.SkipEmptied,
+		IgnoreImmutable: req.IgnoreImmutable,
+		SimplifyParents: req.SimplifyParents,
+	}))
 }
 
 type squashRequest struct {

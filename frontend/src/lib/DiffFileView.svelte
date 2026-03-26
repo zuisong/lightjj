@@ -234,14 +234,6 @@
     return 'context'
   }
 
-  // Extract display content — strips prefix character(s) from line content
-  function getDisplayContent(isMarker: boolean, innerType: string | null, content: string): string {
-    if (isMarker) return ''
-    if (innerType) return content.slice(2) // strip outer `+` and inner `-`/`+`
-    // All lines: strip the first character (diff format prefix +/-/space)
-    return content.slice(1)
-  }
-
   // Extract display prefix character for the line gutter
   function getDisplayPrefix(isMarker: boolean, innerType: string | null, inConflict: boolean, content: string): string {
     if (isMarker) return ''
@@ -414,9 +406,11 @@
   {@const inConflict = !!conflictMeta}
   {@const isMarker = inConflict && (conflictMeta.cssClass === 'conflict-boundary' || conflictMeta.cssClass.endsWith('-marker'))}
   {@const innerType = conflictInnerType(conflictMeta, line.content)}
-  {@const displayContent = getDisplayContent(isMarker, innerType, line.content)}
-  {@const displayPrefix = getDisplayPrefix(isMarker, innerType, inConflict, line.content)}
   {@const rawContent = line.content.slice(1)}
+  <!-- displayContent reuses rawContent in the common (non-conflict) path
+       instead of re-slicing. Conflict-diff lines need one more char off. -->
+  {@const displayContent = isMarker ? '' : innerType ? rawContent.slice(1) : rawContent}
+  {@const displayPrefix = getDisplayPrefix(isMarker, innerType, inConflict, line.content)}
   {#if isMarker}
     <div class="diff-line conflict-marker-line">{#each lineNumbers as n}<span class="line-num"></span>{/each}</div>
   {:else if lm && lm.length > 0}

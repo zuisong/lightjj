@@ -2,7 +2,7 @@
 
 Open items only. Done-item narratives live in [docs/CHANGELOG-ARCHIVE.md](docs/CHANGELOG-ARCHIVE.md).
 
-Last shipped: **2026-03-23** v1.4.2 — DivergencePanel Escape (was a dead zone: `anyModalOpen` swallowed, `cancelInlineModes` unreachable), `m` key toggles markdown preview, conflict badge in RevisionGraph.
+Last shipped: **2026-03-26** v1.7.2 — executeHunkReview cursor/source race, annotations gen-guard, staleImmutable delimiter, scroll-into-view util, jj version detect, diff-parser newCount reconcile, reanchor closest-match.
 
 ## Divergence deferred (low-impact, from 2026-03-18 bughunt)
 
@@ -19,8 +19,6 @@ The only non-trivial carryover from the 2026-03-20 fix cluster:
 ## Architecture debt
 
 - [ ] **`RepoDir == ""` overloaded sentinel** (Low) — Used as SSH-mode flag across 4 sites (down from 6 — two were consolidated). Conflates "SSH mode" / "test mode" / "no local fs". A `hasLocalFS bool` would clarify but is cosmetic.
-- [ ] **`recent-actions` localStorage port loss** (Trivial) — `localhost:0` randomizes port → localStorage resets each launch → BookmarkModal "recent first" sort is always cold. Migrate to server-side or accept soft-degrade.
-- [ ] **No `storage` event listener in config.svelte.ts** (Trivial) — two browser tabs on same port: A writes localStorage, B's `$state` never re-reads. Diverge until reload.
 
 ## Deferred (explicit — don't do unless conditions change)
 
@@ -34,10 +32,7 @@ The only non-trivial carryover from the 2026-03-20 fix cluster:
 
 ## Small features
 
-- [ ] **jj version detection at startup** (Small) — Parse `jj --version` on server init (both local and SSH — `Runner.Run` handles both), warn via MessageBar if below minimum. Motivated by file-history's `debug index-changed-paths` dependency (jj ≥ 0.30, PR #7250). Current failure mode: old jj silently errors on the index build, falls through to slow scan. A version-gated feature table (`minJJ = {indexChangedPaths: "0.30", ...}`) would let handlers skip unsupported calls instead of logging errors.
-- [ ] **`git push --option` / `-o`** (Trivial) — Add to `allowedGitPushFlags`. Gerrit reviewers, GitLab merge options. Low demand; wait for a request.
-- [ ] **`--simplify-parents` on rebase** (Trivial) — Add to `Rebase()` builder signature, wire a checkbox in rebase mode. Useful when rebasing onto a descendant of the old parent.
-- [ ] **Double-slice per diff line** (Trivial) — DiffFileView.svelte slices `line.content` twice per render. One alloc.
+- [ ] **Per-feature jj version gating** (Small) — v1.7.2 added the startup `MIN_JJ_VERSION` warning. Next step: a version-gated feature table (`minJJ = {indexChangedPaths: "0.30", ...}`) so handlers can skip unsupported calls instead of logging errors.
 
 ## Advanced features (roadmap 2.0)
 

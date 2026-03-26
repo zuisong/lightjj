@@ -321,15 +321,26 @@ func GitRemoteList() CommandArgs {
 	return []string{"git", "remote", "list", "--color", "never", "--ignore-working-copy"}
 }
 
-func Rebase(from SelectedRevisions, to string, source string, target string, skipEmptied bool, ignoreImmutable bool) CommandArgs {
+// RebaseOptions' zero value = no extra flags. Struct instead of trailing bools
+// so adding the next flag won't churn every test call site.
+type RebaseOptions struct {
+	SkipEmptied     bool
+	IgnoreImmutable bool
+	SimplifyParents bool
+}
+
+func Rebase(from SelectedRevisions, to, source, target string, opts RebaseOptions) CommandArgs {
 	args := []string{"rebase"}
 	args = append(args, from.AsPrefixedArgs(source)...)
 	args = append(args, target, to)
-	if ignoreImmutable {
+	if opts.IgnoreImmutable {
 		args = append(args, "--ignore-immutable")
 	}
-	if skipEmptied {
+	if opts.SkipEmptied {
 		args = append(args, "--skip-emptied")
+	}
+	if opts.SimplifyParents {
+		args = append(args, "--simplify-parents")
 	}
 	return args
 }

@@ -344,7 +344,10 @@
   let mutating = $state(false)
 
   async function withMutation<T>(fn: () => Promise<T>): Promise<T | undefined> {
-    if (mutating) return
+    if (mutating) {
+      setMessage({ kind: 'warning', text: 'Operation in progress — wait for it to finish' })
+      return
+    }
     mutating = true
     setMessage(null)
     try { return await fn() }
@@ -1261,7 +1264,7 @@
       return
     }
     // Capture mode state before cancelling
-    const { sources, sourceMode, targetMode, skipEmptied, ignoreImmutable } = rebase
+    const { sources, sourceMode, targetMode, skipEmptied, ignoreImmutable, simplifyParents } = rebase
     const modeLabel = targetModeLabel[targetMode]
     rebase.cancel()
     return withMutation(async () => {
@@ -1269,6 +1272,7 @@
         const result = await api.rebase(sources, destination, sourceMode, targetMode, {
           skipEmptied: skipEmptied || undefined,
           ignoreImmutable: ignoreImmutable || undefined,
+          simplifyParents: simplifyParents || undefined,
         })
         const msg = sources.length > 1
           ? `Rebased ${sources.length} revisions ${modeLabel} ${destination.slice(0, 8)}`

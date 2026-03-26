@@ -226,7 +226,7 @@ func TestHandleMetaeditChangeId_EmptyRevision(t *testing.T) {
 func TestRunMutation_Warnings(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	revs := jj.NewSelectedRevisions(&jj.Commit{ChangeId: "abc"})
-	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", false, false)).
+	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", jj.RebaseOptions{})).
 		SetOutput([]byte("Rebased 3 commits")).
 		SetStderr([]byte("Warning: conflict in src/foo.go\nWarning: conflict in src/bar.go"))
 	defer runner.Verify()
@@ -349,7 +349,7 @@ func TestHandleDescribe(t *testing.T) {
 func TestHandleRebase(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	revs := jj.NewSelectedRevisions(&jj.Commit{ChangeId: "abc"})
-	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", false, false)).SetOutput([]byte(""))
+	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", jj.RebaseOptions{})).SetOutput([]byte(""))
 	defer runner.Verify()
 
 	srv := newTestServer(runner)
@@ -1318,7 +1318,7 @@ func TestHandleRebase_Modes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := testutil.NewMockRunner(t)
 			revs := jj.NewSelectedRevisions(&jj.Commit{ChangeId: "abc"})
-			runner.Expect(jj.Rebase(revs, "def", tt.wantSource, tt.wantTarget, false, false)).SetOutput([]byte(""))
+			runner.Expect(jj.Rebase(revs, "def", tt.wantSource, tt.wantTarget, jj.RebaseOptions{})).SetOutput([]byte(""))
 			defer runner.Verify()
 
 			srv := newTestServer(runner)
@@ -1338,13 +1338,13 @@ func TestHandleRebase_Modes(t *testing.T) {
 func TestHandleRebase_Flags(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	revs := jj.NewSelectedRevisions(&jj.Commit{ChangeId: "abc"})
-	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", true, true)).SetOutput([]byte(""))
+	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", jj.RebaseOptions{SkipEmptied: true, IgnoreImmutable: true, SimplifyParents: true})).SetOutput([]byte(""))
 	defer runner.Verify()
 
 	srv := newTestServer(runner)
 	body, _ := json.Marshal(rebaseRequest{
 		Revisions: []string{"abc"}, Destination: "def",
-		SkipEmptied: true, IgnoreImmutable: true,
+		SkipEmptied: true, IgnoreImmutable: true, SimplifyParents: true,
 	})
 	req := jsonPost("/api/rebase", body)
 	w := httptest.NewRecorder()
@@ -1485,7 +1485,7 @@ func TestHandleDescribe_RunnerError(t *testing.T) {
 func TestHandleRebase_RunnerError(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	revs := jj.NewSelectedRevisions(&jj.Commit{ChangeId: "abc"})
-	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", false, false)).SetError(errors.New("rebase failed"))
+	runner.Expect(jj.Rebase(revs, "def", "-r", "-d", jj.RebaseOptions{})).SetError(errors.New("rebase failed"))
 	defer runner.Verify()
 
 	srv := newTestServer(runner)
@@ -3062,7 +3062,7 @@ func TestWireTypes(t *testing.T) {
 			body:  `{"revisions":["abc"],"destination":"def","source_mode":"-s","target_mode":"--insert-after","skip_emptied":true,"ignore_immutable":true}`,
 			// If any of these 4 field names mismatch: -s→-r, --insert-after→-d,
 			// true→false — MockRunner.Expect fails.
-			expect: jj.Rebase(abc, "def", "-s", "--insert-after", true, true),
+			expect: jj.Rebase(abc, "def", "-s", "--insert-after", jj.RebaseOptions{SkipEmptied: true, IgnoreImmutable: true}),
 		},
 		{
 			name:   "squash: files + keep_emptied + ignore_immutable",

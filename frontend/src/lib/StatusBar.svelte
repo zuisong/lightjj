@@ -95,6 +95,7 @@
       <span class="key-group">
         <kbd class="key" class:key-active={rebase.skipEmptied}>e</kbd><span class="key-label" class:key-label-active={rebase.skipEmptied}>skip-emptied</span>
         <kbd class="key" class:key-active={rebase.ignoreImmutable}>x</kbd><span class="key-label" class:key-label-active={rebase.ignoreImmutable}>ignore-immutable</span>
+        <kbd class="key" class:key-active={rebase.simplifyParents}>p</kbd><span class="key-label" class:key-label-active={rebase.simplifyParents}>simplify-parents</span>
       </span>
     </div>
   {:else}

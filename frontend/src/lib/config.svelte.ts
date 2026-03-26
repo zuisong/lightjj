@@ -28,6 +28,10 @@ interface Config {
    *  = independent visibility. Pre-1.0 stored this flat (keyed by remote name);
    *  old entries become orphaned keys that no repo_path will match — harmless. */
   remoteVisibility: RemoteVisibilityByRepo
+  /** Frequency counters keyed by namespace. Replaces the old localStorage-only
+   *  recent-actions — `localhost:0` randomizes port so localStorage was cold
+   *  every launch. Server-side survives port changes (same config file). */
+  recentActions: Record<string, Record<string, number>>
 }
 
 const defaults: Config = {
@@ -40,6 +44,7 @@ const defaults: Config = {
   editorArgs: [],
   editorArgsRemote: [],
   remoteVisibility: {},
+  recentActions: {},
 }
 
 function loadLocal(): Partial<Config> {
@@ -128,10 +133,39 @@ function createConfig() {
   // saveLocal (sync localStorage) is the one that matters here — saveRemote
   // fire-and-forgets into a dying page but localStorage is durable.
   addEventListener('beforeunload', flush)
+
+  // Cross-tab sync. The `storage` event fires in OTHER tabs when localStorage
+  // changes (never in the writing tab). Without this, two tabs diverge until
+  // reload. `suppressSave` stops the effect from echoing the incoming write
+  // back out — the other tab already persisted it, and an unconditional echo
+  // would ping-pong between tabs at 500ms intervals.
+  let suppressSave = false
+  addEventListener('storage', (e) => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return
+    try {
+      const incoming = JSON.parse(e.newValue) as Partial<Config>
+      suppressSave = true
+      for (const k of Object.keys(defaults) as (keyof Config)[]) {
+        if (k in incoming && incoming[k] !== undefined) {
+          applyKey(k, incoming[k] as Config[typeof k])
+        }
+      }
+    } catch { /* malformed — leave state as-is */ }
+  })
   $effect.root(() => {
     $effect(() => {
       const snap = $state.snapshot(state)
       if (!hydrated) return
+      if (suppressSave) {
+        suppressSave = false
+        // Drop any pending write too — it holds a PRE-sync snapshot. Letting
+        // it flush would regress the other tab's change and trigger the echo
+        // we're here to prevent. Easy to hit during panel-resize drags
+        // (60 writes/s into a 500ms window).
+        clearTimeout(saveTimer)
+        pendingSnap = undefined
+        return
+      }
       // Debounce BOTH saves. Panel-resize drags set revisionPanelWidth on
       // every mousemove (~60×/s) — 60 sync localStorage.setItem/sec is jank,
       // 60 POST/sec each doing read-merge-write-rename on disk is worse.
@@ -168,6 +202,9 @@ function createConfig() {
 
     get remoteVisibility() { return state.remoteVisibility },
     set remoteVisibility(v: RemoteVisibilityByRepo) { state.remoteVisibility = v },
+
+    get recentActions() { return state.recentActions },
+    set recentActions(v: Record<string, Record<string, number>>) { state.recentActions = v },
 
     /** Resolves when the remote config has been loaded and merged. Callers that
      *  need the "real" config (not just localStorage defaults) should await this

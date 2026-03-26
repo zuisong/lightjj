@@ -143,14 +143,14 @@ func TestGitFetch(t *testing.T) {
 
 func TestRebase(t *testing.T) {
 	from := NewSelectedRevisions(&Commit{ChangeId: "abc"})
-	got := Rebase(from, "def", "-r", "-d", false, false)
+	got := Rebase(from, "def", "-r", "-d", RebaseOptions{})
 	assert.Equal(t, []string{"rebase", "-r", "abc", "-d", "def"}, got)
 }
 
 func TestRebase_Flags(t *testing.T) {
 	from := NewSelectedRevisions(&Commit{ChangeId: "abc"})
-	got := Rebase(from, "def", "-r", "-d", true, true)
-	assert.Equal(t, []string{"rebase", "-r", "abc", "-d", "def", "--ignore-immutable", "--skip-emptied"}, got)
+	got := Rebase(from, "def", "-r", "-d", RebaseOptions{SkipEmptied: true, IgnoreImmutable: true, SimplifyParents: true})
+	assert.Equal(t, []string{"rebase", "-r", "abc", "-d", "def", "--ignore-immutable", "--skip-emptied", "--simplify-parents"}, got)
 }
 
 func TestEscapeFileName(t *testing.T) {

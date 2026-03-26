@@ -927,11 +927,12 @@ export const api = {
     post<MutationResult>('/api/describe', { revision, description }),
 
   rebase: (revisions: string[], destination: string, sourceMode?: string, targetMode?: string, opts?: {
-    skipEmptied?: boolean, ignoreImmutable?: boolean
+    skipEmptied?: boolean, ignoreImmutable?: boolean, simplifyParents?: boolean
   }) =>
     post<MutationResult>('/api/rebase', {
       revisions, destination, source_mode: sourceMode, target_mode: targetMode,
       skip_emptied: opts?.skipEmptied, ignore_immutable: opts?.ignoreImmutable,
+      simplify_parents: opts?.simplifyParents,
     }),
 
   split: (revision: string, files: string[], parallel?: boolean) =>

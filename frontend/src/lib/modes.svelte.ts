@@ -31,6 +31,7 @@ export interface RebaseMode extends ModeBase {
   readonly targetMode: TargetMode
   readonly skipEmptied: boolean
   readonly ignoreImmutable: boolean
+  readonly simplifyParents: boolean
   enter(revisions: string[]): void
 }
 
@@ -57,6 +58,7 @@ export function createRebaseMode(): RebaseMode {
   let targetMode: TargetMode = $state('-d')
   let skipEmptied = $state(false)
   let ignoreImmutable = $state(false)
+  let simplifyParents = $state(false)
 
   return {
     get active() { return active },
@@ -66,6 +68,7 @@ export function createRebaseMode(): RebaseMode {
     get targetMode() { return targetMode },
     get skipEmptied() { return skipEmptied },
     get ignoreImmutable() { return ignoreImmutable },
+    get simplifyParents() { return simplifyParents },
 
     enter(revisions: string[]) {
       sources = revisions
@@ -73,6 +76,7 @@ export function createRebaseMode(): RebaseMode {
       targetMode = '-d'
       skipEmptied = false
       ignoreImmutable = false
+      simplifyParents = false
       active = true
     },
 
@@ -91,6 +95,7 @@ export function createRebaseMode(): RebaseMode {
         case 'o': case 'd': targetMode = '-d'; return true
         case 'e': skipEmptied = !skipEmptied; return true
         case 'x': ignoreImmutable = !ignoreImmutable; return true
+        case 'p': simplifyParents = !simplifyParents; return true
         default: return false
       }
     },
