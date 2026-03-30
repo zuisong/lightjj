@@ -542,6 +542,8 @@
           ctx={previewRevision
             ? { revision: previewRevision, baseDir: filePath.split('/').slice(0, -1).join('/') }
             : undefined}
+          {annotationsForLine}
+          {onannotationclick}
         />
       {/await}
     {:else if effectiveSplit}
@@ -998,29 +1000,17 @@
     --line-gutter-border: var(--surface0);
   }
 
-  /* Annotation gutter badge — floats at the right edge of the line so it
-     doesn't push the line content. The diff-line's right padding (12px)
-     reserves the space. Color-coded by severity; dashed outline = orphaned. */
-  .annotation-badge {
-    position: absolute;
+  /* Annotation gutter badge — positioning + size only; shared semantic
+     rules (.severity-*, .orphaned, hover) in theme.css. The diff-line's
+     right padding (12px) reserves space so the badge doesn't push content. */
+  .diff-line { position: relative; }
+  :global(.diff-line .annotation-badge) {
     right: 2px;
-    background: transparent;
-    border: none;
     font-size: 11px;
-    line-height: 1;
-    cursor: pointer;
     padding: 1px 2px;
-    border-radius: 3px;
-    opacity: 0.7;
     transition: opacity var(--anim-duration) var(--anim-ease);
   }
-  .diff-line { position: relative; } /* anchor for badge */
-  .annotation-badge:hover { opacity: 1; }
-  .annotation-badge sup { font-size: 8px; }
-  .annotation-badge.severity-must-fix { filter: hue-rotate(-20deg) saturate(2); }
-  .annotation-badge.severity-question { filter: hue-rotate(180deg); }
-  .annotation-badge.severity-nitpick { opacity: 0.4; }
-  .annotation-badge.orphaned { outline: 1px dashed var(--overlay0); }
+  :global(.diff-line .annotation-badge sup) { font-size: 8px; }
 
   .diff-add {
     background: var(--diff-add-bg);

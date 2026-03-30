@@ -455,3 +455,22 @@ body {
 .tok-literal                    { color: var(--syn-atom); }
 .tok-definition                 { color: var(--syn-property); }
 .tok-meta                       { color: var(--syn-comment); }
+
+/* --- Annotation badge (DiffFileView diff-lines + MarkdownPreview blocks) ---
+   Severity tint via filter on the 💬 glyph: hue-rotate off the base amber
+   emoji color, saturate for intensity. Positioning is per-component (diff-line
+   right-edge vs prose block top-right); only the semantic rules live here. */
+.annotation-badge {
+  position: absolute;
+  background: transparent;
+  border: none;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0.7;
+}
+.annotation-badge:hover { opacity: 1; }
+.annotation-badge.severity-must-fix { filter: hue-rotate(-20deg) saturate(2); }
+.annotation-badge.severity-question { filter: hue-rotate(180deg); }
+.annotation-badge.severity-nitpick  { opacity: 0.4; }
+.annotation-badge.orphaned          { outline: 1px dashed var(--overlay0); }

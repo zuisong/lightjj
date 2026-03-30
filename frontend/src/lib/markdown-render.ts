@@ -1,7 +1,11 @@
-import { marked, type Tokens } from 'marked'
+import { marked, type Token, type Tokens } from 'marked'
 import DOMPurify from 'dompurify'
 import { escapeHtml, escapeAttr } from './highlighter'
-import { api } from './api'
+import { api, type Annotation, type AnnotationSeverity } from './api'
+
+const SEV_ORDER: Record<AnnotationSeverity, number> = {
+  'must-fix': 0, suggestion: 1, question: 2, nitpick: 3,
+}
 
 // beautiful-mermaid lazy-loaded — ~300KB chunk (mostly elkjs), only fetched
 // on first preview. Subsequent previews hit module cache. Promise-memoized
@@ -92,25 +96,94 @@ function resolveImgSrc(href: string): string {
   return api.fileRawUrl(imgCtx.revision, path)
 }
 
+// ── Source-line stamping for preview annotations ──────────────────────────
+// Block tokens get _srcLine during walkTokens; renderer hooks emit it as
+// data-src-line. Clicks on rendered blocks resolve back to {lineNum,
+// lineContent} — identical anchor coordinates to diff-view annotations, so
+// the store/reanchor/backend pipeline is untouched. When stampCtx is null
+// (plain renderMarkdown), nothing stamps → srcAttr returns '' → hooks return
+// false → default renderer runs. Zero cost for the non-annotated path.
+
+type Stamped = Token & { _srcLine?: number }
+const STAMPED = new Set(['heading', 'paragraph', 'list_item', 'blockquote', 'code', 'hr'])
+
+let stampCtx: { src: string; cursor: number; line: number } | null = null
+
+// walkTokens visits depth-first in document order. indexOf(raw, cursor) with
+// a monotone cursor disambiguates duplicate raw slices (two identical list
+// items resolve to their respective source positions). Cursor advances to
+// pos+1 (not pos — that would re-find the same match; not pos+raw.length —
+// a list_item's raw contains its child paragraph's raw, advancing past it
+// would skip the child). Line count is incremental: pos ≥ cursor always
+// (indexOf guarantee), so counting [cursor, pos) makes total work O(src)
+// regardless of block count.
+function stamp(token: Token) {
+  if (!stampCtx || !STAMPED.has(token.type)) return
+  const pos = stampCtx.src.indexOf(token.raw, stampCtx.cursor)
+  if (pos < 0) return
+  for (let i = stampCtx.cursor; i < pos; i++) {
+    if (stampCtx.src.charCodeAt(i) === 10) stampCtx.line++
+  }
+  ;(token as Stamped)._srcLine = stampCtx.line
+  stampCtx.cursor = pos + 1
+}
+
+const srcAttr = (t: Stamped) => t._srcLine ? ` data-src-line="${t._srcLine}"` : ''
+
 marked.use({
   gfm: true,
+  walkTokens: stamp,
   renderer: {
-    code({ text, lang }: Tokens.Code) {
-      if (lang !== 'mermaid') return false
-      const svg = tryRenderDiagram(text)
-      if (svg) {
-        const idx = pendingDiagrams.push(svg) - 1
-        return `<i data-mermaid="${idx}"></i>`
+    code(token: Tokens.Code) {
+      const { text, lang } = token
+      if (lang === 'mermaid') {
+        const svg = tryRenderDiagram(text)
+        if (svg) {
+          const idx = pendingDiagrams.push(svg) - 1
+          return `<i data-mermaid="${idx}"${srcAttr(token)}></i>`
+        }
+        // Not-yet-loaded, unsupported type, parse error, or over-limit — raw
+        // code block. If loading was the reason, the caller re-derives once
+        // mermaidReady flips and this path re-tries.
+        return `<pre class="mermaid-fallback"${srcAttr(token)}><code>${escapeHtml(text)}</code></pre>`
       }
-      // Not-yet-loaded, unsupported type, parse error, or over-limit — raw
-      // code block. If loading was the reason, the caller re-derives once
-      // mermaidReady flips and this path re-tries.
-      return `<pre class="mermaid-fallback"><code>${escapeHtml(text)}</code></pre>`
+      const a = srcAttr(token)
+      if (!a) return false
+      return `<pre${a}><code>${escapeHtml(text)}</code></pre>\n`
     },
     image({ href, title, text }: Tokens.Image) {
       const src = resolveImgSrc(href)
       const t = title ? ` title="${escapeAttr(title)}"` : ''
       return `<img src="${escapeAttr(src)}" alt="${escapeAttr(text)}"${t}>`
+    },
+    heading(token: Tokens.Heading) {
+      const a = srcAttr(token)
+      if (!a) return false
+      const d = token.depth
+      return `<h${d}${a}>${this.parser.parseInline(token.tokens)}</h${d}>\n`
+    },
+    paragraph(token: Tokens.Paragraph) {
+      const a = srcAttr(token)
+      if (!a) return false
+      return `<p${a}>${this.parser.parseInline(token.tokens)}</p>\n`
+    },
+    blockquote(token: Tokens.Blockquote) {
+      const a = srcAttr(token)
+      if (!a) return false
+      return `<blockquote${a}>${this.parser.parse(token.tokens)}</blockquote>\n`
+    },
+    hr(token: Tokens.Hr) {
+      const a = srcAttr(token)
+      if (!a) return false
+      return `<hr${a}>\n`
+    },
+    listitem(token: Tokens.ListItem) {
+      const a = srcAttr(token)
+      if (!a) return false
+      const check = token.task
+        ? `<input type="checkbox" disabled${token.checked ? ' checked' : ''}> `
+        : ''
+      return `<li${a}>${check}${this.parser.parse(token.tokens)}</li>\n`
     },
   },
 })
@@ -138,9 +211,82 @@ export function renderMarkdown(src: string, ctx?: PreviewContext): string {
   const html = DOMPurify.sanitize(marked.parse(src) as string, SANITIZE_CFG)
   imgCtx = null
   return html.replace(
-    /<i data-mermaid="(\d+)"><\/i>/g,
-    (_, i) => `<div class="mermaid-block">${pendingDiagrams[+i]}</div>`,
+    /<i data-mermaid="(\d+)"( data-src-line="\d+")?><\/i>/g,
+    (_, i, srcLine) => `<div class="mermaid-block"${srcLine ?? ''}>${pendingDiagrams[+i]}</div>`,
   )
+}
+
+export function renderMarkdownAnnotated(src: string, ctx?: PreviewContext): string {
+  stampCtx = { src, cursor: 0, line: 1 }
+  try { return renderMarkdown(src, ctx) }
+  finally { stampCtx = null }
+}
+
+// Inject badges + Alt-click annotate gesture on rendered preview. Called from
+// MarkdownPreview's post-{@html} $effect. forLine() reads the store's $derived
+// byLine Map, so calling it here registers that as a dep — badges re-inject
+// when annotations.list mutates (user saves via the bubble).
+//
+// Range math: blocks sorted by srcLine, each claims [own, next). Nested blocks
+// (li > p) naturally subdivide — the inner p claims its sub-range, the outer
+// li's range shrinks to just its own line(s). closest() in the Alt-click path
+// returns the innermost match, so clicking inside a nested paragraph anchors
+// to the paragraph, not the list item.
+export function wireAnnotations(
+  container: HTMLElement,
+  sourceLines: readonly string[],
+  forLine: (n: number) => readonly Annotation[],
+  onClick: ((n: number, content: string, e: MouseEvent) => void) | undefined,
+): () => void {
+  const blocks = [...container.querySelectorAll<HTMLElement>('[data-src-line]')]
+  const sorted = blocks.map(el => +el.dataset.srcLine!).sort((a, b) => a - b)
+  const endOf = (line: number) => sorted.find(l => l > line) ?? sourceLines.length + 1
+
+  const injected: Array<() => void> = []
+  for (const el of blocks) {
+    const line = +el.dataset.srcLine!
+    // Loose-list <li> and its inner <p> both stamp the same line — skip the
+    // outer so the badge lands on the innermost (most specific) block.
+    if (el.querySelector(`[data-src-line="${line}"]`)) continue
+    const end = endOf(line)
+    const anns: Annotation[] = []
+    for (let n = line; n < end; n++) anns.push(...forLine(n))
+    if (!anns.length) continue
+    // Block spans multiple source lines → multiple annotations possible. Sort
+    // so must-fix tints the badge (not hidden behind a nitpick's 0.4 opacity).
+    anns.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity])
+
+    const badge = document.createElement('button')
+    badge.className = `annotation-badge severity-${anns[0].severity}`
+    if (anns[0].status === 'orphaned') badge.classList.add('orphaned')
+    badge.textContent = '💬'
+    if (anns.length > 1) {
+      const sup = document.createElement('sup')
+      sup.textContent = String(anns.length)
+      badge.appendChild(sup)
+    }
+    badge.title = `${anns.length} annotation${anns.length > 1 ? 's' : ''}: ${anns[0].comment}`
+    badge.ariaLabel = 'View annotation'
+    badge.onclick = (e) => { e.stopPropagation(); onClick?.(anns[0].lineNum, anns[0].lineContent, e) }
+    el.classList.add('md-ann-host')
+    el.appendChild(badge)
+    injected.push(() => { badge.remove(); el.classList.remove('md-ann-host') })
+  }
+
+  const onAlt = (e: MouseEvent) => {
+    if (!e.altKey || !onClick) return
+    const block = (e.target as Element).closest<HTMLElement>('[data-src-line]')
+    if (!block || !container.contains(block)) return
+    e.preventDefault()
+    const line = +block.dataset.srcLine!
+    onClick(line, sourceLines[line - 1] ?? '', e)
+  }
+  container.addEventListener('click', onAlt)
+
+  return () => {
+    injected.forEach(fn => fn())
+    container.removeEventListener('click', onAlt)
+  }
 }
 
 const MIN_SCALE = 0.3

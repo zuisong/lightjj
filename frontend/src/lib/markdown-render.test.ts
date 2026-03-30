@@ -13,7 +13,8 @@ vi.mock('beautiful-mermaid', () => ({
     return `<svg data-src="${src.slice(0, 20)}"></svg>`
   }),
 }))
-import { renderMarkdown, ensureMermaidLoaded, wirePanzoom } from './markdown-render'
+import { renderMarkdown, renderMarkdownAnnotated, ensureMermaidLoaded, wirePanzoom, wireAnnotations } from './markdown-render'
+import type { Annotation } from './api'
 
 describe('renderMarkdown', () => {
   it('renders GFM basics', () => {
@@ -159,6 +160,138 @@ describe('renderMarkdown', () => {
       expect(html).toContain('path=docs%2Fmy+image.png')
       expect(html).not.toContain('%2520')  // NOT double-encoded
     })
+  })
+})
+
+describe('renderMarkdownAnnotated', () => {
+  // Multi-block fixture — heading, paragraph spanning 2 lines, nested list,
+  // code fence, blockquote. Line numbers are the contract with reanchor().
+  const DOC = [
+    /* 1 */ '# Title',
+    /* 2 */ '',
+    /* 3 */ 'First para',
+    /* 4 */ 'continues here.',
+    /* 5 */ '',
+    /* 6 */ '- apple',
+    /* 7 */ '- apple',   // duplicate — tests monotone-cursor disambiguation
+    /* 8 */ '',
+    /* 9 */ '```js',
+    /* 10 */ 'const x = 1',
+    /* 11 */ '```',
+    /* 12 */ '',
+    /* 13 */ '> quoted',
+  ].join('\n')
+
+  const srcLines = (html: string) => {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    return [...doc.querySelectorAll('[data-src-line]')].map(el => ({
+      tag: el.tagName.toLowerCase(),
+      line: +el.getAttribute('data-src-line')!,
+    }))
+  }
+
+  it('stamps block elements with 1-indexed source lines', () => {
+    const stamped = srcLines(renderMarkdownAnnotated(DOC))
+    expect(stamped).toContainEqual({ tag: 'h1', line: 1 })
+    expect(stamped).toContainEqual({ tag: 'p', line: 3 })
+    expect(stamped).toContainEqual({ tag: 'pre', line: 9 })
+    expect(stamped).toContainEqual({ tag: 'blockquote', line: 13 })
+  })
+
+  it('duplicate source slices resolve to distinct lines (monotone cursor)', () => {
+    const lis = srcLines(renderMarkdownAnnotated(DOC)).filter(s => s.tag === 'li')
+    expect(lis.map(l => l.line)).toEqual([6, 7])
+  })
+
+  it('plain renderMarkdown leaves zero stamps (no-cost fallthrough)', () => {
+    expect(srcLines(renderMarkdown(DOC))).toEqual([])
+  })
+
+  it('DOMPurify preserves data-src-line', () => {
+    // data-* is in the default allowlist; this test locks that assumption.
+    const html = renderMarkdownAnnotated('# hi')
+    expect(html).toContain('data-src-line="1"')
+  })
+
+  it('mermaid block carries data-src-line to .mermaid-block (no double-wrap)', async () => {
+    await ensureMermaidLoaded()
+    const html = renderMarkdownAnnotated('# Title\n\n```mermaid\ngraph TD; A-->B\n```')
+    // Stamped on the mermaid-block div itself — no extra wrapper.
+    expect(html).toMatch(/<div class="mermaid-block" data-src-line="3">/)
+    expect(html).not.toMatch(/<div data-src-line="\d+"><div class="mermaid-block">/)
+  })
+
+  it('task-list items keep checkbox', () => {
+    const html = renderMarkdownAnnotated('- [x] done\n- [ ] todo')
+    expect(html).toContain('checked')
+    expect(html).toMatch(/<li data-src-line="1">.*checkbox/)
+    expect(html).toMatch(/<li data-src-line="2">.*checkbox/)
+  })
+})
+
+describe('wireAnnotations', () => {
+  const mkAnn = (lineNum: number, comment = 'note'): Annotation => ({
+    id: 'a', changeId: 'c', filePath: 'doc.md',
+    lineNum, lineContent: `line ${lineNum}`, comment,
+    severity: 'suggestion', createdAt: 0, createdAtCommitId: 'x', status: 'open',
+  })
+
+  const render = (src: string) => {
+    const div = document.createElement('div')
+    div.innerHTML = renderMarkdownAnnotated(src)
+    return div
+  }
+
+  it('injects badge on block covering annotation line', () => {
+    // heading@1, para@3 → ann at line 4 falls in para's [3, ∞) range
+    const div = render('# Title\n\nPara text\ncontinues')
+    const ann = mkAnn(4)
+    wireAnnotations(div, ['# Title', '', 'Para text', 'continues'], n => n === 4 ? [ann] : [], undefined)
+
+    expect(div.querySelector('h1 .annotation-badge')).toBeNull()
+    const badge = div.querySelector('p .annotation-badge') as HTMLElement
+    expect(badge).toBeTruthy()
+    expect(badge.title).toBe('1 annotation: note')
+  })
+
+  it('nested block claims sub-range (li > inner p does not double-badge)', () => {
+    // Loose list: li@1 contains p@1. Both claim line 1 initially, but
+    // sorted-next-line gives li range [1,1) = empty, p range [1,end).
+    // Only the innermost p gets the badge.
+    const div = render('- item one\n\n- item two')
+    wireAnnotations(div, ['- item one', '', '- item two'], n => n === 1 ? [mkAnn(1)] : [], undefined)
+    const badges = div.querySelectorAll('.annotation-badge')
+    expect(badges.length).toBe(1)
+  })
+
+  it('Alt+click emits innermost block start line + source content', () => {
+    const div = render('# Title\n\nPara')
+    const srcLines = ['# Title', '', 'Para']
+    const calls: [number, string][] = []
+    wireAnnotations(div, srcLines, () => [], (n, c) => { calls.push([n, c]) })
+
+    const p = div.querySelector('p')!
+    p.dispatchEvent(new MouseEvent('click', { altKey: true, bubbles: true }))
+    expect(calls).toEqual([[3, 'Para']])
+  })
+
+  it('non-Alt click is ignored', () => {
+    const div = render('# Title')
+    let fired = false
+    wireAnnotations(div, ['# Title'], () => [], () => { fired = true })
+    div.querySelector('h1')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(fired).toBe(false)
+  })
+
+  it('cleanup removes badges + listener', () => {
+    const div = render('# Title')
+    const ann = mkAnn(1)
+    const cleanup = wireAnnotations(div, ['# Title'], () => [ann], () => {})
+    expect(div.querySelector('.annotation-badge')).toBeTruthy()
+    expect(div.querySelector('.md-ann-host')).toBeTruthy()
+    cleanup()
+    expect(div.querySelector('.annotation-badge')).toBeNull()
+    expect(div.querySelector('.md-ann-host')).toBeNull()
   })
 })
 

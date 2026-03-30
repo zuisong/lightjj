@@ -1,7 +1,18 @@
 <script lang="ts">
-  import { renderMarkdown, ensureMermaidLoaded, wirePanzoom, type PreviewContext } from './markdown-render'
+  import { renderMarkdown, renderMarkdownAnnotated, ensureMermaidLoaded, wirePanzoom, wireAnnotations, type PreviewContext } from './markdown-render'
+  import type { Annotation } from './api'
 
-  let { content, ctx }: { content: string, ctx?: PreviewContext } = $props()
+  interface Props {
+    content: string
+    ctx?: PreviewContext
+    // Same signatures as DiffFileView — DiffPanel threads them through
+    // unchanged. forLine reads the annotation store's $derived byLine Map,
+    // so the wireAnnotations $effect re-runs when annotations.list changes.
+    annotationsForLine?: (lineNum: number) => readonly Annotation[]
+    onannotationclick?: (lineNum: number, lineContent: string, e: MouseEvent) => void
+  }
+
+  let { content, ctx, annotationsForLine, onannotationclick }: Props = $props()
   let container: HTMLElement | undefined = $state()
 
   // Mermaid chunk lazy-loads on first preview. `mermaidReady` is a dep of
@@ -11,7 +22,11 @@
   let mermaidReady = $state(false)
   $effect(() => { ensureMermaidLoaded().then(() => mermaidReady = true) })
 
-  let html = $derived((void mermaidReady, renderMarkdown(content, ctx)))
+  let html = $derived((void mermaidReady, annotationsForLine
+    ? renderMarkdownAnnotated(content, ctx)
+    : renderMarkdown(content, ctx)))
+
+  let sourceLines = $derived(annotationsForLine ? content.split('\n') : [])
 
   // Re-wire pan/zoom after every html change. Returned cleanup removes
   // the prior batch's listeners — they survive {@html} subtree replacement.
@@ -19,6 +34,12 @@
     void html
     if (!container) return
     return wirePanzoom(container)
+  })
+
+  $effect(() => {
+    void html
+    if (!container || !annotationsForLine) return
+    return wireAnnotations(container, sourceLines, annotationsForLine, onannotationclick)
   })
 </script>
 
@@ -103,4 +124,14 @@
   .md-preview :global(.mermaid-fallback) {
     border-left: 3px solid var(--overlay0);
   }
+
+  /* Annotation badge host — shared semantic rules in theme.css. */
+  .md-preview :global(.md-ann-host) { position: relative; }
+  .md-preview :global(.annotation-badge) {
+    top: 2px;
+    right: 2px;
+    font-size: 13px;
+    padding: 2px 4px;
+  }
+  .md-preview :global(.annotation-badge sup) { font-size: 9px; vertical-align: super; }
 </style>
