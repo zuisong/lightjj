@@ -230,7 +230,7 @@
   >
     <div class="modal-header">
       Bookmarks
-      <span class="bm-header-hint"><kbd>/</kbd> to filter</span>
+      <span class="bm-header-hint"><kbd class="key">/</kbd> to filter</span>
     </div>
     <input
       bind:this={inputEl}
@@ -294,7 +294,7 @@
         {/each}
       {/if}
     </div>
-    <div id="bm-footer" class="bm-footer">
+    <div id="bm-footer" class="key-footer">
       {#if armed === 'd'}
         <span class="bm-confirm"><kbd>d</kbd> again to delete <b>{selected?.name}</b> · Esc to cancel</span>
       {:else if armed === 'f'}
@@ -393,18 +393,6 @@
   .bm-badge-tracked { color: var(--blue); }
   .bm-badge-conflict { color: var(--red); background: color-mix(in srgb, var(--red) 15%, transparent); }
 
-  .bm-footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    padding: 8px 16px;
-    border-top: 1px solid var(--surface0);
-    font-size: 11px;
-    color: var(--subtext0);
-    background: var(--mantle);
-  }
-
-  .bm-footer .dim { opacity: 0.3; }
 
   .bm-confirm {
     color: var(--red);
@@ -422,18 +410,6 @@
     color: var(--overlay0);
   }
 
-  kbd {
-    display: inline-block;
-    min-width: 14px;
-    padding: 1px 4px;
-    font-family: var(--font-mono, monospace);
-    font-size: 10px;
-    text-align: center;
-    background: var(--surface0);
-    border: 1px solid var(--surface1);
-    border-radius: 3px;
-    color: var(--text);
-  }
 
   .bm-empty {
     padding: 16px;

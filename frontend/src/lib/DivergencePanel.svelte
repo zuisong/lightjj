@@ -906,12 +906,6 @@
   }
   .strategy-pill:hover:not(:disabled) { background: var(--surface1); color: var(--text); }
   .strategy-pill:disabled { opacity: 0.4; cursor: not-allowed; }
-  .spinner {
-    width: 20px; height: 20px;
-    border: 2px solid var(--surface0); border-top-color: var(--amber);
-    border-radius: 50%; animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   .panel-content::-webkit-scrollbar { width: 8px; }
   .panel-content::-webkit-scrollbar-track { background: transparent; }

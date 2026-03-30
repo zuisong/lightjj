@@ -592,7 +592,7 @@
     {/if}
   </div>
 
-  <div class="bp-footer">
+  <div class="key-footer">
     {#if confirm.armed === 'd'}
       <span class="bp-confirm">
         <kbd>d</kbd> again to
@@ -873,18 +873,6 @@
     color: var(--subtext0);
   }
 
-  .bp-footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    padding: 8px 16px;
-    border-top: 1px solid var(--surface0);
-    font-size: 11px;
-    color: var(--subtext0);
-    background: var(--mantle);
-  }
-
-  .bp-footer .dim { opacity: 0.3; }
   .bp-remote { color: var(--overlay0); }
   .bp-more { color: var(--overlay0); font-weight: normal; margin-left: 4px; }
 
@@ -900,18 +888,6 @@
     to { opacity: 1; }
   }
 
-  kbd {
-    display: inline-block;
-    min-width: 14px;
-    padding: 1px 4px;
-    font-family: var(--font-mono, monospace);
-    font-size: 10px;
-    text-align: center;
-    background: var(--surface0);
-    border: 1px solid var(--surface1);
-    border-radius: 3px;
-    color: var(--text);
-  }
 
   .bp-empty {
     padding: 24px;

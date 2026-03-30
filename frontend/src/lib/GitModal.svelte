@@ -228,7 +228,7 @@
   >
     <div class="modal-header">
       Git
-      <span class="git-header-hint"><kbd>/</kbd> to filter</span>
+      <span class="git-header-hint"><kbd class="key">/</kbd> to filter</span>
     </div>
     {#if remotes.length > 1}
       <div class="git-remotes">
@@ -298,7 +298,7 @@
         {/each}
       {/if}
     </div>
-    <div id="git-footer" class="git-footer">
+    <div id="git-footer" class="key-footer">
       <span><kbd>⏎</kbd> execute</span>
       <span><kbd>j</kbd><kbd>k</kbd> navigate</span>
       {#if remotes.length > 1}<span><kbd>h</kbd><kbd>l</kbd> remote</span>{/if}
@@ -461,16 +461,6 @@
     margin-top: 2px;
   }
 
-  .git-footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    padding: 8px 16px;
-    border-top: 1px solid var(--surface0);
-    font-size: 11px;
-    color: var(--subtext0);
-    background: var(--mantle);
-  }
 
   .git-empty {
     padding: 16px;
@@ -481,16 +471,4 @@
 
   .git-error { color: var(--red); }
 
-  kbd {
-    display: inline-block;
-    min-width: 14px;
-    padding: 1px 4px;
-    font-family: var(--font-mono, monospace);
-    font-size: 10px;
-    text-align: center;
-    background: var(--surface0);
-    border: 1px solid var(--surface1);
-    border-radius: 3px;
-    color: var(--text);
-  }
 </style>

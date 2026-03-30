@@ -53,7 +53,7 @@ function items(): NodeListOf<Element> {
 }
 
 function footer(): string {
-  return document.querySelector('.bm-footer')!.textContent ?? ''
+  return document.querySelector('.key-footer')!.textContent ?? ''
 }
 
 describe('BookmarkModal', () => {
@@ -538,7 +538,7 @@ describe('BookmarkModal', () => {
       await renderSettled(defaultProps())
 
       expect(items()).toHaveLength(1)
-      const tHint = [...document.querySelectorAll('.bm-footer > span')].find(s => s.textContent?.includes('track'))
+      const tHint = [...document.querySelectorAll('.key-footer > span')].find(s => s.textContent?.includes('track'))
       expect(tHint).toHaveClass('dim')
     })
   })

@@ -1734,18 +1734,6 @@
     color: var(--overlay0);
   }
 
-  .spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--surface0);
-    border-top-color: var(--amber);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
 
   /* --- Scrollbar --- */
   .panel-content::-webkit-scrollbar {

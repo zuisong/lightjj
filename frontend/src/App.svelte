@@ -2035,19 +2035,17 @@
     <div class="toolbar">
       <div class="toolbar-left">
         {#if updateInfo}
-          <a class="toolbar-logo" href={updateInfo.url} target="_blank" rel="noopener" title="v{updateInfo.latest} available">
+          <a class="toolbar-logo" href={updateInfo.url} target="_blank" rel="noopener" title="lightjj v{updateInfo.latest} available">
             <span class="logo-icon">
-              <img src={darkMode ? '/logo.svg' : '/logo-light.svg'} alt="" width="16" height="16" />
+              <img src={darkMode ? '/logo.svg' : '/logo-light.svg'} alt="lightjj" width="16" height="16" />
               <span class="update-dot"></span>
             </span>
-            <span class="toolbar-logo-text">lightjj</span>
           </a>
         {:else}
-          <span class="toolbar-logo">
+          <span class="toolbar-logo" title="lightjj v{APP_VERSION}">
             <span class="logo-icon">
-              <img src={darkMode ? '/logo.svg' : '/logo-light.svg'} alt="" width="16" height="16" />
+              <img src={darkMode ? '/logo.svg' : '/logo-light.svg'} alt="lightjj" width="16" height="16" />
             </span>
-            <span class="toolbar-logo-text">lightjj</span>
           </span>
         {/if}
         {#if currentWorkspace}
@@ -2103,23 +2101,22 @@
             {/if}
           </div>
         {/if}
-        <span class="toolbar-divider"></span>
-        <nav class="toolbar-nav">
+        <nav class="seg">
           <button
-            class="toolbar-nav-btn"
-            class:toolbar-nav-active={activeView === 'log'}
+            class="seg-btn"
+            class:active={activeView === 'log'}
             onclick={() => { if (!inlineMode) switchToLogView() }}
             disabled={inlineMode}
           >◉ Revisions <kbd class="nav-hint">1</kbd></button>
           <button
-            class="toolbar-nav-btn"
-            class:toolbar-nav-active={activeView === 'branches'}
+            class="seg-btn"
+            class:active={activeView === 'branches'}
             onclick={() => { if (!inlineMode) switchToBranchesView() }}
             disabled={inlineMode}
           >⑂ Branches <kbd class="nav-hint">2</kbd></button>
           <button
-            class="toolbar-nav-btn"
-            class:toolbar-nav-active={activeView === 'merge'}
+            class="seg-btn"
+            class:active={activeView === 'merge'}
             onclick={() => { if (!inlineMode) switchToMergeView() }}
             disabled={inlineMode}
           >⧉ Merge <kbd class="nav-hint">3</kbd></button>
@@ -2150,23 +2147,6 @@
         </button>
       </div>
       <div class="toolbar-right">
-        <button class="btn" onclick={() => { if (!inlineMode) handleUndo() }} disabled={inlineMode || mutating} title="Undo (u)">
-          Undo
-        </button>
-        <button class="btn" onclick={() => { if (!inlineMode) handleCommit() }} disabled={inlineMode || mutating} title="Commit (c)">
-          Commit
-        </button>
-        <span class="toolbar-divider"></span>
-        <button class="btn" onclick={() => { if (!inlineMode) handleGitOp('fetch', []) }} disabled={inlineMode || mutating} title="Fetch (f)">
-          Fetch
-        </button>
-        <button class="btn" onclick={() => { if (!inlineMode) handleGitOp('push', []) }} disabled={inlineMode || mutating} title="Push (p)">
-          Push
-        </button>
-        <button class="btn" onclick={() => { if (!inlineMode) openModal('git') }} disabled={inlineMode || mutating} title="Git operations (g)">
-          Git…
-        </button>
-        <span class="toolbar-divider"></span>
         <button
           class="btn toolbar-theme"
           onclick={toggleTheme}
@@ -2786,10 +2766,6 @@
     text-decoration: none;
   }
 
-  a.toolbar-logo:hover .toolbar-logo-text {
-    color: var(--text);
-  }
-
   .logo-icon {
     position: relative;
     display: flex;
@@ -2808,13 +2784,6 @@
     box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.3);
     z-index: 1;
     pointer-events: none;
-  }
-
-  .toolbar-logo-text {
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--subtext0);
-    letter-spacing: -0.01em;
   }
 
   .toolbar-divider {
@@ -2922,15 +2891,6 @@
     border: none;
     font-size: 13px;
     padding: 3px 6px;
-  }
-
-  .toolbar-nav {
-    display: flex;
-    align-items: center;
-    gap: 1px;
-    /* Clip nav buttons on narrow screens — scoped here (not .toolbar/.toolbar-left)
-       so the absolutely-positioned workspace dropdown isn't clipped by an ancestor. */
-    overflow: hidden;
   }
 
   .toolbar-nav-btn {

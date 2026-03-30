@@ -130,7 +130,7 @@
             <span class="bm-set-move-hint" class:bm-set-resolve={bm.conflict}>
               {bm.conflict ? 'resolve' : 'move'}
             </span>
-            {bm.name}{#if bm.conflict}<span class="bm-set-conflict-badge">??</span>{/if} → here
+            {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{/if} → here
           </button>
         {/each}
       </div>
@@ -216,14 +216,6 @@
   }
   .bm-set-move-hint.bm-set-resolve {
     color: var(--red);
-  }
-
-  /* Matches .conflict-marker in RevisionGraph — `??` is jj's own decorator,
-     glued to the name with no whitespace (staging??, not staging ??). */
-  .bm-set-conflict-badge {
-    color: var(--red);
-    font-weight: 600;
-    margin-left: 1px;
   }
 
   .bm-set-error {

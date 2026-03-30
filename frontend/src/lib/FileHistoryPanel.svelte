@@ -108,14 +108,14 @@
           <div class="fh-card fh-card-a">
             <div class="fh-card-label">A <span class="fh-card-hint">(pinned — Space to re-pin)</span></div>
             <code class="fh-card-id">{revA.commit.change_id.slice(0, 8)}</code>
-            <span class="fh-card-desc">{firstLine(revA.description) || '(no description)'}</span>
+            <span class="fh-card-desc truncate">{firstLine(revA.description) || '(no description)'}</span>
             <span class="fh-card-age">{relativeTime(revA.commit.timestamp)}</span>
           </div>
           <span class="fh-swap">⇄</span>
           <div class="fh-card fh-card-b">
             <div class="fh-card-label">B <span class="fh-card-hint">(cursor — j/k)</span></div>
             <code class="fh-card-id">{revB.commit.change_id.slice(0, 8)}</code>
-            <span class="fh-card-desc">{firstLine(revB.description) || '(no description)'}</span>
+            <span class="fh-card-desc truncate">{firstLine(revB.description) || '(no description)'}</span>
             <span class="fh-card-age">{relativeTime(revB.commit.timestamp)}</span>
           </div>
         </div>
@@ -220,11 +220,6 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--subtext1);
-  }
-  .fh-card-desc {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .fh-card-age {
     font-size: 9px;

@@ -58,7 +58,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="fcp-root" bind:this={rootEl} tabindex="-1" onkeydown={handleKeydown}>
+<div class="fcp-root" bind:this={rootEl} role="dialog" aria-label="Compare file against another revision" tabindex="-1" onkeydown={handleKeydown}>
   <div class="fcp-header">
     <span class="fcp-title">Compare <code>{path}</code> against…</span>
     <button class="close-btn" onclick={onclose} title="Close (Esc)">✕</button>

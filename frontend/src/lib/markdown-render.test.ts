@@ -221,6 +221,14 @@ describe('renderMarkdownAnnotated', () => {
     expect(html).not.toMatch(/<div data-src-line="\d+"><div class="mermaid-block">/)
   })
 
+  it('tables get data-src-line (per-table — TableCell has no raw)', () => {
+    const html = renderMarkdownAnnotated('# Title\n\n| a | b |\n|---|---|\n| 1 | 2 |')
+    expect(html).toMatch(/<table data-src-line="3">/)
+    // Default renderer's align/header structure preserved
+    expect(html).toContain('<thead>')
+    expect(html).toContain('<tbody>')
+  })
+
   it('task-list items keep checkbox', () => {
     const html = renderMarkdownAnnotated('- [x] done\n- [ ] todo')
     expect(html).toContain('checked')

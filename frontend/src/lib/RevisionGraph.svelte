@@ -923,11 +923,6 @@
     border-color: color-mix(in srgb, var(--red) 40%, transparent);
   }
 
-  .conflict-marker {
-    color: var(--red);
-    font-weight: 600;
-    margin-left: 1px;
-  }
 
   .pr-name {
     color: var(--subtext0);
@@ -1051,18 +1046,6 @@
     font-size: 13px;
   }
 
-  .spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--surface0);
-    border-top-color: var(--amber);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
 
   /* --- Scrollbar --- */
   .panel-content::-webkit-scrollbar {

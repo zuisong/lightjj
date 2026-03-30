@@ -42,7 +42,7 @@ function activeName(): string {
   return document.querySelector('.bp-row-active .bp-name')?.textContent?.trim() ?? ''
 }
 function footer(): string {
-  return document.querySelector('.bp-footer')?.textContent ?? ''
+  return document.querySelector('.key-footer')?.textContent ?? ''
 }
 
 describe('BookmarksPanel — sort', () => {

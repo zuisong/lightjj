@@ -1,0 +1,66 @@
+diff --git a/dist/index.js b/dist/index.js
+index e7e087bcb6f29d0d8f36cd558e0183bc0f162fcb..d769951402cbc93eddd72496d08ee6097f9a49b4 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -6128,6 +6128,34 @@ function mermaidToElk(graph, opts) {
+     collectSubgraphNodeIds(sg, subgraphNodeIds, subgraphIds);
+   }
+   const nodeToSubgraph = buildNodeToSubgraphMap(graph.subgraphs);
++  // PATCH(lightjj): LCA-based edge placement. Upstream only checks immediate-
++  // parent equality (sourceSubgraph === targetSubgraph), so an edge from a
++  // node in subgraph AWS to a node in nested AWS/Endpoints was pushed to root
++  // crossHierarchy instead of AWS.edges. Under INCLUDE_CHILDREN that root-level
++  // edge confuses ELK's label placement. subgraphToElk already recurses and
++  // reads edgesBySubgraph per-level, so routing to the LCA is sufficient.
++  const subgraphParent = /* @__PURE__ */ new Map();
++  (function walk(sgs, parent) {
++    for (const sg of sgs) {
++      subgraphParent.set(sg.id, parent);
++      walk(sg.children, sg.id);
++    }
++  })(graph.subgraphs, null);
++  // Moved up + recursed: upstream .some() only checks top-level subgraphs, so a
++  // nested `direction LR` wouldn't flip to SEPARATE. Also needed HERE because
++  // LCA routing is only correct under INCLUDE_CHILDREN — under SEPARATE each
++  // subgraph layout is opaque to its parent, so the original port-splitting
++  // (crossHierarchyEdges path) is correct and we fall through to it.
++  const hasDirectionOverride = (function anyDir(sgs) {
++    for (const sg of sgs) if (sg.direction !== void 0 || anyDir(sg.children)) return true;
++    return false;
++  })(graph.subgraphs);
++  const lcaSubgraph = (a, b) => {
++    const aAnc = /* @__PURE__ */ new Set();
++    for (let x = a; x; x = subgraphParent.get(x)) aAnc.add(x);
++    for (let y = b; y; y = subgraphParent.get(y)) if (aAnc.has(y)) return y;
++    return null;
++  };
+   const edgesBySubgraph = /* @__PURE__ */ new Map();
+   edgesBySubgraph.set(null, []);
+   const crossHierarchyEdges = [];
+@@ -6135,18 +6163,20 @@ function mermaidToElk(graph, opts) {
+     const edge = graph.edges[i];
+     const sourceSubgraph = nodeToSubgraph.get(edge.source);
+     const targetSubgraph = nodeToSubgraph.get(edge.target);
+-    if (sourceSubgraph && sourceSubgraph === targetSubgraph) {
+-      if (!edgesBySubgraph.has(sourceSubgraph)) {
+-        edgesBySubgraph.set(sourceSubgraph, []);
+-      }
+-      edgesBySubgraph.get(sourceSubgraph).push({ index: i, edge });
++    const lca = !sourceSubgraph || !targetSubgraph ? null
++      : hasDirectionOverride ? (sourceSubgraph === targetSubgraph ? sourceSubgraph : null)
++      : lcaSubgraph(sourceSubgraph, targetSubgraph);
++    if (lca) {
++      if (!edgesBySubgraph.has(lca)) {
++        edgesBySubgraph.set(lca, []);
++      }
++      edgesBySubgraph.get(lca).push({ index: i, edge });
+     } else if (!sourceSubgraph && !targetSubgraph) {
+       edgesBySubgraph.get(null).push({ index: i, edge });
+     } else {
+       crossHierarchyEdges.push({ index: i, edge, sourceSubgraph, targetSubgraph });
+     }
+   }
+-  const hasDirectionOverride = graph.subgraphs.some((sg) => sg.direction !== void 0);
+   const elkGraph = {
+     id: "root",
+     layoutOptions: {

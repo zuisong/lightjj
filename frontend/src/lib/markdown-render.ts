@@ -105,7 +105,12 @@ function resolveImgSrc(href: string): string {
 // false → default renderer runs. Zero cost for the non-annotated path.
 
 type Stamped = Token & { _srcLine?: number }
-const STAMPED = new Set(['heading', 'paragraph', 'list_item', 'blockquote', 'code', 'hr'])
+const STAMPED = new Set(['heading', 'paragraph', 'list_item', 'blockquote', 'code', 'hr', 'table'])
+
+// Default table renderer — used below to wrap with srcAttr without
+// reimplementing header/align/row logic. TableCell has no `raw`, so per-row
+// stamping isn't possible; per-table is the best the data supports.
+const defaultTable = new marked.Renderer().table
 
 let stampCtx: { src: string; cursor: number; line: number } | null = null
 
@@ -184,6 +189,11 @@ marked.use({
         ? `<input type="checkbox" disabled${token.checked ? ' checked' : ''}> `
         : ''
       return `<li${a}>${check}${this.parser.parse(token.tokens)}</li>\n`
+    },
+    table(token: Tokens.Table) {
+      const a = srcAttr(token)
+      if (!a) return false
+      return defaultTable.call(this, token).replace('<table>', `<table${a}>`)
     },
   },
 })

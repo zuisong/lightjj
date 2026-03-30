@@ -119,7 +119,7 @@
             oncontextmenu={(e) => handleEntryContextMenu(e, entry, i)}
           >
             <span class="entry-id">{entry.commit_id}</span>
-            <span class="entry-op">
+            <span class="entry-op truncate">
               {entry.operation}
               {#if extraPreds > 0}<span class="entry-multi" title="{extraPreds + 1} predecessors">(+{extraPreds})</span>{/if}
             </span>
@@ -242,9 +242,6 @@
   .entry-op {
     flex: 1;
     color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .entry-multi {
@@ -277,16 +274,4 @@
     font-size: 13px;
   }
 
-  .spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--surface0);
-    border-top-color: var(--amber);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
 </style>

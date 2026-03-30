@@ -211,11 +211,6 @@
     border-color: color-mix(in srgb, var(--red) 40%, transparent);
   }
 
-  .conflict-marker {
-    color: var(--red);
-    font-weight: 600;
-    margin-left: 1px;
-  }
 
   .pr-name {
     color: var(--subtext0);

@@ -461,16 +461,84 @@ body {
    emoji color, saturate for intensity. Positioning is per-component (diff-line
    right-edge vs prose block top-right); only the semantic rules live here. */
 .annotation-badge {
+  --ann-shadow: drop-shadow(0 0 1px rgba(0,0,0,0.5));
   position: absolute;
-  background: transparent;
+  /* Faint chip behind the emoji — color-mix(text, 8%) darkens in light mode,
+     lightens in dark mode. drop-shadow outlines the glyph edge. Both together
+     keep the 💬 visible on #f8f8f6 without being loud on #0f0f13. */
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   border: none;
   line-height: 1;
   cursor: pointer;
   border-radius: 3px;
-  opacity: 0.7;
+  opacity: 0.85;
+  filter: var(--ann-shadow);
 }
-.annotation-badge:hover { opacity: 1; }
-.annotation-badge.severity-must-fix { filter: hue-rotate(-20deg) saturate(2); }
-.annotation-badge.severity-question { filter: hue-rotate(180deg); }
+.annotation-badge.severity-must-fix { filter: var(--ann-shadow) hue-rotate(-20deg) saturate(2); }
+.annotation-badge.severity-question { filter: var(--ann-shadow) hue-rotate(180deg); }
 .annotation-badge.severity-nitpick  { opacity: 0.4; }
 .annotation-badge.orphaned          { outline: 1px dashed var(--overlay0); }
+/* After severity rules — equal specificity, source-order lets hover beat
+   nitpick's 0.4. (Was pre-existing in DiffFileView before the hoist.) */
+.annotation-badge:hover { opacity: 1; }
+
+/* --- .conflict-marker — jj's ?? decorator on conflicted bookmarks ---
+   Was byte-identical in RevisionGraph, RevisionHeader, BookmarkInput (which
+   had a "Matches .conflict-marker in RevisionGraph" comment). */
+.conflict-marker {
+  color: var(--red);
+  font-weight: 600;
+  margin-left: 1px;
+}
+
+/* --- .spinner + @keyframes spin — was duplicated in 5 components ---
+   Svelte scopes keyframe names so they didn't collide, but each was a
+   separate stylesheet rule. Amber top-border on gray ring, 0.8s rotation. */
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--surface0);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- .truncate — ellipsis that works inside flex ---
+   26 occurrences across 19 files with inconsistent min-width:0 (7 had it,
+   ~15 didn't — silent ellipsis failure in flex). min-width:0 is a no-op on
+   non-flex elements, so including it unconditionally is safe. */
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* --- .key-footer — modal bottom-bar with keyboard hints ---
+   Was byte-identical as .git-footer/.bm-footer/.bp-footer. The kbd badge
+   (bordered mono chip, bigger than .nav-hint) pairs with it: descendant
+   selector styles all <kbd> inside footers for free, .key class covers the
+   few kbds outside footers (header "/" hints). */
+.key-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--surface0);
+  font-size: 11px;
+  color: var(--subtext0);
+  background: var(--mantle);
+}
+.key-footer .dim { opacity: 0.3; }
+kbd.key, .key-footer kbd {
+  display: inline-block;
+  min-width: 14px;
+  padding: 1px 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  text-align: center;
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  border-radius: 3px;
+  color: var(--text);
+}
