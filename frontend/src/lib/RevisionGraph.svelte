@@ -405,7 +405,7 @@
             {/if}
             <span class="node-line-content">
               {#if entry.commit.empty}
-                <span class="empty-chip">(empty)</span>
+                <span class="empty-label">(empty)</span>
               {/if}
               {#if entry.description}
                 <span class="description-text">{entry.description}</span>
@@ -985,22 +985,16 @@
     color: var(--base);
   }
 
-  /* "(no description)" annotates absence — dimmed placeholder text.
+  /* "(no description)" / "(empty)" annotate absence — dimmed text matching
+   * .description-text size so the row reads as one typographic family.
    * No italic: the --font-ui stack's synthesized oblique reads heavier at 12px,
-   * inverting the hierarchy (meta-text should recede, not advance). */
-  .desc-placeholder {
+   * inverting the hierarchy (meta-text should recede, not advance).
+   * (empty) can co-occur with a real description (PR rebase-merge: empty
+   * commit, real title) — the parens + dimmed color suffice as a prefix label. */
+  .desc-placeholder,
+  .empty-label {
     color: var(--overlay0);
     font-size: 12px;
-  }
-  /* "(empty)" is distinct: jj shows it as a LABEL alongside the description on
-   * empty merge commits (PR merge via rebase — empty commit, real title).
-   * Chip styling reads as metadata, not a mistaken placeholder. */
-  .empty-chip {
-    color: var(--overlay1);
-    font-size: 10px;
-    padding: 0 4px;
-    border-radius: 3px;
-    background: var(--surface1);
   }
 
   .rebase-preview {

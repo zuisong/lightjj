@@ -169,6 +169,29 @@
     previewContents = new Map([...previewContents].filter(([p]) => p !== path))
   }
 
+  // Same-change reset (snapshot/amend → new commit_id, same change_id) keeps
+  // previews open and refreshes content at the new commit. Unchanged .md →
+  // identical string → MarkdownPreview's $derived(html) short-circuits, so
+  // ToC/scroll/mermaid pan-zoom survive. Changed .md → fresh render.
+  async function refreshPreviews(commitId: string, paths: string[]) {
+    const gen = previewGen
+    for (const path of paths) {
+      try {
+        const { content } = await api.fileShow(commitId, path)
+        if (gen !== previewGen) return
+        // closePreview doesn't bump gen (per-path close mustn't cancel OTHER
+        // files' fetches) — so a click-to-close during this await passes the
+        // gen check. has() guard stops the resurrect.
+        if (!previewContents.has(path)) continue
+        if (previewContents.get(path) !== content) {
+          previewContents = new Map(previewContents).set(path, content)
+        }
+      } catch {
+        if (gen === previewGen) closePreview(path)
+      }
+    }
+  }
+
   // 3-pane merge — when set, MergePanel takes over .panel-content entirely
   // (vs FileEditor which slots into split-view's right column per-file).
   let mergeSides: MergeSides | null = $state(null)
@@ -837,7 +860,12 @@
     lastActiveRevId = activeRevisionId
     // Compute cache key for the INCOMING diff. Null for multi-check.
     // changeId (not commitId) — collapse preferences should survive rewrites.
-    lastCollapseCacheKey = diffTarget?.kind === 'single' ? diffTarget.changeId : null
+    // sameChange = snapshot/amend/describe rewrote @ under us; use it to
+    // soften resets where the user's intent ("I'm reading README") survives
+    // a content-hash change.
+    const incoming = diffTarget?.kind === 'single' ? diffTarget : null
+    const sameChange = !!incoming && incoming.changeId === lastCollapseCacheKey
+    lastCollapseCacheKey = incoming?.changeId ?? null
 
     forceShowLargeDiff = false
     collapsedFiles.clear()
@@ -847,7 +875,12 @@
     editBusy.clear()
     editError = ''
     previewGen++
-    previewContents = new Map()
+    const openPreviews = sameChange ? [...untrack(() => previewContents).keys()] : []
+    if (openPreviews.length > 0) {
+      refreshPreviews(incoming!.commitId, openPreviews)
+    } else {
+      previewContents = new Map()
+    }
     comparePickerPath = null
     mergeSides = null
     mergingPath = null

@@ -72,10 +72,12 @@ beforeEach(() => {
 // editing=true → Save/Cancel buttons render; editing=false + onedit → Edit button.
 // These are the only externally observable signals for the edit state (DiffPanel
 // doesn't export editingFiles).
-function editBtn(c: HTMLElement) {
+function headerBtn(c: HTMLElement, ...labels: string[]) {
   return [...c.querySelectorAll('.diff-file-header .btn')]
-    .find(b => b.textContent === 'Edit') as HTMLButtonElement | undefined
+    .find(b => labels.includes(b.textContent ?? '')) as HTMLButtonElement | undefined
 }
+const editBtn = (c: HTMLElement) => headerBtn(c, 'Edit')
+const previewBtn = (c: HTMLElement) => headerBtn(c, 'Preview', 'Source')
 function saveBtn(c: HTMLElement) {
   return c.querySelector('.diff-file-header .btn-primary') as HTMLButtonElement | null
 }
@@ -175,8 +177,7 @@ describe('DiffPanel', () => {
       expect(mockFileShow).toHaveBeenCalled()
 
       // Click Discard while editBusy is held → guard at :217 bails.
-      const discard = [...container.querySelectorAll('.diff-file-header .btn')]
-        .find(b => b.textContent === 'Discard') as HTMLButtonElement | undefined
+      const discard = headerBtn(container, 'Discard')
       expect(discard).toBeDefined()
       await fireEvent.click(discard!)
       await settle()
@@ -199,9 +200,7 @@ describe('DiffPanel', () => {
       const { container } = render(DiffPanel, { props: props({ onfilesaved }) })
       await settle()
 
-      const discard = [...container.querySelectorAll('.diff-file-header .btn')]
-        .find(b => b.textContent === 'Discard') as HTMLButtonElement | undefined
-      await fireEvent.click(discard!)
+      await fireEvent.click(headerBtn(container, 'Discard')!)
       await settle()
 
       expect(mockRestore).toHaveBeenCalledWith('ch-A', ['a.go'])
@@ -217,9 +216,7 @@ describe('DiffPanel', () => {
       const { container, rerender } = render(DiffPanel, { props: props({ onfilesaved }) })
       await settle()
 
-      const discard = [...container.querySelectorAll('.diff-file-header .btn')]
-        .find(b => b.textContent === 'Discard') as HTMLButtonElement | undefined
-      await fireEvent.click(discard!)
+      await fireEvent.click(headerBtn(container, 'Discard')!)
 
       // Navigate away while restore is pending
       await rerender(props({ diffTarget: target('co-B', 'ch-B'), onfilesaved }))
@@ -528,6 +525,112 @@ describe('DiffPanel', () => {
       component.stepFile(1)
       await raf()
       expect(scrolledPaths).toEqual([])
+    })
+  })
+
+  describe('markdown preview persistence — DiffPanel.svelte:863,874', () => {
+    const mdProps = (commitId: string, changeId: string) => props({
+      diffTarget: target(commitId, changeId),
+      diffContent: tinyDiff('README.md'),
+      changedFiles: [mkFile('README.md')],
+    })
+
+    it('same changeId (snapshot/amend) → preview stays open, content refreshed at new commitId', async () => {
+      mockFileShow.mockResolvedValue({ content: '# doc' })
+      const { container, rerender } = render(DiffPanel, { props: mdProps('co-1', 'ch-X') })
+      await settle()
+
+      await fireEvent.click(previewBtn(container)!)
+      await settle()
+      expect(mockFileShow).toHaveBeenCalledWith('co-1', 'README.md')
+      expect(previewBtn(container)?.textContent).toBe('Source')
+
+      // SSE snapshot: new commit_id, SAME change_id.
+      await rerender(mdProps('co-2', 'ch-X'))
+      await settle()
+
+      expect(previewBtn(container)?.textContent).toBe('Source')
+      expect(mockFileShow).toHaveBeenCalledWith('co-2', 'README.md')
+    })
+
+    it('different changeId (j/k nav) → preview cleared', async () => {
+      mockFileShow.mockResolvedValue({ content: '# doc' })
+      const { container, rerender } = render(DiffPanel, { props: mdProps('co-1', 'ch-X') })
+      await settle()
+
+      await fireEvent.click(previewBtn(container)!)
+      await settle()
+      expect(previewBtn(container)?.textContent).toBe('Source')
+
+      mockFileShow.mockClear()
+      await rerender(mdProps('co-9', 'ch-Y'))
+      await settle()
+
+      expect(previewBtn(container)?.textContent).toBe('Preview')
+      expect(mockFileShow).not.toHaveBeenCalled()
+    })
+
+    it('refresh in flight, j/k nav → stale refresh bounces (previewGen guard)', async () => {
+      mockFileShow.mockResolvedValueOnce({ content: '# v1' })
+      const { container, rerender } = render(DiffPanel, { props: mdProps('co-1', 'ch-X') })
+      await settle()
+      await fireEvent.click(previewBtn(container)!)
+      await settle()
+
+      let resolveRefresh!: (v: { content: string }) => void
+      mockFileShow.mockReturnValueOnce(new Promise(r => { resolveRefresh = r }))
+      await rerender(mdProps('co-2', 'ch-X'))
+      await settle()
+      expect(previewBtn(container)?.textContent).toBe('Source')
+
+      // User navigates away mid-refresh.
+      await rerender(mdProps('co-9', 'ch-Y'))
+      await settle()
+      expect(previewBtn(container)?.textContent).toBe('Preview')
+
+      resolveRefresh({ content: '# v2' })
+      await settle()
+      // Gen guard: refresh result discarded, preview stays closed.
+      expect(previewBtn(container)?.textContent).toBe('Preview')
+    })
+
+    it('user closes preview mid-refresh → does NOT resurrect (has-path guard)', async () => {
+      mockFileShow.mockResolvedValueOnce({ content: '# v1' })
+      const { container, rerender } = render(DiffPanel, { props: mdProps('co-1', 'ch-X') })
+      await settle()
+      await fireEvent.click(previewBtn(container)!)
+      await settle()
+
+      let resolveRefresh!: (v: { content: string }) => void
+      mockFileShow.mockReturnValueOnce(new Promise(r => { resolveRefresh = r }))
+      await rerender(mdProps('co-2', 'ch-X'))
+      await settle()
+      expect(previewBtn(container)?.textContent).toBe('Source')
+
+      // User clicks Source → closePreview (no gen bump) while refresh in flight.
+      await fireEvent.click(previewBtn(container)!)
+      await settle()
+      expect(previewBtn(container)?.textContent).toBe('Preview')
+
+      resolveRefresh({ content: '# v2' })
+      await settle()
+      // has(path) guard: refresh result discarded, preview stays closed.
+      expect(previewBtn(container)?.textContent).toBe('Preview')
+    })
+
+    it('refresh fileShow rejects (file deleted in new commit) → preview closes', async () => {
+      mockFileShow.mockResolvedValueOnce({ content: '# doc' })
+      const { container, rerender } = render(DiffPanel, { props: mdProps('co-1', 'ch-X') })
+      await settle()
+      await fireEvent.click(previewBtn(container)!)
+      await settle()
+      expect(previewBtn(container)?.textContent).toBe('Source')
+
+      mockFileShow.mockRejectedValueOnce(new Error('file not found'))
+      await rerender(mdProps('co-2', 'ch-X'))
+      await settle()
+
+      expect(previewBtn(container)?.textContent).toBe('Preview')
     })
   })
 })
