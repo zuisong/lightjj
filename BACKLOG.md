@@ -2,7 +2,7 @@
 
 Open items only. Done-item narratives live in [docs/CHANGELOG-ARCHIVE.md](docs/CHANGELOG-ARCHIVE.md).
 
-Last shipped: **2026-03-31** v1.8.5 — progressive rendering (loadedTarget/diffPending decoupled, /api/revision-meta), perf batch (RevisionMeta subprocess merge, gutter memos, fileShow cached, knownEmpty Set), UI polish (conflict marker size, empty-chip, @ badge removed), bughunt fixes (switchToLogView diffPending check, isRefresh gate, collapse-restore suppression flag), resolveGHRepo --git-dir fallback, HIDE_DIFF_TOTAL_LINES=1000 hard gate.
+Last shipped: **2026-03-31** v1.8.6 — markdown preview features: footnotes (`[^1]` refs + defs, per-render anchor scoping), heading IDs (GitHub-compatible slugify, SANITIZE_DOM:false so common-word slugs survive), code fence highlighting (highlightLines wired in), GitHub alerts (`> [!NOTE]` etc). bughunt fixes: ALERT_RE 0-3 leading-space allowance, def-before-ref create-if-missing.
 
 ## Active
 

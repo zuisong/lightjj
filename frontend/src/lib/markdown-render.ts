@@ -1,6 +1,6 @@
 import { marked, type Token, type Tokens } from 'marked'
 import DOMPurify from 'dompurify'
-import { escapeHtml, escapeAttr } from './highlighter'
+import { escapeHtml, escapeAttr, highlightLines, EXTENSION_LANGUAGES } from './highlighter'
 import { api, type Annotation, type AnnotationSeverity } from './api'
 
 const SEV_ORDER: Record<AnnotationSeverity, number> = {
@@ -72,6 +72,40 @@ let imgCount = 0
 // round trip). A malicious README with 1000 images would queue 1000 requests.
 const MAX_PROXIED_IMAGES = 50
 
+// ── Footnotes ──────────────────────────────────────────────────────────────
+// Collected during parse (def renderer returns ''), assembled after sanitize.
+// fnScope scopes anchor ids per render — DiffPanel shows multiple .md files;
+// two READMEs each with [^1] would otherwise collide on id="fn-1".
+interface Footnote { html: string; srcLine?: number }
+let footnotes: Footnote[] = []
+let fnLabelToIdx = new Map<string, number>()
+let fnScope = 0
+
+// ── Heading anchor IDs ─────────────────────────────────────────────────────
+// GitHub-compatible slugify: spaces → '-' BEFORE stripping non-word chars,
+// so `P3 — Advanced` → `p3-—-advanced` → `p3--advanced` (the actual link
+// shape in CHANGELOG-ARCHIVE). Strip-then-collapse would merge to one hyphen.
+// Not byte-exact for md formatting (`## _italic_` → `_italic_` vs GitHub's
+// `italic`), but stable + linkable. Dedup with -N suffix per render.
+let headingSlugs = new Map<string, number>()
+
+function headingId(text: string): string {
+  const slug = text.toLowerCase().replace(/\s/g, '-').replace(/[^\w-]/g, '')
+  if (!slug) return ''
+  const n = headingSlugs.get(slug) ?? 0
+  headingSlugs.set(slug, n + 1)
+  return ` id="${n ? `${slug}-${n}` : slug}"`
+}
+
+// ── GitHub-style alerts ────────────────────────────────────────────────────
+// {0,3} — CommonMark allows up to 3 leading spaces before `>` and token.raw
+// preserves them. Nested case (`> > [!NOTE]`) is fine — marked strips the
+// outer `> ` before recursing, so the inner raw starts at `>`.
+const ALERT_RE = /^ {0,3}>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:\n|$)/i
+const ALERT_TITLES: Record<string, string> = {
+  note: 'Note', tip: 'Tip', important: 'Important', warning: 'Warning', caution: 'Caution',
+}
+
 // Allowlisted schemes pass through. Relative paths resolve against baseDir
 // then route through /api/file-raw so SSH-mode images load. DOMPurify's
 // ALLOWED_URI_REGEXP is the actual filter for dangerous schemes (javascript:,
@@ -105,7 +139,7 @@ function resolveImgSrc(href: string): string {
 // false → default renderer runs. Zero cost for the non-annotated path.
 
 type Stamped = Token & { _srcLine?: number }
-const STAMPED = new Set(['heading', 'paragraph', 'list_item', 'blockquote', 'code', 'hr', 'table'])
+const STAMPED = new Set(['heading', 'paragraph', 'list_item', 'blockquote', 'code', 'hr', 'table', 'footnoteDef'])
 
 // Default table renderer — used below to wrap with srcAttr without
 // reimplementing header/align/row logic. TableCell has no `raw`, so per-row
@@ -137,6 +171,61 @@ const srcAttr = (t: Stamped) => t._srcLine ? ` data-src-line="${t._srcLine}"` : 
 
 marked.use({
   gfm: true,
+  extensions: [
+    {
+      name: 'footnoteRef',
+      level: 'inline',
+      start: (src) => src.indexOf('[^'),
+      // (?![(:]) — don't match [^x](url) (let link tokenizer have it) or
+      // [^x]: at line start (def, not ref).
+      tokenizer(src) {
+        const m = /^\[\^([^\]\s]+)\](?![(:])/.exec(src)
+        if (!m) return
+        return { type: 'footnoteRef', raw: m[0], label: m[1] }
+      },
+      renderer(token: Tokens.Generic) {
+        const label = token.label as string
+        const isFirst = !fnLabelToIdx.has(label)
+        let idx = fnLabelToIdx.get(label)
+        if (idx === undefined) {
+          idx = footnotes.push({ html: '' }) - 1
+          fnLabelToIdx.set(label, idx)
+        }
+        // id only on first ref — dupes would be invalid HTML and the def's
+        // back-link can only point to one anyway.
+        const id = isFirst ? ` id="fnref${fnScope}-${idx}"` : ''
+        return `<sup class="fn-ref"><a${id} href="#fn${fnScope}-${idx}">${idx + 1}</a></sup>`
+      },
+    },
+    {
+      name: 'footnoteDef',
+      level: 'block',
+      // m flag — ^ matches line-start anywhere in remaining src, so marked
+      // can fast-forward past plain paragraphs to the next candidate.
+      start: (src) => src.match(/^\[\^[^\]\s]+\]:/m)?.index,
+      // \n[ \t]+[^\n]+ — indented continuation lines join into one body.
+      // Trailing \n* consumed so they don't become an empty <p>.
+      tokenizer(src) {
+        const m = /^\[\^([^\]\s]+)\]:[ \t]*([^\n]*(?:\n[ \t]+[^\n]+)*)\n*/.exec(src)
+        if (!m) return
+        const body = m[2].replace(/\n[ \t]+/g, ' ').trim()
+        return { type: 'footnoteDef', raw: m[0], label: m[1], tokens: this.lexer.inlineTokens(body) }
+      },
+      renderer(token: Tokens.Generic) {
+        // Same create-if-missing as the ref renderer — defs at the top of a
+        // doc render before refs and would otherwise be silently dropped.
+        const label = token.label as string
+        let idx = fnLabelToIdx.get(label)
+        if (idx === undefined) {
+          idx = footnotes.push({ html: '' }) - 1
+          fnLabelToIdx.set(label, idx)
+        }
+        footnotes[idx].html = this.parser.parseInline(token.tokens!)
+        footnotes[idx].srcLine = (token as Stamped)._srcLine
+        return ''
+      },
+    },
+  ],
   walkTokens: stamp,
   renderer: {
     code(token: Tokens.Code) {
@@ -152,9 +241,12 @@ marked.use({
         // mermaidReady flips and this path re-tries.
         return `<pre class="mermaid-fallback"${srcAttr(token)}><code>${escapeHtml(text)}</code></pre>`
       }
-      const a = srcAttr(token)
-      if (!a) return false
-      return `<pre${a}><code>${escapeHtml(text)}</code></pre>\n`
+      // Fence info string can be `js {1-3}` or `typescript:foo.ts` — take
+      // the leading word. highlightLines falls through to escapeHtml on
+      // unknown langs (and unloaded legacy langs — bash/toml on first paint).
+      const key = lang?.split(/[^\w-]/)[0] ?? ''
+      const hl = highlightLines(text.split('\n'), EXTENSION_LANGUAGES[key] ?? key).join('\n')
+      return `<pre${srcAttr(token)}><code>${hl}</code></pre>\n`
     },
     image({ href, title, text }: Tokens.Image) {
       const src = resolveImgSrc(href)
@@ -162,10 +254,8 @@ marked.use({
       return `<img src="${escapeAttr(src)}" alt="${escapeAttr(text)}"${t}>`
     },
     heading(token: Tokens.Heading) {
-      const a = srcAttr(token)
-      if (!a) return false
       const d = token.depth
-      return `<h${d}${a}>${this.parser.parseInline(token.tokens)}</h${d}>\n`
+      return `<h${d}${headingId(token.text)}${srcAttr(token)}>${this.parser.parseInline(token.tokens)}</h${d}>\n`
     },
     paragraph(token: Tokens.Paragraph) {
       const a = srcAttr(token)
@@ -174,6 +264,18 @@ marked.use({
     },
     blockquote(token: Tokens.Blockquote) {
       const a = srcAttr(token)
+      const alert = ALERT_RE.exec(token.raw)
+      if (alert) {
+        const kind = alert[1].toLowerCase()
+        // Strip the [!TYPE] marker from rendered inner HTML. Two-pass:
+        // whole-paragraph case (`> [!NOTE]\n>\n> body` — marker is its own
+        // <p>) then same-paragraph case (`> [!NOTE]\n> body` — marker is
+        // first line of body's <p>). Only one matches per input.
+        const inner = this.parser.parse(token.tokens)
+          .replace(/^<p[^>]*>\[!\w+\]\s*<\/p>\s*/i, '')
+          .replace(/^(<p[^>]*>)\[!\w+\]\s*/i, '$1')
+        return `<div class="md-alert md-alert-${kind}"${a}><p class="md-alert-title">${ALERT_TITLES[kind]}</p>${inner}</div>\n`
+      }
       if (!a) return false
       return `<blockquote${a}>${this.parser.parse(token.tokens)}</blockquote>\n`
     },
@@ -202,9 +304,15 @@ marked.use({
 // (UI-breaker / phishing overlay). No svg profile — mermaid SVG bypasses
 // sanitize via the placeholder above. Inline style attr is NOT forbidden;
 // position:fixed is neutralized by `contain: layout` on .md-preview.
+// SANITIZE_DOM:false — the default strips id values matching DOM property
+// names (`## Content` → id="content" gone; common English words). The
+// clobbering vector this guards against is form-input naming, which
+// FORBID_TAGS:['form'] already closes. Heading-id authorship is the repo
+// author — same trust level as the code under review.
 const SANITIZE_CFG = {
   USE_PROFILES: { html: true },
   FORBID_TAGS: ['style', 'link', 'form'],
+  SANITIZE_DOM: false,
 }
 
 export interface PreviewContext {
@@ -218,12 +326,25 @@ export function renderMarkdown(src: string, ctx?: PreviewContext): string {
   pendingDiagrams = []
   imgCtx = ctx ?? null
   imgCount = 0
+  footnotes = []
+  fnLabelToIdx.clear()
+  fnScope++
+  headingSlugs.clear()
   const html = DOMPurify.sanitize(marked.parse(src) as string, SANITIZE_CFG)
   imgCtx = null
-  return html.replace(
+  let result = html.replace(
     /<i data-mermaid="(\d+)"( data-src-line="\d+")?><\/i>/g,
     (_, i, srcLine) => `<div class="mermaid-block"${srcLine ?? ''}>${pendingDiagrams[+i]}</div>`,
   )
+  if (footnotes.length) {
+    const items = footnotes.map((f, i) => {
+      const sl = f.srcLine ? ` data-src-line="${f.srcLine}"` : ''
+      return `<li id="fn${fnScope}-${i}"${sl}>${f.html || '<em>(missing)</em>'} <a href="#fnref${fnScope}-${i}" class="fn-back" aria-label="back">\u21a9</a></li>`
+    }).join('')
+    // Separate sanitize pass — def body is parseInline of user content.
+    result += DOMPurify.sanitize(`<section class="footnotes"><ol>${items}</ol></section>`, SANITIZE_CFG)
+  }
+  return result
 }
 
 export function renderMarkdownAnnotated(src: string, ctx?: PreviewContext): string {

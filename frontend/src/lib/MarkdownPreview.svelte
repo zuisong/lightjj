@@ -165,6 +165,50 @@
     border-top: 1px solid var(--surface1);
     margin: 1.5em 0;
   }
+  .md-preview :global(.fn-ref) {
+    font-size: 0.75em;
+    line-height: 0;  /* don't push line-height of surrounding prose */
+  }
+  .md-preview :global(.fn-ref a) {
+    text-decoration: none;
+    padding: 0 2px;
+  }
+  .md-preview :global(.footnotes) {
+    margin-top: 2.5em;
+    padding-top: 0.8em;
+    border-top: 1px solid var(--surface1);
+    font-size: 0.88em;
+    color: var(--subtext0);
+  }
+  .md-preview :global(.footnotes ol) {
+    padding-left: 1.5em;
+  }
+  .md-preview :global(.fn-back) {
+    text-decoration: none;
+    font-family: system-ui;  /* ↩ glyph */
+    margin-left: 4px;
+  }
+  .md-preview :global(.md-alert) {
+    padding: 10px 14px;
+    margin: 1em 0;
+    border-left: 3px solid var(--alert-c);
+    border-radius: 0 4px 4px 0;
+    background: color-mix(in srgb, var(--alert-c) 8%, transparent);
+  }
+  .md-preview :global(.md-alert-title) {
+    margin: 0 0 4px;
+    font-weight: 600;
+    font-size: 0.85em;
+    color: var(--alert-c);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .md-preview :global(.md-alert > p:last-child) { margin-bottom: 0; }
+  .md-preview :global(.md-alert-note)      { --alert-c: var(--blue); }
+  .md-preview :global(.md-alert-tip)       { --alert-c: var(--green); }
+  .md-preview :global(.md-alert-important) { --alert-c: var(--mauve); }
+  .md-preview :global(.md-alert-warning)   { --alert-c: var(--amber); }
+  .md-preview :global(.md-alert-caution)   { --alert-c: var(--red); }
   .md-preview :global(.mermaid-block) {
     border: 1px solid var(--surface1);
     border-radius: 4px;

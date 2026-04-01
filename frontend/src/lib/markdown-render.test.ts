@@ -163,6 +163,228 @@ describe('renderMarkdown', () => {
   })
 })
 
+describe('heading anchors', () => {
+  it('slugifies and emits id', () => {
+    const html = renderMarkdown('## Foo Bar Baz')
+    expect(html).toContain('<h2 id="foo-bar-baz">')
+  })
+
+  it('deduplicates with -N suffix', () => {
+    const html = renderMarkdown('## Same\n\n## Same\n\n## Same')
+    expect(html).toContain('id="same"')
+    expect(html).toContain('id="same-1"')
+    expect(html).toContain('id="same-2"')
+  })
+
+  it('strips punctuation but keeps word chars + hyphens', () => {
+    const html = renderMarkdown('## P3 — Advanced!')
+    expect(html).toContain('id="p3--advanced"')  // em-dash → '', spaces → -
+  })
+
+  it('makes [text](#slug) fragment links work', () => {
+    const html = renderMarkdown('See [§](#target).\n\n## Target')
+    expect(html).toContain('id="target"')
+    expect(html).toContain('href="#target"')
+  })
+
+  it('skips id when slug would be empty', () => {
+    expect(renderMarkdown('## !!!!')).toMatch(/<h2>/)  // no id attr
+  })
+
+  it('survives DOMPurify SANITIZE_DOM for common-word slugs', () => {
+    // Default SANITIZE_DOM strips id="content"/"title"/"body" (DOM clobbering
+    // guard). Disabled — see SANITIZE_CFG comment. Locks the trade-off.
+    for (const word of ['Content', 'Title', 'Body', 'Target', 'Data']) {
+      expect(renderMarkdown(`## ${word}`)).toContain(`id="${word.toLowerCase()}"`)
+    }
+  })
+
+  it('per-render dedup reset', () => {
+    expect(renderMarkdown('## X')).toContain('id="x"')
+    expect(renderMarkdown('## X')).toContain('id="x"')  // not x-1
+  })
+
+  it('annotated mode keeps both id and data-src-line', () => {
+    expect(renderMarkdownAnnotated('## Hi')).toMatch(/<h2 id="hi" data-src-line="1">/)
+  })
+})
+
+describe('code fence highlighting', () => {
+  it('emits tok-* spans for known langs', () => {
+    const html = renderMarkdown('```js\nconst x = 1\n```')
+    expect(html).toContain('tok-')  // some class — exact tokens are lezer's concern
+    expect(html).toContain('const')
+  })
+
+  it('falls through to escaped plain for unknown lang', () => {
+    const html = renderMarkdown('```unknownlang\n<div>hi</div>\n```')
+    expect(html).not.toContain('tok-')
+    expect(html).toContain('&lt;div&gt;')  // escaped
+  })
+
+  it('no-lang fence escapes', () => {
+    const html = renderMarkdown('```\n<script>x</script>\n```')
+    expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('extracts lang from ```ts:filename and ```js {1-3}', () => {
+    for (const fence of ['ts:file.ts', 'js {1-3}']) {
+      expect(renderMarkdown(`\`\`\`${fence}\nconst x=1\n\`\`\``)).toContain('tok-')
+    }
+  })
+
+  it('maps fence aliases (py → python)', () => {
+    expect(renderMarkdown('```py\ndef f(): pass\n```')).toContain('tok-')
+  })
+})
+
+describe('alerts', () => {
+  it.each(['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'])('renders > [!%s]', (kind) => {
+    const html = renderMarkdown(`> [!${kind}]\n> Body text.`)
+    expect(html).toContain(`md-alert-${kind.toLowerCase()}`)
+    expect(html).toContain('md-alert-title')
+    expect(html).toContain('Body text.')
+    expect(html).not.toContain(`[!${kind}]`)  // marker stripped
+  })
+
+  it('marker on own paragraph (blank line before body)', () => {
+    const html = renderMarkdown('> [!WARNING]\n>\n> Separate paragraph.')
+    expect(html).toContain('md-alert-warning')
+    expect(html).toContain('Separate paragraph.')
+    expect(html).not.toMatch(/<p[^>]*>\s*<\/p>/)  // no empty <p> left behind
+  })
+
+  it('case-insensitive kind', () => {
+    expect(renderMarkdown('> [!note]\n> hi')).toContain('md-alert-note')
+  })
+
+  it('unknown kind falls through to plain blockquote', () => {
+    const html = renderMarkdown('> [!CUSTOM]\n> hi')
+    expect(html).not.toContain('md-alert')
+    expect(html).toContain('[!CUSTOM]')  // not stripped
+  })
+
+  it('marker not on first line → plain blockquote', () => {
+    const html = renderMarkdown('> first line\n> [!NOTE]\n> rest')
+    expect(html).not.toContain('md-alert')
+  })
+
+  it('detects with up to 3 leading spaces (CommonMark indent allowance)', () => {
+    for (const indent of ['', ' ', '  ', '   ']) {
+      const html = renderMarkdown(`${indent}> [!NOTE]\n${indent}> body`)
+      expect(html, `${indent.length} spaces`).toContain('md-alert-note')
+    }
+    // 4 spaces = code block, not blockquote
+    expect(renderMarkdown('    > [!NOTE]\n    > body')).not.toContain('md-alert')
+  })
+
+  it('detects nested blockquote alert (outer > stripped before inner tokenizes)', () => {
+    const html = renderMarkdown('> > [!WARNING]\n> > nested body')
+    expect(html).toContain('md-alert-warning')
+    expect(html).toContain('nested body')
+  })
+
+  it('plain blockquote unchanged', () => {
+    const html = renderMarkdown('> just a quote')
+    expect(html).toContain('<blockquote')
+    expect(html).not.toContain('md-alert')
+  })
+
+  it('annotated mode stamps the alert div', () => {
+    const html = renderMarkdownAnnotated('# h\n\n> [!TIP]\n> tip body')
+    expect(html).toMatch(/md-alert-tip[^>]*data-src-line="3"/)
+  })
+})
+
+describe('footnotes', () => {
+  it('renders ref + def with anchor links', () => {
+    const html = renderMarkdown('Text[^1].\n\n[^1]: The note.')
+    expect(html).toContain('<sup class="fn-ref">')
+    expect(html).toContain('>1</a></sup>')
+    expect(html).toContain('<section class="footnotes">')
+    expect(html).toContain('The note.')
+    // Ref → def anchor + def → ref back-link cross-reference
+    const refId = html.match(/id="(fnref\d+-0)"/)?.[1]
+    const fnId = html.match(/id="(fn\d+-0)"/)?.[1]
+    expect(html).toContain(`href="#${fnId}"`)
+    expect(html).toContain(`href="#${refId}"`)
+  })
+
+  it('numbers by first-ref encounter, not def order', () => {
+    const html = renderMarkdown('A[^b] then[^a].\n\n[^a]: alpha\n\n[^b]: beta')
+    const ol = html.match(/<ol>.*<\/ol>/s)?.[0]
+    // [^b] seen first → footnote 1 = beta
+    expect(ol).toMatch(/<li[^>]*>beta.*<li[^>]*>alpha/s)
+  })
+
+  it('multiple refs to same label share number, only first gets back-link id', () => {
+    const html = renderMarkdown('First[^x] and again[^x].\n\n[^x]: shared')
+    expect((html.match(/>1<\/a><\/sup>/g) ?? []).length).toBe(2)
+    expect((html.match(/id="fnref\d+-0"/g) ?? []).length).toBe(1)
+  })
+
+  it('def appearing before its ref renders (not dropped)', () => {
+    // Def at top renders FIRST — def renderer must create the entry too,
+    // not just the ref renderer. (bughunt-lite 3-2 finding.)
+    const html = renderMarkdown('[^1]: defined first\n\nText with[^1] ref.')
+    expect(html).toContain('defined first')
+    expect(html).not.toContain('(missing)')
+    expect(html).toContain('>1</a></sup>')
+  })
+
+  it('ref with no def shows (missing)', () => {
+    expect(renderMarkdown('Text[^undefined].')).toContain('<em>(missing)</em>')
+  })
+
+  it('unreferenced def renders (numbered by document encounter)', () => {
+    // Trade-off vs GitHub (which drops unreferenced defs): rendering surfaces
+    // dead defs to the reviewer. Side effect of def-before-ref fix.
+    const html = renderMarkdown('[^orphan]: dead def\n\nNo refs here.')
+    expect(html).toContain('dead def')
+  })
+
+  it('indented continuation lines join into body', () => {
+    const html = renderMarkdown('Ref[^1].\n\n[^1]: Line one\n    line two\n    line three.')
+    expect(html).toContain('Line one line two line three.')
+  })
+
+  it('does not steal [^text](url) from link tokenizer', () => {
+    const html = renderMarkdown('See [^this](https://example.com).')
+    expect(html).toContain('<a href="https://example.com"')
+    expect(html).not.toContain('fn-ref')
+  })
+
+  it('inline markdown in def body works', () => {
+    const html = renderMarkdown('Ref[^1].\n\n[^1]: With **bold** and `code`.')
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).toContain('<code>code</code>')
+  })
+
+  it('per-render scope isolates anchor ids across calls', () => {
+    const a = renderMarkdown('A[^1].\n\n[^1]: a')
+    const b = renderMarkdown('B[^1].\n\n[^1]: b')
+    const aId = a.match(/id="(fn\d+-0)"/)?.[1]
+    const bId = b.match(/id="(fn\d+-0)"/)?.[1]
+    expect(aId).not.toBe(bId)
+  })
+
+  it('def body sanitized', () => {
+    const html = renderMarkdown('Ref[^1].\n\n[^1]: <script>alert(1)</script>hi')
+    expect(html).not.toContain('<script')
+    expect(html).toContain('hi')
+  })
+
+  it('no section when no footnotes', () => {
+    expect(renderMarkdown('# plain doc')).not.toContain('footnotes')
+  })
+
+  it('annotated mode stamps def with source line', () => {
+    const html = renderMarkdownAnnotated('Text[^1].\n\n[^1]: defined here')
+    // Def is on line 3
+    expect(html).toMatch(/<li id="fn\d+-0" data-src-line="3">/)
+  })
+})
+
 describe('renderMarkdownAnnotated', () => {
   // Multi-block fixture — heading, paragraph spanning 2 lines, nested list,
   // code fence, blockquote. Line numbers are the contract with reanchor().

@@ -51,12 +51,15 @@ export function ensureLegacyParsers(): Promise<void> {
   })().catch(e => { legacyPromise = undefined; throw e })
 }
 
-const EXTENSION_LANGUAGES: Record<string, string> = {
+// Exported: also used by markdown-render to map fence-lang strings (\`\`\`js,
+// \`\`\`py) to PARSERS keys. Identity entries (javascript→javascript) handled
+// by callers via `?? lang` fallthrough.
+export const EXTENSION_LANGUAGES: Record<string, string> = {
   ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
   go: 'go', py: 'python', rs: 'rust',
   css: 'css', html: 'html', svelte: 'svelte',
   json: 'json', yaml: 'yaml', yml: 'yaml',
-  sh: 'bash', bash: 'bash',
+  sh: 'bash', bash: 'bash', shell: 'bash',
   toml: 'toml', mod: 'go', sum: 'go',
 }
 
