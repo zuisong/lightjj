@@ -108,3 +108,19 @@ export function filePathFromHeader(header: string): string {
   if (gitMatch) return gitMatch[1]
   return firstLine
 }
+
+// New-side line numbers that are additions. Same hunk-walk as lineContentAt
+// (annotations.svelte.ts): count from newStart, advance on add/context, skip
+// remove. Used by markdown preview's diff gutter — preview renders the NEW
+// content, so removed lines don't exist to mark; only "added" is meaningful.
+export function newSideAddedLines(hunks: readonly DiffHunk[]): Set<number> {
+  const s = new Set<number>()
+  for (const h of hunks) {
+    let n = h.newStart
+    for (const l of h.lines) {
+      if (l.type === 'add') s.add(n++)
+      else if (l.type === 'context') n++
+    }
+  }
+  return s
+}

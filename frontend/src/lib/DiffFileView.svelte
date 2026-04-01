@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DiffFile, DiffHunk, DiffLine } from './diff-parser'
+  import { newSideAddedLines, type DiffFile, type DiffHunk, type DiffLine } from './diff-parser'
   import { toSplitView, type SplitLine } from './split-view'
   import type { WordSpan } from './word-diff'
   import { FILE_TYPE_LABELS, type FileChange, type Annotation } from './api'
@@ -115,6 +115,10 @@
   let filePath = $derived(file.filePath)
   let isConflict = $derived(fileStats?.conflict ?? false)
   let isMarkdown = $derived(/\.md$/i.test(filePath))
+
+  // Gutter marks for the markdown preview. Gated on previewContent so the
+  // hunk walk doesn't run on every render of the (much hotter) source view.
+  let addedLines = $derived(previewContent !== undefined ? newSideAddedLines(file.hunks) : undefined)
 
   // Hidden context exists if there are lines before the first hunk or between
   // hunks. We can't know trailing lines (no total-line-count in diff headers)
@@ -559,6 +563,7 @@
             : undefined}
           {annotationsForLine}
           {onannotationclick}
+          {addedLines}
         />
       {/await}
     {:else if effectiveSplit}

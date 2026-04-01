@@ -353,35 +353,39 @@ export function renderMarkdownAnnotated(src: string, ctx?: PreviewContext): stri
   finally { stampCtx = null }
 }
 
+// Iterate stamped blocks with their [start, end) source-line range. Nested
+// blocks (loose-list <li> containing a same-line <p>) yield only the inner —
+// the outer's range collapses to empty since [start, next) = [N, N).
+// Shared by wireAnnotations (badge per block) + wireDiffGutter (mark per
+// block) — both need identical range semantics.
+function* stampedBlocks(container: HTMLElement, totalLines: number) {
+  const blocks = [...container.querySelectorAll<HTMLElement>('[data-src-line]')]
+  const sorted = blocks.map(el => +el.dataset.srcLine!).sort((a, b) => a - b)
+  const endOf = (line: number) => sorted.find(l => l > line) ?? totalLines + 1
+  for (const el of blocks) {
+    const start = +el.dataset.srcLine!
+    if (el.querySelector(`[data-src-line="${start}"]`)) continue
+    yield { el, start, end: endOf(start) }
+  }
+}
+
 // Inject badges + Alt-click annotate gesture on rendered preview. Called from
 // MarkdownPreview's post-{@html} $effect. forLine() reads the store's $derived
 // byLine Map, so calling it here registers that as a dep — badges re-inject
 // when annotations.list mutates (user saves via the bubble).
 //
-// Range math: blocks sorted by srcLine, each claims [own, next). Nested blocks
-// (li > p) naturally subdivide — the inner p claims its sub-range, the outer
-// li's range shrinks to just its own line(s). closest() in the Alt-click path
-// returns the innermost match, so clicking inside a nested paragraph anchors
-// to the paragraph, not the list item.
+// closest() in the Alt-click path returns the innermost match, so clicking
+// inside a nested paragraph anchors to the paragraph, not the list item.
 export function wireAnnotations(
   container: HTMLElement,
   sourceLines: readonly string[],
   forLine: (n: number) => readonly Annotation[],
   onClick: ((n: number, content: string, e: MouseEvent) => void) | undefined,
 ): () => void {
-  const blocks = [...container.querySelectorAll<HTMLElement>('[data-src-line]')]
-  const sorted = blocks.map(el => +el.dataset.srcLine!).sort((a, b) => a - b)
-  const endOf = (line: number) => sorted.find(l => l > line) ?? sourceLines.length + 1
-
   const injected: Array<() => void> = []
-  for (const el of blocks) {
-    const line = +el.dataset.srcLine!
-    // Loose-list <li> and its inner <p> both stamp the same line — skip the
-    // outer so the badge lands on the innermost (most specific) block.
-    if (el.querySelector(`[data-src-line="${line}"]`)) continue
-    const end = endOf(line)
+  for (const { el, start, end } of stampedBlocks(container, sourceLines.length)) {
     const anns: Annotation[] = []
-    for (let n = line; n < end; n++) anns.push(...forLine(n))
+    for (let n = start; n < end; n++) anns.push(...forLine(n))
     if (!anns.length) continue
     // Block spans multiple source lines → multiple annotations possible. Sort
     // so must-fix tints the badge (not hidden behind a nitpick's 0.4 opacity).
@@ -418,6 +422,29 @@ export function wireAnnotations(
     injected.forEach(fn => fn())
     container.removeEventListener('click', onAlt)
   }
+}
+
+// Mark stamped blocks whose [start,end) source range contains any added line.
+// Preview renders NEW content — removed lines don't exist, so the only
+// meaningful mark is "added". A block's range may span context+added (a
+// paragraph where one sentence changed) — still marked, matching GitHub's
+// prose diff. CSS draws a green left-gutter strip via ::before.
+export function wireDiffGutter(
+  container: HTMLElement,
+  totalLines: number,
+  addedLines: ReadonlySet<number>,
+): () => void {
+  const marked: HTMLElement[] = []
+  for (const { el, start, end } of stampedBlocks(container, totalLines)) {
+    for (let n = start; n < end; n++) {
+      if (addedLines.has(n)) {
+        el.classList.add('md-diff-added')
+        marked.push(el)
+        break
+      }
+    }
+  }
+  return () => marked.forEach(el => el.classList.remove('md-diff-added'))
 }
 
 const MIN_SCALE = 0.3

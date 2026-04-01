@@ -2,7 +2,7 @@
 
 Open items only. Done-item narratives live in [docs/CHANGELOG-ARCHIVE.md](docs/CHANGELOG-ARCHIVE.md).
 
-Last shipped: **2026-03-31** v1.8.6 — markdown preview features: footnotes (`[^1]` refs + defs, per-render anchor scoping), heading IDs (GitHub-compatible slugify, SANITIZE_DOM:false so common-word slugs survive), code fence highlighting (highlightLines wired in), GitHub alerts (`> [!NOTE]` etc). bughunt fixes: ALERT_RE 0-3 leading-space allowance, def-before-ref create-if-missing.
+Last shipped: **2026-03-31** v1.9.0 — markdown preview diff gutter: green left-gutter strips on rendered blocks whose source-line range contains added lines (GitHub prose-diff style). `stampedBlocks()` generator extracted from `wireAnnotations`, shared with new `wireDiffGutter()`. Annotation badges moved `right:2px`→`left:-34px` (was hidden under sticky ToC). ToC collapse toggle (›/‹ tab, flex column so close button doesn't scroll away with long ToCs).
 
 ## Active
 

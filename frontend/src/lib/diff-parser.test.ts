@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseDiffContent, filePathFromHeader } from './diff-parser'
+import { parseDiffContent, filePathFromHeader, newSideAddedLines } from './diff-parser'
 
 describe('parseDiffContent', () => {
   it('returns empty array for empty input', () => {
@@ -300,5 +300,34 @@ rename to src/new.go`
 
   it('extracts git-style path with spaces', () => {
     expect(filePathFromHeader('diff --git a/path with spaces/file.ts b/path with spaces/file.ts')).toBe('path with spaces/file.ts')
+  })
+})
+
+describe('newSideAddedLines', () => {
+  const hunk = (newStart: number, types: ('add' | 'remove' | 'context')[]) => ({
+    header: '@@', oldStart: 1, newStart, newCount: 0,
+    lines: types.map(type => ({ type, content: '' })),
+  })
+
+  it('collects add lines, advances on context, skips remove', () => {
+    // newStart=5: ctx@5, add@6, rem(no advance), add@7, ctx@8
+    const s = newSideAddedLines([hunk(5, ['context', 'add', 'remove', 'add', 'context'])])
+    expect([...s].sort()).toEqual([6, 7])
+  })
+
+  it('handles multi-hunk — counter resets per hunk', () => {
+    const s = newSideAddedLines([
+      hunk(1, ['add', 'context']),       // add@1
+      hunk(10, ['context', 'add']),      // add@11
+    ])
+    expect([...s].sort((a, b) => a - b)).toEqual([1, 11])
+  })
+
+  it('all-removed hunk yields empty set', () => {
+    expect(newSideAddedLines([hunk(1, ['remove', 'remove'])]).size).toBe(0)
+  })
+
+  it('empty hunks → empty set', () => {
+    expect(newSideAddedLines([]).size).toBe(0)
   })
 })

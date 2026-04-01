@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { renderMarkdown, renderMarkdownAnnotated, ensureMermaidLoaded, wirePanzoom, wireAnnotations, type PreviewContext } from './markdown-render'
+  import { renderMarkdown, renderMarkdownAnnotated, ensureMermaidLoaded, wirePanzoom, wireAnnotations, wireDiffGutter, type PreviewContext } from './markdown-render'
   import type { Annotation } from './api'
 
   interface Props {
@@ -10,9 +10,12 @@
     // so the wireAnnotations $effect re-runs when annotations.list changes.
     annotationsForLine?: (lineNum: number) => readonly Annotation[]
     onannotationclick?: (lineNum: number, lineContent: string, e: MouseEvent) => void
+    // New-file line numbers that are diff additions. Blocks whose source-line
+    // range contains any added line get a green left-gutter strip.
+    addedLines?: ReadonlySet<number>
   }
 
-  let { content, ctx, annotationsForLine, onannotationclick }: Props = $props()
+  let { content, ctx, annotationsForLine, onannotationclick, addedLines }: Props = $props()
   let container: HTMLElement | undefined = $state()
 
   // Mermaid chunk lazy-loads on first preview. `mermaidReady` is a dep of
@@ -22,11 +25,14 @@
   let mermaidReady = $state(false)
   $effect(() => { ensureMermaidLoaded().then(() => mermaidReady = true) })
 
-  let html = $derived((void mermaidReady, annotationsForLine
+  // data-src-line stamping is needed for both annotation badges AND diff
+  // gutter marks — both use the [own, next) range walk over stamped blocks.
+  let stamped = $derived(!!annotationsForLine || !!addedLines?.size)
+  let html = $derived((void mermaidReady, stamped
     ? renderMarkdownAnnotated(content, ctx)
     : renderMarkdown(content, ctx)))
 
-  let sourceLines = $derived(annotationsForLine ? content.split('\n') : [])
+  let sourceLines = $derived(stamped ? content.split('\n') : [])
 
   // Re-wire pan/zoom after every html change. Returned cleanup removes
   // the prior batch's listeners — they survive {@html} subtree replacement.
@@ -44,6 +50,7 @@
   interface TocEntry { el: HTMLElement; depth: number; text: string }
   let toc = $state<TocEntry[]>([])
   let activeHeading = $state<HTMLElement | null>(null)
+  let tocOpen = $state(true)
   $effect(() => {
     void html
     // Reset first: on html re-derive, old elements are detached. Stale
@@ -76,6 +83,12 @@
     if (!container || !annotationsForLine) return
     return wireAnnotations(container, sourceLines, annotationsForLine, onannotationclick)
   })
+
+  $effect(() => {
+    void html
+    if (!container || !addedLines?.size) return
+    return wireDiffGutter(container, sourceLines.length, addedLines)
+  })
 </script>
 
 <div class="md-preview" bind:this={container}>
@@ -83,25 +96,34 @@
     <div class="md-hint"><kbd class="nav-hint">Alt</kbd>+click any block to annotate</div>
   {/if}
   {#if toc.length > 1}
-    <nav class="md-toc" aria-label="Table of contents">
-      {#each toc as h}
-        <button
-          class="md-toc-item"
-          class:active={h.el === activeHeading}
-          class:deep={h.depth >= 4}
-          style:padding-left="{(h.depth - 1) * 10 + 8}px"
-          onclick={() => h.el.scrollIntoView({ block: 'start', behavior: 'smooth' })}
-          title={h.text}
-        >{h.text}</button>
-      {/each}
-    </nav>
+    {#if tocOpen}
+      <nav class="md-toc" aria-label="Table of contents">
+        <button class="md-toc-close" onclick={() => tocOpen = false} title="Hide outline" aria-label="Hide outline">›</button>
+        <div class="md-toc-items">
+          {#each toc as h}
+            <button
+              class="md-toc-item"
+              class:active={h.el === activeHeading}
+              class:deep={h.depth >= 4}
+              style:padding-left="{(h.depth - 1) * 10 + 8}px"
+              onclick={() => h.el.scrollIntoView({ block: 'start', behavior: 'smooth' })}
+              title={h.text}
+            >{h.text}</button>
+          {/each}
+        </div>
+      </nav>
+    {:else}
+      <button class="md-toc-tab" onclick={() => tocOpen = true} title="Show outline ({toc.length})" aria-label="Show outline">‹</button>
+    {/if}
   {/if}
   {@html html}
 </div>
 
 <style>
   .md-preview {
-    padding: 12px 24px;
+    /* Left padding hosts the gutter zone: diff strip (~-10px from content)
+       + annotation badge (~-34px). Was 24px both sides. */
+    padding: 12px 24px 12px 36px;
     font-family: system-ui, -apple-system, sans-serif;
     font-size: 14px;
     line-height: 1.6;
@@ -233,7 +255,10 @@
     float: right;
     width: 170px;
     max-height: 70vh;
-    overflow-y: auto;
+    /* Flex column: close button stays in the non-scrolling header zone,
+       only .md-toc-items scrolls (so the › doesn't disappear on long ToCs). */
+    display: flex;
+    flex-direction: column;
     margin: 0 -8px 12px 20px;
     padding: 4px 0;
     background: color-mix(in srgb, var(--mantle) 80%, transparent);
@@ -243,9 +268,13 @@
     opacity: 0.75;
     transition: opacity 120ms ease;
     z-index: 1;
-    scrollbar-width: thin;
   }
   .md-toc:hover { opacity: 1; }
+  .md-toc-items {
+    overflow-y: auto;
+    min-height: 0;
+    scrollbar-width: thin;
+  }
   .md-toc-item {
     display: block;
     width: 100%;
@@ -277,6 +306,44 @@
     color: var(--overlay0);
     font-size: 10px;
   }
+  .md-toc-close {
+    align-self: flex-end;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin: 0 4px 2px 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--overlay0);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  .md-toc-close:hover { color: var(--text); background: var(--surface0); }
+  /* Collapsed-state tab — same sticky+float positioning as the open ToC so
+     it doesn't reflow prose when toggled. */
+  .md-toc-tab {
+    position: sticky;
+    top: 8px;
+    float: right;
+    margin: 0 -8px 12px 8px;
+    width: 18px;
+    height: 32px;
+    padding: 0;
+    background: color-mix(in srgb, var(--mantle) 80%, transparent);
+    border: none;
+    border-radius: 6px 0 0 6px;
+    color: var(--subtext0);
+    font-size: 12px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    z-index: 1;
+    opacity: 0.6;
+    transition: opacity 120ms ease;
+  }
+  .md-toc-tab:hover { opacity: 1; color: var(--text); }
 
   .md-hint {
     display: inline-block;
@@ -289,11 +356,30 @@
     user-select: none;
   }
 
-  /* Annotation badge host — shared semantic rules in theme.css. */
-  .md-preview :global(.md-ann-host) { position: relative; }
+  /* Gutter elements: both position relative to their block (the strip moves
+     with indent — GitHub's prose-diff does this; visually associates the mark
+     with the changed content). md-ann-host and md-diff-added each set
+     position:relative; a block with both is fine (same value). */
+  .md-preview :global(.md-ann-host),
+  .md-preview :global(.md-diff-added) { position: relative; }
+
+  .md-preview :global(.md-diff-added::before) {
+    content: '';
+    position: absolute;
+    left: -10px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--green);
+    border-radius: 2px;
+    opacity: 0.7;
+  }
+
+  /* Annotation badge — moved from right:2px (was hidden under sticky ToC) to
+     left gutter. Shared semantic rules (severity tints, hover) in theme.css. */
   .md-preview :global(.annotation-badge) {
-    top: 2px;
-    right: 2px;
+    top: 0;
+    left: -34px;
     font-size: 13px;
     padding: 2px 4px;
   }

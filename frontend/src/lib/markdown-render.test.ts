@@ -13,7 +13,7 @@ vi.mock('beautiful-mermaid', () => ({
     return `<svg data-src="${src.slice(0, 20)}"></svg>`
   }),
 }))
-import { renderMarkdown, renderMarkdownAnnotated, ensureMermaidLoaded, wirePanzoom, wireAnnotations } from './markdown-render'
+import { renderMarkdown, renderMarkdownAnnotated, ensureMermaidLoaded, wirePanzoom, wireAnnotations, wireDiffGutter } from './markdown-render'
 import type { Annotation } from './api'
 
 describe('renderMarkdown', () => {
@@ -522,6 +522,70 @@ describe('wireAnnotations', () => {
     cleanup()
     expect(div.querySelector('.annotation-badge')).toBeNull()
     expect(div.querySelector('.md-ann-host')).toBeNull()
+  })
+})
+
+describe('wireDiffGutter', () => {
+  const render = (src: string) => {
+    const div = document.createElement('div')
+    div.innerHTML = renderMarkdownAnnotated(src)
+    return div
+  }
+
+  it('marks block whose [start,end) range contains an added line', () => {
+    // h1@1, p@3 → p claims [3,∞). Line 4 added → p marked, h1 not.
+    const div = render('# Title\n\nPara text\ncontinues')
+    wireDiffGutter(div, 4, new Set([4]))
+    expect(div.querySelector('h1.md-diff-added')).toBeNull()
+    expect(div.querySelector('p.md-diff-added')).toBeTruthy()
+  })
+
+  it('marks the start line itself (range is [start,end) inclusive of start)', () => {
+    const div = render('# Title\n\nPara')
+    wireDiffGutter(div, 3, new Set([3]))
+    expect(div.querySelector('p.md-diff-added')).toBeTruthy()
+  })
+
+  it('skips blocks with no added lines in range', () => {
+    const div = render('# Title\n\nPara')
+    wireDiffGutter(div, 3, new Set([99]))
+    expect(div.querySelectorAll('.md-diff-added').length).toBe(0)
+  })
+
+  it('marks multiple blocks independently', () => {
+    const div = render('# Edited heading\n\nUnchanged para\n\nEdited para')
+    wireDiffGutter(div, 5, new Set([1, 5]))
+    expect(div.querySelector('h1.md-diff-added')).toBeTruthy()
+    expect(div.querySelectorAll('p.md-diff-added').length).toBe(1)
+    expect(div.querySelector('p.md-diff-added')!.textContent).toBe('Edited para')
+  })
+
+  it('nested loose-list: inner block claims range (same dedup as wireAnnotations)', () => {
+    // li@1 contains p@1 — outer skipped via the same querySelector check.
+    const div = render('- item one\n\n- item two')
+    wireDiffGutter(div, 3, new Set([1]))
+    const marks = div.querySelectorAll('.md-diff-added')
+    expect(marks.length).toBe(1)
+    expect(marks[0].tagName).toBe('P')
+  })
+
+  it('cleanup removes marks', () => {
+    const div = render('# Title')
+    const cleanup = wireDiffGutter(div, 1, new Set([1]))
+    expect(div.querySelectorAll('.md-diff-added').length).toBe(1)
+    cleanup()
+    expect(div.querySelectorAll('.md-diff-added').length).toBe(0)
+  })
+
+  it('coexists with wireAnnotations on the same block', () => {
+    const div = render('# Title')
+    const ann = { id: 'a', changeId: 'c', filePath: 'f.md', lineNum: 1, lineContent: '# Title', comment: 'hi', severity: 'suggestion' as const, createdAt: 0, createdAtCommitId: 'x', status: 'open' as const }
+    wireAnnotations(div, ['# Title'], () => [ann], undefined)
+    wireDiffGutter(div, 1, new Set([1]))
+    const h1 = div.querySelector('h1')!
+    expect(h1.classList.contains('md-ann-host')).toBe(true)
+    expect(h1.classList.contains('md-diff-added')).toBe(true)
+    expect(h1.querySelector('.annotation-badge')).toBeTruthy()
   })
 })
 
