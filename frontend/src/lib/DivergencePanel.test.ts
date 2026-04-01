@@ -203,7 +203,7 @@ describe('DivergencePanel — confirm flow', () => {
     const { container } = render(DivergencePanel, { props: { changeId: 'X', ...h } })
     await settle()
     await fireEvent.click(container.querySelectorAll('.keep-btn')[1])
-    await fireEvent.click(container.querySelector('.dp-btn-cancel')!)  // "Cancel"
+    await fireEvent.click(container.querySelector('.confirm-actions .btn:not([class*="dp-btn"])')!)  // "Cancel"
     expect(h.onkeep).not.toHaveBeenCalled()
     expect(container.querySelector('.confirm-overlay')).toBeNull()
   })

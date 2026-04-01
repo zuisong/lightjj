@@ -56,7 +56,7 @@ describe('MergePanel — toolbar', () => {
 
   it('busy prop disables Save and Cancel buttons (cycle stays enabled)', () => {
     const { container } = render(MergePanel, { props: props({ busy: true }) })
-    const btns = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+    const btns = [...container.querySelectorAll<HTMLButtonElement>('.merge-toolbar .btn')]
     const byText = (t: string) => btns.find(b => b.textContent?.includes(t))!
     expect(byText('Sav').disabled).toBe(true)   // 'Save' or 'Saving…'
     expect(byText('Cancel').disabled).toBe(true)
@@ -66,7 +66,7 @@ describe('MergePanel — toolbar', () => {
   it('Save button fires onsave with center content (seeded = theirs)', async () => {
     const onsave = vi.fn()
     const { container } = render(MergePanel, { props: props({ onsave }) })
-    await fireEvent.click(container.querySelector('.merge-save')!)
+    await fireEvent.click(container.querySelector('.btn-success')!)
     // Center seeds with theirs → save should emit theirs content.
     expect(onsave).toHaveBeenCalledWith('A\nTHEIRS\nC')
   })
@@ -74,14 +74,14 @@ describe('MergePanel — toolbar', () => {
   it('Save does NOT fire when busy', async () => {
     const onsave = vi.fn()
     const { container } = render(MergePanel, { props: props({ onsave, busy: true }) })
-    await fireEvent.click(container.querySelector('.merge-save')!)
+    await fireEvent.click(container.querySelector('.btn-success')!)
     expect(onsave).not.toHaveBeenCalled()
   })
 
   it('Cancel fires oncancel when not dirty (no confirm)', async () => {
     const oncancel = vi.fn()
     const { container } = render(MergePanel, { props: props({ oncancel }) })
-    const cancelBtn = [...container.querySelectorAll('.merge-btn')].find(b => b.textContent === 'Cancel')!
+    const cancelBtn = [...container.querySelectorAll('.merge-toolbar .btn')].find(b => b.textContent === 'Cancel')!
     await fireEvent.click(cancelBtn)
     expect(oncancel).toHaveBeenCalledOnce()
   })
@@ -282,16 +282,16 @@ describe('MergePanel — takeAll', () => {
   ] as const)('takeAll(%s) → center content === sides.%s', async (side, expected) => {
     const onsave = vi.fn()
     const { container } = render(MergePanel, { props: { ...props({ onsave }), sides: threeBlocks } })
-    const btn = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+    const btn = [...container.querySelectorAll<HTMLButtonElement>('.merge-toolbar .btn')]
       .find(b => b.textContent?.toLowerCase().includes(`all ${side}`))!
     await fireEvent.click(btn)
-    await fireEvent.click(container.querySelector('.merge-save')!)
+    await fireEvent.click(container.querySelector('.btn-success')!)
     expect(onsave).toHaveBeenCalledWith(expected)
   })
 
   it('takeAll flips every minimap chip to that side', async () => {
     const { container } = render(MergePanel, { props: { ...props(), sides: threeBlocks } })
-    const allOurs = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+    const allOurs = [...container.querySelectorAll<HTMLButtonElement>('.merge-toolbar .btn')]
       .find(b => b.textContent?.includes('All ours'))!
     await fireEvent.click(allOurs)
     const chips = container.querySelectorAll('.merge-minimap-chip')
@@ -318,7 +318,7 @@ describe('MergePanel — takeAll', () => {
 
   it('counter reaches N/N after takeAll(ours) — every block resolved', async () => {
     const { container } = render(MergePanel, { props: { ...props(), sides: threeBlocks } })
-    const allOurs = [...container.querySelectorAll<HTMLButtonElement>('.merge-btn')]
+    const allOurs = [...container.querySelectorAll<HTMLButtonElement>('.merge-toolbar .btn')]
       .find(b => b.textContent?.includes('All ours'))!
     await fireEvent.click(allOurs)
     expect(container.querySelector('.merge-counter')?.textContent?.trim()).toMatch(/3\/3/)
@@ -335,7 +335,7 @@ describe('MergePanel — takeBoth', () => {
     const { container } = render(MergePanel, { props: { ...props({ onsave }), sides: dueling } })
     const panel = container.querySelector('.merge-panel')!
     await fireEvent.keyDown(panel, { key: 'b' })
-    await fireEvent.click(container.querySelector('.merge-save')!)
+    await fireEvent.click(container.querySelector('.btn-success')!)
     // Invariant: save emits ours-line + theirs-line at the block position.
     expect(onsave).toHaveBeenCalledWith('A\nimport X\nimport Y\nC')
   })
@@ -345,7 +345,7 @@ describe('MergePanel — takeBoth', () => {
     const { container } = render(MergePanel, { props: { ...props({ onsave }), sides: dueling } })
     const center = container.querySelector('.merge-center')!
     await fireEvent.keyDown(center, { key: 'b' })
-    await fireEvent.click(container.querySelector('.merge-save')!)
+    await fireEvent.click(container.querySelector('.btn-success')!)
     // Still theirs (seeded) — b was swallowed as editing, not takeBoth.
     expect(onsave).toHaveBeenCalledWith('A\nimport Y\nC')
   })

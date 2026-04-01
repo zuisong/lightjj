@@ -75,6 +75,7 @@ Shared UI primitives live in `theme.css` (global scope, not Svelte-scoped). Comp
 | `.btn.btn-sm` | Compact padding | Toolbars, inline actions |
 | `.btn.btn-primary` | Filled amber | Primary/confirm action |
 | `.btn.btn-danger` | Red outline → fill on hover | Destructive action |
+| `.btn.btn-success` | Green tinted → fill on hover | Completes a workflow (Save in merge, Keep in divergence) |
 
 ### Segmented toggle
 

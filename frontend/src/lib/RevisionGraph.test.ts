@@ -374,7 +374,7 @@ describe('RevisionGraph', () => {
       const { container } = render(RevisionGraph, {
         props: defaultProps({ revisions: [entry], checkedRevisions: checked, mutating: true }),
       })
-      const buttons = container.querySelectorAll('.batch-actions-bar .action-btn')
+      const buttons = container.querySelectorAll('.batch-actions-bar .btn')
       // new + abandon disabled; clear stays enabled (non-mutating)
       expect(buttons[0]).toBeDisabled() // new
       expect(buttons[1]).toBeDisabled() // abandon

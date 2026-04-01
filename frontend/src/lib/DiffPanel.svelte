@@ -1250,26 +1250,25 @@
     </div>
   {/if}
   {#if parsedDiff.length > 0}
+    {@const allExpanded = collapsedFiles.size === 0}
     <div class="diff-toolbar">
       <div class="diff-toolbar-left">
-        <button class="btn btn-sm" onclick={collapseAll}>Collapse all</button>
-        <button class="btn btn-sm" onclick={expandAll}>Expand all</button>
+        <button
+          class="btn btn-sm"
+          onclick={allExpanded ? collapseAll : expandAll}
+          title={allExpanded ? 'Collapse all files' : 'Expand all files'}
+          aria-label={allExpanded ? 'Collapse all files' : 'Expand all files'}
+        >{allExpanded ? '⊟' : '⊞'}</button>
         {#if diffTarget?.kind === 'single'}
           <span class="ann-hint"><kbd class="nav-hint">Alt</kbd>+click line to annotate</span>
         {/if}
       </div>
-      <div class="seg">
-        <button
-          class="seg-btn"
-          class:active={!splitView}
-          onclick={() => splitView = false}
-        >Unified</button>
-        <button
-          class="seg-btn"
-          class:active={splitView}
-          onclick={() => splitView = true}
-        >Split</button>
-      </div>
+      <button
+        class="btn btn-sm"
+        onclick={() => splitView = !splitView}
+        title={splitView ? 'Split view — click for unified' : 'Unified view — click for split'}
+        aria-label={splitView ? 'Switch to unified view' : 'Switch to split view'}
+      >{splitView ? '◫' : '≡'}</button>
     </div>
   {/if}
   {#if searchOpen}
@@ -1288,9 +1287,9 @@
           No matches
         {/if}
       </span>
-      <button class="search-nav-btn" onclick={prevMatch} disabled={searchMatches.length === 0}>&#9650;</button>
-      <button class="search-nav-btn" onclick={nextMatch} disabled={searchMatches.length === 0}>&#9660;</button>
-      <button class="search-close-btn" onclick={closeSearch}>&#10005;</button>
+      <button class="btn btn-sm" onclick={prevMatch} disabled={searchMatches.length === 0}>&#9650;</button>
+      <button class="btn btn-sm" onclick={nextMatch} disabled={searchMatches.length === 0}>&#9660;</button>
+      <button class="btn btn-sm" onclick={closeSearch}>&#10005;</button>
     </div>
   {/if}
   <div class="panel-content" bind:this={panelContentEl}>
@@ -1728,30 +1727,7 @@
     text-align: center;
   }
 
-  .search-nav-btn, .search-close-btn {
-    background: transparent;
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    padding: 2px 6px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 11px;
-  }
 
-  .search-nav-btn:hover, .search-close-btn:hover {
-    background: var(--surface0);
-    color: var(--text);
-  }
-
-  .search-nav-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-
-  .search-nav-btn:disabled:hover {
-    background: transparent;
-    color: var(--subtext0);
-  }
 
   /* --- Empty states --- */
   .empty-state {

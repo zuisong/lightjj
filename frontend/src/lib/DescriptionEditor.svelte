@@ -31,11 +31,11 @@
     }}
   ></textarea>
   <div class="desc-actions">
-    <button class="btn-primary" onclick={onsave}>
+    <button class="btn btn-primary" onclick={onsave}>
       {commitMode ? 'Commit' : 'Save'}
       <kbd>Cmd+Enter</kbd>
     </button>
-    <button class="btn-secondary" onclick={oncancel}>Cancel</button>
+    <button class="btn" onclick={oncancel}>Cancel</button>
   </div>
 </div>
 
@@ -80,45 +80,12 @@
     margin-top: 8px;
   }
 
-  .btn-primary {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--amber);
-    color: var(--base);
-    border: none;
-    padding: 4px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .btn-primary:hover {
-    background: var(--bg-btn-primary-hover);
-  }
-
-  .btn-primary kbd {
+  /* System .btn/.btn-primary; only the kbd hint inside Save is local. */
+  .desc-actions :global(.btn-primary kbd) {
     background: var(--bg-btn-kbd);
     padding: 0 4px;
     border-radius: 2px;
     font-size: 10px;
     font-family: inherit;
-  }
-
-  .btn-secondary {
-    background: transparent;
-    color: var(--subtext0);
-    border: 1px solid var(--surface1);
-    padding: 4px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-  }
-
-  .btn-secondary:hover {
-    background: var(--surface0);
   }
 </style>

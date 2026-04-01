@@ -305,9 +305,9 @@
   {#if checkedRevisions.size > 0 && !anyModeActive}
     <div class="batch-actions-bar">
       <span class="batch-label">{checkedRevisions.size} checked</span>
-      <button class="action-btn" onclick={onnewfromchecked} disabled={mutating} title="New from checked (n)">new</button>
-      <button class="action-btn danger" onclick={onabandonchecked} disabled={mutating} title="Abandon checked">abandon</button>
-      <button class="action-btn" onclick={onclearchecks} title="Clear checks (Escape)">clear</button>
+      <button class="btn" onclick={onnewfromchecked} disabled={mutating} title="New from checked (n)">new</button>
+      <button class="btn btn-danger" onclick={onabandonchecked} disabled={mutating} title="Abandon checked">abandon</button>
+      <button class="btn" onclick={onclearchecks} title="Clear checks (Escape)">clear</button>
     </div>
   {/if}
   <!-- Always mounted (height reserved) to avoid 2px layout shift on refresh start/end -->
@@ -563,34 +563,6 @@
     font-size: 11px;
     font-weight: 600;
     margin-right: 4px;
-  }
-
-  .action-btn {
-    padding: 2px 10px;
-    background: transparent;
-    border: 1px solid var(--surface1);
-    border-radius: 4px;
-    color: var(--subtext0);
-    font-family: inherit;
-    font-size: 11px;
-    cursor: pointer;
-    line-height: 1.4;
-  }
-
-  .action-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    color: var(--text);
-    border-color: var(--surface2);
-  }
-
-  .action-btn.danger:hover:not(:disabled) {
-    color: var(--red);
-    border-color: rgba(from var(--red) r g b / 0.4);
-  }
-
-  .action-btn:disabled {
-    opacity: 0.35;
-    cursor: default;
   }
 
   /* --- Refresh indicator (stale-while-revalidate) --- */

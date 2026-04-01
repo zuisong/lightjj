@@ -521,19 +521,19 @@
       </span>
     {/if}
     {#if onpreview && isMarkdown && !editing && fileStats?.type !== 'D'}
-      <button class="edit-file-btn" onclick={(e: MouseEvent) => { e.stopPropagation(); onpreview(filePath) }} title="Render markdown (mermaid diagrams supported)">{previewContent !== undefined ? 'Source' : 'Preview'}</button>
+      <button class="btn btn-sm" onclick={(e: MouseEvent) => { e.stopPropagation(); onpreview(filePath) }} title="Render markdown (mermaid diagrams supported)">{previewContent !== undefined ? 'Source' : 'Preview'}</button>
     {/if}
     {#if onedit && !editing && fileStats?.type !== 'D'}
-      <button class="edit-file-btn" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); onedit(filePath) }} title="Edit this file (switches to split view)">{editBusy ? 'Loading…' : 'Edit'}</button>
+      <button class="btn btn-sm" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); onedit(filePath) }} title="Edit this file (switches to split view)">{editBusy ? 'Loading…' : 'Edit'}</button>
     {/if}
     {#if ondiscard && !editing}
       <!-- A→delete-file, D→undelete, M→revert, R→undo-rename (pass both paths).
            Rename-with-edits never hits the R path: jj decomposes it to A+D. -->
-      <button class="edit-file-btn discard-btn" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); ondiscard(filePath, file.sourcePath) }} title="Discard changes to this file from this revision (jj restore)">Discard</button>
+      <button class="btn btn-sm btn-danger" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); ondiscard(filePath, file.sourcePath) }} title="Discard changes to this file from this revision (jj restore)">Discard</button>
     {/if}
     {#if editing && onsavefile && oncanceledit}
-      <button class="edit-file-btn edit-save-btn" disabled={editBusy || !editorRef} onclick={(e: MouseEvent) => { e.stopPropagation(); if (editorRef) onsavefile(filePath, editorRef.getContent()) }} title="Save changes (Ctrl+S)">{editBusy ? 'Saving…' : 'Save'}</button>
-      <button class="edit-file-btn" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); oncanceledit(filePath) }} title="Cancel editing (Esc)">Cancel</button>
+      <button class="btn btn-sm btn-primary" disabled={editBusy || !editorRef} onclick={(e: MouseEvent) => { e.stopPropagation(); if (editorRef) onsavefile(filePath, editorRef.getContent()) }} title="Save changes (Ctrl+S)">{editBusy ? 'Saving…' : 'Save'}</button>
+      <button class="btn btn-sm" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); oncanceledit(filePath) }} title="Cancel editing (Esc)">Cancel</button>
     {/if}
     {#if isConflict}
       <!-- Gate on fileStats.conflict (backend truth), not findConflicts:
@@ -1302,43 +1302,6 @@
   }
 
   /* --- Edit mode --- */
-  .edit-file-btn {
-    display: inline-flex;
-    align-items: center;
-    background: var(--surface0);
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    padding: 2px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 10px;
-    font-weight: 600;
-    flex-shrink: 0;
-    white-space: nowrap;
-    transition: all 0.12s var(--anim-ease);
-  }
-  .edit-file-btn:hover {
-    background: var(--surface1);
-    color: var(--text);
-  }
-  .edit-save-btn {
-    background: var(--amber);
-    border-color: var(--amber);
-    color: var(--base);
-  }
-  .discard-btn:hover {
-    border-color: var(--red);
-    color: var(--red);
-  }
-  .edit-save-btn:hover {
-    opacity: 0.85;
-  }
-  .edit-file-btn:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-    pointer-events: none;
-  }
   .split-editing {
     min-height: 300px;
   }

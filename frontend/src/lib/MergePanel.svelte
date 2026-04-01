@@ -588,16 +588,16 @@
     {#if error}<span class="merge-error" title={error}>⚠ {error}</span>{/if}
     <span class="merge-spacer"></span>
     {#if blocks.length > 0}
-      <button class="merge-btn merge-btn-ours" onclick={() => takeAll('ours')} disabled={busy} title="Take ours for every block">→→ All ours</button>
-      <button class="merge-btn merge-btn-theirs" onclick={() => takeAll('theirs')} disabled={busy} title="Take theirs for every block">All theirs ←←</button>
+      <button class="btn merge-btn-ours" onclick={() => takeAll('ours')} disabled={busy} title="Take ours for every block">→→ All ours</button>
+      <button class="btn merge-btn-theirs" onclick={() => takeAll('theirs')} disabled={busy} title="Take theirs for every block">All theirs ←←</button>
     {/if}
-    <button class="merge-btn" onclick={cycle} title="Toggle pane visibility (h)">
+    <button class="btn" onclick={cycle} title="Toggle pane visibility (h)">
       {hiddenFlank === null ? '◫◫◫' : hiddenFlank === 'theirs' ? '◫◫▯' : '▯◫◫'}
     </button>
-    <button class="merge-btn merge-save" onclick={save} disabled={busy} title="Save (⌘S)">
+    <button class="btn btn-success" onclick={save} disabled={busy} title="Save (⌘S)">
       {busy ? 'Saving…' : 'Save'}
     </button>
-    <button class="merge-btn" onclick={tryCancel} disabled={busy} title="Cancel (Esc)">Cancel</button>
+    <button class="btn" onclick={tryCancel} disabled={busy} title="Cancel (Esc)">Cancel</button>
   </div>
 
   <div class="merge-headers">
@@ -784,29 +784,10 @@
     text-overflow: ellipsis;
   }
 
-  .merge-btn {
-    background: var(--surface0);
-    border: 1px solid var(--surface1);
-    color: var(--text);
-    padding: 3px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
-  }
-  .merge-btn:hover:not(:disabled) { background: var(--surface1); transform: translateY(-1px); }
-  .merge-btn:active:not(:disabled) { transform: translateY(0); }
-  .merge-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  .merge-save {
-    background: color-mix(in srgb, var(--green) 12%, var(--surface0));
-    border-color: color-mix(in srgb, var(--green) 40%, var(--surface1));
-    color: var(--green);
-    font-weight: 600;
-  }
-  .merge-save:hover {
-    background: color-mix(in srgb, var(--green) 22%, var(--surface0));
-  }
+  /* System .btn + the merge-panel signature lift-on-hover. */
+  .merge-toolbar :global(.btn) { transition: transform 80ms ease; }
+  .merge-toolbar :global(.btn:hover:not(:disabled)) { transform: translateY(-1px); }
+  .merge-toolbar :global(.btn:active:not(:disabled)) { transform: translateY(0); }
   .merge-btn-ours {
     border-color: color-mix(in srgb, var(--green) 30%, var(--surface1));
     color: color-mix(in srgb, var(--green) 70%, var(--text));

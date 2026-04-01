@@ -113,7 +113,11 @@
         </div>
       </nav>
     {:else}
-      <button class="md-toc-tab" onclick={() => tocOpen = true} title="Show outline ({toc.length})" aria-label="Show outline">‹</button>
+      <!-- Sticky on a <div>, not the <button> — WebKit's theme-engine button
+           layout interferes with sticky positioning (open ToC is <nav>, fine). -->
+      <div class="md-toc-tab">
+        <button onclick={() => tocOpen = true} title="Show outline ({toc.length})" aria-label="Show outline">‹</button>
+      </div>
     {/if}
   {/if}
   {@html html}
@@ -328,6 +332,12 @@
     top: 8px;
     float: right;
     margin: 0 -8px 12px 8px;
+    z-index: 1;
+    opacity: 0.6;
+    transition: opacity 120ms ease;
+  }
+  .md-toc-tab:hover { opacity: 1; }
+  .md-toc-tab button {
     width: 18px;
     height: 32px;
     padding: 0;
@@ -338,11 +348,8 @@
     font-size: 12px;
     cursor: pointer;
     backdrop-filter: blur(6px);
-    z-index: 1;
-    opacity: 0.6;
-    transition: opacity 120ms ease;
   }
-  .md-toc-tab:hover { opacity: 1; color: var(--text); }
+  .md-toc-tab:hover button { color: var(--text); }
 
   .md-hint {
     display: inline-block;

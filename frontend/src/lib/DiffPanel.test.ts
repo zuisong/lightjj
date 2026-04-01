@@ -73,11 +73,11 @@ beforeEach(() => {
 // These are the only externally observable signals for the edit state (DiffPanel
 // doesn't export editingFiles).
 function editBtn(c: HTMLElement) {
-  return [...c.querySelectorAll('.edit-file-btn')]
+  return [...c.querySelectorAll('.diff-file-header .btn')]
     .find(b => b.textContent === 'Edit') as HTMLButtonElement | undefined
 }
 function saveBtn(c: HTMLElement) {
-  return c.querySelector('.edit-save-btn') as HTMLButtonElement | null
+  return c.querySelector('.diff-file-header .btn-primary') as HTMLButtonElement | null
 }
 
 describe('DiffPanel', () => {
@@ -175,7 +175,7 @@ describe('DiffPanel', () => {
       expect(mockFileShow).toHaveBeenCalled()
 
       // Click Discard while editBusy is held → guard at :217 bails.
-      const discard = [...container.querySelectorAll('.edit-file-btn')]
+      const discard = [...container.querySelectorAll('.diff-file-header .btn')]
         .find(b => b.textContent === 'Discard') as HTMLButtonElement | undefined
       expect(discard).toBeDefined()
       await fireEvent.click(discard!)
@@ -199,7 +199,7 @@ describe('DiffPanel', () => {
       const { container } = render(DiffPanel, { props: props({ onfilesaved }) })
       await settle()
 
-      const discard = [...container.querySelectorAll('.edit-file-btn')]
+      const discard = [...container.querySelectorAll('.diff-file-header .btn')]
         .find(b => b.textContent === 'Discard') as HTMLButtonElement | undefined
       await fireEvent.click(discard!)
       await settle()
@@ -217,7 +217,7 @@ describe('DiffPanel', () => {
       const { container, rerender } = render(DiffPanel, { props: props({ onfilesaved }) })
       await settle()
 
-      const discard = [...container.querySelectorAll('.edit-file-btn')]
+      const discard = [...container.querySelectorAll('.diff-file-header .btn')]
         .find(b => b.textContent === 'Discard') as HTMLButtonElement | undefined
       await fireEvent.click(discard!)
 

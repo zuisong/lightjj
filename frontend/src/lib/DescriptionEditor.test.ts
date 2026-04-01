@@ -51,7 +51,7 @@ describe('DescriptionEditor', () => {
     it('shows Save and Cancel buttons', () => {
       const { container } = render(DescriptionEditor, { props: defaultProps() })
       const primary = container.querySelector('.btn-primary')
-      const secondary = container.querySelector('.btn-secondary')
+      const secondary = container.querySelector('.btn:not(.btn-primary)')
       expect(primary?.textContent).toContain('Save')
       expect(secondary?.textContent).toBe('Cancel')
     })
@@ -95,7 +95,7 @@ describe('DescriptionEditor', () => {
     it('clicking Cancel calls oncancel', async () => {
       const oncancel = vi.fn()
       const { container } = render(DescriptionEditor, { props: defaultProps({ oncancel }) })
-      const btn = container.querySelector('.btn-secondary')!
+      const btn = container.querySelector('.btn:not(.btn-primary)')!
       await fireEvent.click(btn)
       expect(oncancel).toHaveBeenCalledTimes(1)
     })

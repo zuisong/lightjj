@@ -57,7 +57,7 @@
     <div class="message-details">
       <pre>{message.details}</pre>
       <div class="details-actions">
-        <button class="detail-btn" onclick={copyDetails}>Copy</button>
+        <button class="btn btn-sm" onclick={copyDetails}>Copy</button>
       </div>
     </div>
   {/if}
@@ -176,26 +176,11 @@
     gap: 4px;
   }
 
-  .detail-btn {
-    background: var(--surface0);
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    padding: 2px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 10px;
-  }
-
-  .detail-btn:hover {
-    background: var(--surface1);
-    color: var(--text);
-  }
 
   .expand-badge:focus-visible,
   .action-btn:focus-visible,
   .dismiss:focus-visible,
-  .detail-btn:focus-visible {
+  :global(.btn):focus-visible {
     outline: 2px solid var(--msg-fg);
     outline-offset: 1px;
   }

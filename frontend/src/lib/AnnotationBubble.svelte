@@ -99,10 +99,10 @@
     ></textarea>
     <div class="bubble-actions">
       {#if editing && ondelete}
-        <button class="bubble-delete" onclick={() => { ondelete(); open = false; onclose() }}>Delete</button>
+        <button class="btn btn-danger bubble-delete" onclick={() => { ondelete(); open = false; onclose() }}>Delete</button>
       {/if}
-      <button class="bubble-cancel" onclick={() => { open = false; onclose() }}>Cancel</button>
-      <button class="bubble-save" onclick={handleSubmit} disabled={!comment.trim()}>Save</button>
+      <button class="btn" onclick={() => { open = false; onclose() }}>Cancel</button>
+      <button class="btn btn-primary" onclick={handleSubmit} disabled={!comment.trim()}>Save</button>
     </div>
   </div>
 {/if}
@@ -182,27 +182,5 @@
     justify-content: flex-end;
   }
 
-  .bubble-actions button {
-    background: var(--surface0);
-    border: 1px solid var(--surface1);
-    color: var(--text);
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 11px;
-    font-family: inherit;
-    cursor: pointer;
-  }
-  .bubble-actions button:hover { background: var(--surface1); }
-  .bubble-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .bubble-delete {
-    margin-right: auto;
-    color: var(--red) !important;
-  }
-
-  .bubble-save {
-    background: var(--amber) !important;
-    color: var(--crust) !important;
-    border-color: var(--amber) !important;
-  }
+  .bubble-delete { margin-right: auto; }
 </style>

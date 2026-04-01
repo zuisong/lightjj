@@ -421,7 +421,7 @@
                 title="Discards their content">
                 Abandon anyway
               </button>
-              <button class="dp-btn-cancel" onclick={() => pendingPlan = null}>Cancel</button>
+              <button class="btn" onclick={() => pendingPlan = null}>Cancel</button>
             </div>
           </div>
         </div>
@@ -821,10 +821,6 @@
   .dp-btn-abandon {
     padding: 4px 12px; background: var(--red); color: var(--crust);
     border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 600;
-  }
-  .dp-btn-cancel {
-    padding: 4px 12px; background: transparent; color: var(--subtext0);
-    border: 1px solid var(--surface1); border-radius: 3px; cursor: pointer; font-size: 11px;
   }
 
   .empty-state {

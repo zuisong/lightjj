@@ -307,6 +307,20 @@ body {
   border-color: var(--red);
 }
 
+/* Completes a workflow (Save in merge, Keep in divergence). Tinted green —
+   fills on hover. Distinct from .btn-primary (amber = "commits to repo"). */
+.btn-success {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, var(--surface1));
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  font-weight: 600;
+}
+.btn-success:hover:not(:disabled) {
+  background: var(--green);
+  color: var(--crust);
+  border-color: var(--green);
+}
+
 /* Segmented toggle (Unified|Split, Log|Tracked). Container + segments. */
 .seg {
   display: inline-flex;
