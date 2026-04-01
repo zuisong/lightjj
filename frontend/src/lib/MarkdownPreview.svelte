@@ -121,8 +121,7 @@
 
 <style>
   .md-preview {
-    /* Left padding hosts the gutter zone: diff strip (~-10px from content)
-       + annotation badge (~-34px). Was 24px both sides. */
+    /* Left padding hosts the gutter: diff strip (~-10px) + ann badge (~-34px). */
     padding: 12px 24px 12px 36px;
     font-family: system-ui, -apple-system, sans-serif;
     font-size: 14px;
@@ -374,9 +373,18 @@
     border-radius: 2px;
     opacity: 0.7;
   }
+  /* <pre> overflow-x:auto and .mermaid-block overflow:hidden clip the ::before
+     at negative-x — use border-left instead (their existing padding/radius
+     accommodates it without layout shift). */
+  .md-preview :global(pre.md-diff-added::before),
+  .md-preview :global(.mermaid-block.md-diff-added::before) { content: none; }
+  .md-preview :global(pre.md-diff-added),
+  .md-preview :global(.mermaid-block.md-diff-added) {
+    border-left: 3px solid color-mix(in srgb, var(--green) 70%, transparent);
+  }
 
-  /* Annotation badge — moved from right:2px (was hidden under sticky ToC) to
-     left gutter. Shared semantic rules (severity tints, hover) in theme.css. */
+  /* Annotation badge — left gutter (right side is under the sticky ToC).
+     Shared semantic rules in theme.css. */
   .md-preview :global(.annotation-badge) {
     top: 0;
     left: -34px;

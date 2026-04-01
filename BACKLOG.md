@@ -2,7 +2,7 @@
 
 Open items only. Done-item narratives live in [docs/CHANGELOG-ARCHIVE.md](docs/CHANGELOG-ARCHIVE.md).
 
-Last shipped: **2026-03-31** v1.9.0 — markdown preview diff gutter: green left-gutter strips on rendered blocks whose source-line range contains added lines (GitHub prose-diff style). `stampedBlocks()` generator extracted from `wireAnnotations`, shared with new `wireDiffGutter()`. Annotation badges moved `right:2px`→`left:-34px` (was hidden under sticky ToC). ToC collapse toggle (›/‹ tab, flex column so close button doesn't scroll away with long ToCs).
+Last shipped: **2026-03-31** v1.9.1 — bughunt 2-3 fix: `<pre>` overflow-x:auto + `.mermaid-block` overflow:hidden clip the diff-gutter `::before` at negative-x → `border-left` fallback for those two (their existing padding/radius accommodates without layout shift). simplify: hoist `renderAnnotated()` test helper (was duplicated across describe blocks), trim two CSS change-narration comments.
 
 ## Active
 
