@@ -6,32 +6,27 @@ A fast, powerful, single-binary [Jujutsu](https://docs.jj-vcs.dev/latest/communi
 
 ## Why
 
-**Instant.** `j`/`k` through history with zero latency. Diffs syntax-highlight progressively, prefetch keeps the next revision warm. No spinners on the hot path.
+A fast, powerful UI for Jujutsu VCS didn't exist, so I built one! In addition to the things you might expect, lightjj has the following cool features:
 
-**A real merge tool.** Press `3` for the dedicated Merge view: conflicted files in a navigable queue, 3-pane editor (`ours | result | theirs`), per-hunk take, block nav, minimap, and full editing in the center pane with source-aware undo. N-way conflicts get a "resolve at the earliest commit" hint since jj propagates.
+- Includes a real merge tool with a 3-pane editor
+- Smart divergence resolution
+- File history
+- Review diffs with markdown preview, annotate lines with severity and comments, export to agent prompt, repeat
+- Works everywhere locally over SSH or port-forwarded
+- Multi-repo, multi-workspace support
 
-**Divergence resolution.** Stack-aware analysis of `??/N` versions with keep/abandon/squash strategies, bookmark repointing, and immutable-sibling handling.
+## Core Features
 
-**Agent review loop.** Agent writes code into a revision. Review diffs with markdown preview, annotate lines with severity and comments, export to agent prompt, repeat. Annotations track across rewrites via jj's evolog. See [docs/ANNOTATIONS.md](docs/ANNOTATIONS.md).
-
-**Works everywhere.** Local, SSH proxy, or port-forwarded — same UX. Auto-refresh watches for CLI changes with no remote dependencies.
-
-**Multi-repo, multi-workspace.** Tabs for multiple repos, jj workspaces via the `◇` selector. State persists across restarts.
-
-## Highlights
-
-- **3-pane merge** — `ours | result | theirs`; arrow to take hunk, type to edit, undo restores source tag
-- **Divergence resolver** — stack-aware `??/N` analysis with per-column keep/abandon/squash strategies and bookmark repointing
-- **Inline rebase** — pick source (`-r`/`-s`/`-b`) and target (onto/after/before) modes, cursor to destination, Enter
-- **Diff viewer** — unified/split, Lezer syntax highlighting, word-level diffs, context expansion, conflict A/B labels, open-in-$EDITOR
 - **Revision graph** — SVG DAG, working-copy `@` indicator, immutable `◆` markers, bookmark badges with PR status
-- **Bookmarks panel** (`2`) — sync state at a glance: ahead/behind/diverged/conflict, PR badges, staleness. `d`/`f`/`t` for delete/forget/track, per-remote visibility toggles
+- **Diff viewer** — unified/split, Lezer syntax highlighting, word-level diffs, context expansion, conflict A/B labels, open-in-$EDITOR
+- **Bookmarks panel** (`2`) — sync state at a glance: ahead/behind/diverged/conflict, PR badges, staleness. `d`/`f`/`t` for delete/forget/track, per-remote visibility togglesÏ
+- **Inline rebase** — pick source (`-r`/`-s`/`-b`) and target (onto/after/before) modes, cursor to destination, Enter
 - **Multi-select** — batch abandon, squash, rebase across revisions with `Space`
 - **Op log & evolog** — full operation history with undo/restore, per-revision evolution with inter-diffs
 - **File history** — right-click any diff line, two-cursor compare (j/k + Space to pin), scoped to mutable for speed
 - **Inline annotations** — per-line review comments keyed by `change_id`; auto-re-anchor on rewrite; export markdown/JSON
 - **Stale-WC detection** — concurrent CLI op left the working copy stale? Warning bar with one-click recovery
-- **Themes** — Catppuccin dark/light (`t` to toggle)
+- **Themes** — dark/light (`t` to toggle)
 
 ## Install & Usage
 
@@ -73,11 +68,11 @@ SSH proxy mode adds ~400ms per command (reduce to ~20ms with ControlMaster). Aut
 
 ## Roadmap
 
-| | Theme | |
-|---|---|---|
-| **1.0** | Ship-ready core | done |
+|         | Theme                 |                                                                                              |
+| ------- | --------------------- | -------------------------------------------------------------------------------------------- |
+| **1.0** | Ship-ready core       | done                                                                                         |
 | **2.0** | Code editing & review | Hunk-level accept/reject, mega-file virtualization, cross-revision search, LSP-in-FileEditor |
-| **3.0** | Agentic | Annotations as a library, agent-writable API, MCP server mode |
+| **3.0** | Agentic               | Annotations as a library, agent-writable API, MCP server mode                                |
 
 ## Requirements
 
