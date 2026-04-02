@@ -52,9 +52,12 @@ type Server struct {
 	Watcher *Watcher
 
 	// jjVersion is the `jj --version` output (e.g. "jj 0.39.0"). Lazy-resolved
-	// on first handleInfo. Mutex+bool (not sync.Once) so a transient failure
-	// retries — same pattern as ghRepo.
+	// on first handleInfo / jjSupports. Mutex+bool (not sync.Once) so a
+	// transient failure retries — same pattern as ghRepo. jjVer is the parsed
+	// form; jjVerOK=false means parse failed (jjSupports treats as "unknown").
 	jjVersion         string
+	jjVer             jj.Semver
+	jjVerOK           bool
 	jjVersionResolved bool
 	jjVersionMu       sync.Mutex
 }
@@ -392,8 +395,9 @@ func (s *Server) getOpId() string {
 // LIMITATION: the index is ADDITIVE-ONLY. Workspaces created before the user's
 // jj version started writing it (or before the index feature existed) won't be
 // there — jj doesn't backfill. Observed: a repo with 5 workspaces had only 3
-// in the index. WorkspaceRef has no .path() template method; this file is the
-// only path source. Missing entries → disabled dropdown row with tooltip.
+// in the index. jj ≥ 0.40 has WorkspaceRef.root() (see jj.WorkspaceRootTmpl)
+// which makes this whole reader the <0.40 fallback; missing entries on that
+// path → disabled dropdown row with tooltip.
 //
 // jj 0.39+ writes RELATIVE paths (anchored at .jj/repo/ — the shared store
 // all workspaces point back to). Pre-0.39 wrote absolute. We resolve here,

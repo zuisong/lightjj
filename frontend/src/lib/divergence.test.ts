@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
 import { classify, refineRebaseKind, buildKeepPlan, type DivergenceGroup } from './divergence'
 import type { DivergenceEntry } from './api'
 import { entry as e } from './divergence.fixtures'
@@ -654,56 +655,98 @@ describe('buildKeepPlan', () => {
     expect(buildKeepPlan(g, 1).rebaseSources).toEqual([])
   })
 })
+// --- buildKeepPlan — invariant sweeps (hand-enumerated + fast-check) ---
+// The hand-picked cases document intent with named shapes. The fast-check
+// block re-runs the SAME invariants over generated shapes — the win is
+// shrinking: a failure reports the minimal {levels,cols,…} that breaks.
+// Wrong-column abandon = data loss, so every invariant corresponds to "if
+// this fails, a Keep click destroys user work".
 
-// --- buildKeepPlan — generative invariant sweep ---
-// The hand-picked cases above document intent. This sweep proves the structural
-// invariants hold for EVERY {levels, cols, descendants, keeperIdx} combination.
-// Wrong-column abandon = data loss, so every invariant corresponds to "if this
-// fails, a Keep click destroys user work".
-describe('buildKeepPlan — invariant sweep (all shapes)', () => {
-  // Generate a group with {levels}×{cols} structure. Commit IDs are
-  // deterministic ("L{level}c{col}") so assertions can reference them.
-  // Descendants are attached by (parentLevel, parentCol, empty).
-  function genGroup(shape: {
-    levels: number; cols: number
-    descendants: Array<{ parentLevel: number; parentCol: number; empty: boolean }>
-    // Bookmarks placed at {name, levelIdx} on ALL columns of that level —
-    // buildKeepPlan scans v.bookmarks directly (not conflictedBookmarks), so
-    // the fixture must populate them on the version entries too.
-    bookmarksAtLevel?: Array<{ name: string; levelIdx: number }>
-  }): DivergenceGroup {
-    const changeIds = Array.from({ length: shape.levels }, (_, i) => `CH${i}`)
-    const bookmarksFor = (L: number) =>
-      (shape.bookmarksAtLevel ?? []).filter(b => b.levelIdx === L).map(b => b.name)
-    const versions: DivergenceEntry[][] = []
-    for (let L = 0; L < shape.levels; L++) {
-      const level: DivergenceEntry[] = []
-      for (let c = 0; c < shape.cols; c++) {
-        level.push(e({
-          change_id: changeIds[L],
-          commit_id: `L${L}c${c}`,
-          parent_commit_ids: L === 0 ? [`trunk${c}`] : [`L${L-1}c${c}`],
-          parent_change_ids: L === 0 ? ['TRUNK'] : [changeIds[L-1]],
-          bookmarks: bookmarksFor(L),
-        }))
-      }
-      versions.push(level)
+type SweepShape = {
+  levels: number; cols: number
+  descendants: Array<{ parentLevel: number; parentCol: number; empty: boolean }>
+  bookmarksAtLevel?: Array<{ name: string; levelIdx: number }>
+}
+
+// Generate a group with {levels}×{cols} structure. Commit IDs are
+// deterministic ("L{level}c{col}") so assertions can reference them.
+function genGroup(shape: SweepShape): DivergenceGroup {
+  const changeIds = Array.from({ length: shape.levels }, (_, i) => `CH${i}`)
+  const bookmarksFor = (L: number) =>
+    (shape.bookmarksAtLevel ?? []).filter(b => b.levelIdx === L).map(b => b.name)
+  const versions: DivergenceEntry[][] = []
+  for (let L = 0; L < shape.levels; L++) {
+    const level: DivergenceEntry[] = []
+    for (let c = 0; c < shape.cols; c++) {
+      level.push(e({
+        change_id: changeIds[L], commit_id: `L${L}c${c}`,
+        parent_commit_ids: L === 0 ? [`trunk${c}`] : [`L${L-1}c${c}`],
+        parent_change_ids: L === 0 ? ['TRUNK'] : [changeIds[L-1]],
+        bookmarks: bookmarksFor(L),
+      }))
     }
-    return mkGroup({
-      changeIds,
-      versions,
-      descendants: shape.descendants.map((d, i) => e({
-        change_id: `D${i}`, commit_id: `desc${i}`,
-        parent_commit_ids: [`L${d.parentLevel}c${d.parentCol}`],
-        parent_change_ids: [changeIds[d.parentLevel]],
-        divergent: false, empty: d.empty,
-      })),
-    })
+    versions.push(level)
   }
+  return mkGroup({
+    changeIds, versions,
+    descendants: shape.descendants.map((d, i) => e({
+      change_id: `D${i}`, commit_id: `desc${i}`,
+      parent_commit_ids: [`L${d.parentLevel}c${d.parentCol}`],
+      parent_change_ids: [changeIds[d.parentLevel]],
+      divergent: false, empty: d.empty,
+    })),
+  })
+}
 
-  // Shapes to sweep. Covers: single-level, multi-level, 2-col, 3-col,
-  // descendants at root/tip/mid, empty/non-empty, bookmarks at various levels.
-  const shapes = [
+// 8 structural invariants. Shared by both sweep blocks so the property test
+// can't drift from what the named cases assert.
+function checkKeepPlanInvariants(shape: SweepShape, k: number): void {
+  const g = genGroup(shape)
+  const plan = buildKeepPlan(g, k)
+  const keeperColumn = new Set(g.versions.map(l => l[k].commit_id))
+
+  // 1: keeperCommitId is the tip of column k.
+  expect(plan.keeperCommitId).toBe(g.versions[g.versions.length - 1][k].commit_id)
+  // 2: abandonCommitIds is DISJOINT with keeper column.
+  for (const id of plan.abandonCommitIds) expect(keeperColumn.has(id)).toBe(false)
+  // 3: every losing-column commit IS abandoned.
+  for (const level of g.versions)
+    for (let i = 0; i < level.length; i++)
+      if (i !== k) expect(plan.abandonCommitIds).toContain(level[i].commit_id)
+  // 4+5: descendants — keeper-column appear nowhere; loser-column XOR
+  // abandoned (empty) / pending-confirm (non-empty).
+  for (const d of g.descendants) {
+    const inKeeper = d.parent_commit_ids.some(p => keeperColumn.has(p))
+    const abandoned = plan.abandonCommitIds.includes(d.commit_id)
+    const pending = plan.nonEmptyDescendants.some(n => n.commit_id === d.commit_id)
+    if (inKeeper) {
+      expect(abandoned).toBe(false)
+      expect(pending).toBe(false)
+    } else {
+      expect(abandoned !== pending).toBe(true)
+      expect(abandoned).toBe(d.empty)
+    }
+  }
+  // 6: bookmark repoints target SAME-LEVEL keeper (not tip).
+  for (const bm of shape.bookmarksAtLevel ?? []) {
+    const repoint = plan.bookmarkRepoints.find(r => r.name === bm.name)
+    expect(repoint, `bookmark ${bm.name} must be repointed`).toBeDefined()
+    expect(repoint!.targetCommitId).toBe(`L${bm.levelIdx}c${k}`)
+  }
+  // 7: rebaseSources starts empty (pre-confirm).
+  expect(plan.rebaseSources).toEqual([])
+  // 8: nonEmptyDescendants rebaseTarget is keeper at the descendant's parent
+  // level (NOT always tip) — mid-stack branch-offs land at the right height.
+  for (let di = 0; di < shape.descendants.length; di++) {
+    const sd = shape.descendants[di]
+    if (sd.parentCol === k || sd.empty) continue
+    const d = plan.nonEmptyDescendants.find(n => n.commit_id === `desc${di}`)
+    expect(d?.rebaseTarget).toBe(`L${sd.parentLevel}c${k}`)
+  }
+}
+
+describe('buildKeepPlan — invariant sweep (named shapes)', () => {
+  const shapes: Array<SweepShape & { name: string }> = [
     { name: '1L×2C', levels: 1, cols: 2, descendants: [] },
     { name: '1L×3C', levels: 1, cols: 3, descendants: [] },
     { name: '3L×2C', levels: 3, cols: 2, descendants: [] },
@@ -711,12 +754,9 @@ describe('buildKeepPlan — invariant sweep (all shapes)', () => {
       descendants: [{ parentLevel: 3, parentCol: 0, empty: true }] },
     { name: '3L×2C + non-empty desc on loser ROOT', levels: 3, cols: 2,
       descendants: [{ parentLevel: 0, parentCol: 0, empty: false }] },
-    // Descendant on the KEEPER's root (not tip). k=1 → parent L0c1 is in
-    // keeperColumn → Invariant 4 must exclude it. The hand-picked test at
-    // "descendant of keeper ROOT (not tip)" covers 2 levels; this extends to 3.
     { name: '3L×2C + desc on keeper ROOT (when k=1)', levels: 3, cols: 2,
       descendants: [{ parentLevel: 0, parentCol: 1, empty: false }] },
-    { name: '2L×2C + desc on BOTH columns (one keeper one loser)', levels: 2, cols: 2,
+    { name: '2L×2C + desc on BOTH columns', levels: 2, cols: 2,
       descendants: [
         { parentLevel: 1, parentCol: 0, empty: false },
         { parentLevel: 1, parentCol: 1, empty: false },
@@ -728,73 +768,36 @@ describe('buildKeepPlan — invariant sweep (all shapes)', () => {
     { name: '4L×2C + bookmarks at root AND tip', levels: 4, cols: 2, descendants: [],
       bookmarksAtLevel: [{ name: 'r', levelIdx: 0 }, { name: 't', levelIdx: 3 }] },
   ]
+  for (const shape of shapes)
+    for (let k = 0; k < shape.cols; k++)
+      it(`${shape.name}, keep col ${k}`, () => checkKeepPlanInvariants(shape, k))
+})
 
-  for (const shape of shapes) {
-    for (let k = 0; k < shape.cols; k++) {
-      it(`${shape.name}, keep col ${k}`, () => {
-        const g = genGroup(shape)
-        const plan = buildKeepPlan(g, k)
-        const keeperColumn = new Set(g.versions.map(l => l[k].commit_id))
+describe('buildKeepPlan — property sweep (fast-check)', () => {
+  const shapeArb = fc.record({
+    levels: fc.integer({ min: 1, max: 5 }),
+    cols: fc.integer({ min: 2, max: 4 }),
+    descendants: fc.array(
+      fc.record({ parentLevel: fc.nat({ max: 4 }), parentCol: fc.nat({ max: 3 }), empty: fc.boolean() }),
+      { maxLength: 3 },
+    ),
+    bookmarksAtLevel: fc.array(fc.nat({ max: 4 }), { maxLength: 2 }),
+  }).map(s => ({
+    ...s,
+    descendants: s.descendants.map(d => ({
+      ...d, parentLevel: d.parentLevel % s.levels, parentCol: d.parentCol % s.cols,
+    })),
+    // Index-derived names — fc.string would let two entries share a name,
+    // which buildKeepPlan correctly dedupes but checkKeepPlanInvariants'
+    // find-by-name can't distinguish (would flake ~2-5% of runs).
+    bookmarksAtLevel: s.bookmarksAtLevel.map((lv, i) => ({ name: `bm${i}`, levelIdx: lv % s.levels })),
+  }))
 
-        // Invariant 1: keeperCommitId is the tip of column k.
-        expect(plan.keeperCommitId).toBe(g.versions[g.versions.length - 1][k].commit_id)
-
-        // Invariant 2: abandonCommitIds is DISJOINT with keeper column.
-        for (const id of plan.abandonCommitIds) {
-          expect(keeperColumn.has(id)).toBe(false)
-        }
-
-        // Invariant 3: every losing-column commit IS abandoned.
-        for (const level of g.versions) {
-          for (let i = 0; i < level.length; i++) {
-            if (i !== k) expect(plan.abandonCommitIds).toContain(level[i].commit_id)
-          }
-        }
-
-        // Invariant 4: keeper-column descendants appear NOWHERE in the plan.
-        for (const d of g.descendants) {
-          if (d.parent_commit_ids.some(p => keeperColumn.has(p))) {
-            expect(plan.abandonCommitIds).not.toContain(d.commit_id)
-            expect(plan.nonEmptyDescendants.map(n => n.commit_id)).not.toContain(d.commit_id)
-          }
-        }
-
-        // Invariant 5: loser-column descendants are EITHER abandoned (empty)
-        // OR in nonEmptyDescendants (confirm) — XOR, never both, never neither.
-        for (const d of g.descendants) {
-          if (!d.parent_commit_ids.some(p => keeperColumn.has(p))) {
-            const abandoned = plan.abandonCommitIds.includes(d.commit_id)
-            const pending = plan.nonEmptyDescendants.some(n => n.commit_id === d.commit_id)
-            expect(abandoned !== pending).toBe(true)  // XOR
-            expect(abandoned).toBe(d.empty)
-          }
-        }
-
-        // Invariant 6: bookmark repoints target SAME-LEVEL keeper (not tip).
-        // Every bookmark on a loser column must appear in bookmarkRepoints;
-        // the target must be the keeper at the SAME level the bookmark was on.
-        for (const bm of shape.bookmarksAtLevel ?? []) {
-          const repoint = plan.bookmarkRepoints.find(r => r.name === bm.name)
-          expect(repoint, `bookmark ${bm.name} must be repointed`).toBeDefined()
-          expect(repoint!.targetCommitId).toBe(`L${bm.levelIdx}c${k}`)
-        }
-
-        // Invariant 7: rebaseSources starts empty (pre-confirm).
-        expect(plan.rebaseSources).toEqual([])
-
-        // Invariant 8: nonEmptyDescendants rebaseTarget is keeper at the
-        // descendant's parent level (NOT always tip). This is what makes
-        // mid-stack branch-offs land at the right height.
-        for (let di = 0; di < shape.descendants.length; di++) {
-          const sd = shape.descendants[di]
-          if (sd.parentCol === k || sd.empty) continue  // keeper-col or empty → not in nonEmptyDescendants
-          const d = plan.nonEmptyDescendants.find(n => n.commit_id === `desc${di}`)
-          expect(d).toBeDefined()
-          expect(d!.rebaseTarget).toBe(`L${sd.parentLevel}c${k}`)
-        }
-      })
-    }
-  }
+  it('invariants 1-8 hold for all generated shapes × all keeperIdx', () => {
+    fc.assert(fc.property(shapeArb, fc.nat({ max: 3 }), (shape, kRaw) =>
+      checkKeepPlanInvariants(shape, kRaw % shape.cols)
+    ), { numRuns: 200 })
+  })
 })
 
 // --- classify — merge-parent gap (docs/jj-divergence.md:87 pin tests) ---

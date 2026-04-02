@@ -527,9 +527,9 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolveJJVersion runs `jj --version` once and caches. Mutex+bool (not
-// sync.Once) so a transient failure (SSH slow-start) retries on next call
-// instead of caching "" forever.
+// resolveJJVersion runs `jj --version` once and caches both raw + parsed.
+// Mutex+bool (not sync.Once) so a transient failure (SSH slow-start) retries
+// on next call instead of caching "" forever.
 func (s *Server) resolveJJVersion(ctx context.Context) string {
 	s.jjVersionMu.Lock()
 	defer s.jjVersionMu.Unlock()
@@ -541,8 +541,22 @@ func (s *Server) resolveJJVersion(ctx context.Context) string {
 		return "" // don't set resolved — retry next time
 	}
 	s.jjVersion = strings.TrimSpace(string(out))
+	s.jjVer, s.jjVerOK = jj.ParseSemver(s.jjVersion)
 	s.jjVersionResolved = true
 	return s.jjVersion
+}
+
+// jjSupports reports whether the detected jj version is at least min.
+// Auto-resolves on first call. Unknown version (run failure or unparseable)
+// returns FALSE — backend gates pick between a new codepath and a proven
+// fallback, so pessimism avoids a 500 from an unsupported template/flag.
+// (Contrast frontend jjSupports in jj-features.svelte.ts: optimistic, since
+// a wrong guess there surfaces as a user-visible error toast, not a crash.)
+func (s *Server) jjSupports(ctx context.Context, min jj.Semver) bool {
+	s.resolveJJVersion(ctx)
+	s.jjVersionMu.Lock()
+	defer s.jjVersionMu.Unlock()
+	return s.jjVerOK && s.jjVer.AtLeast(min)
 }
 
 type workspacesResponse struct {
@@ -558,20 +572,22 @@ type workspaceWithPath struct {
 }
 
 // pickCurrentWorkspace resolves which ws.Current=true candidate is actually
-// us. One candidate → trust it (SSH mode's only signal). Multiple → the
-// collision case: break the tie by path-matching against repoDir. The
-// workspace_store index is additive-only (server.go: readWorkspaceStore) —
-// the primary workspace (created at jj git init) often predates it and has
-// no path entry. If exactly one candidate is missing from the index and no
-// other candidate's path matches us, the missing one is us by elimination.
-func pickCurrentWorkspace(candidates []string, pathMap map[string]string, repoDir string) string {
+// us. One candidate → trust it. Multiple → the collision case: break the
+// tie by path-matching ourRoot against pathMap. Local mode: ourRoot is
+// RepoDir (canonical via ResolveWorkspaceRoot). SSH mode: ourRoot is
+// RepoPath — works when user typed a canonical path AND jj ≥ 0.40 (template
+// emits self.root() so pathMap is complete; <0.40 protobuf store is
+// additive-only). The elimination fallback covers the additive-only gap:
+// if exactly one candidate is missing from pathMap and no other candidate's
+// path matches us, the missing one is the primary (predates the index).
+func pickCurrentWorkspace(candidates []string, pathMap map[string]string, ourRoot string) string {
 	if len(candidates) == 1 {
 		return candidates[0]
 	}
-	if repoDir == "" {
-		return "" // SSH + collision: no reliable tiebreaker
+	if ourRoot == "" {
+		return "" // tests / no path signal at all
 	}
-	clean := filepath.Clean(repoDir)
+	clean := filepath.Clean(ourRoot)
 	var unmapped []string
 	for _, name := range candidates {
 		p := pathMap[name]
@@ -593,23 +609,31 @@ func pickCurrentWorkspace(candidates []string, pathMap map[string]string, repoDi
 }
 
 func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
-	args := jj.WorkspaceList()
-	output, err := s.Runner.Run(r.Context(), args)
+	withRoot := s.jjSupports(r.Context(), jj.WorkspaceRootTmpl)
+	output, err := s.Runner.Run(r.Context(), jj.WorkspaceList(withRoot))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	workspaces := jj.ParseWorkspaceList(string(output))
 
-	// Enrich with paths from workspace store (best-effort — for tab-open)
-	pathMap, _ := s.readWorkspaceStore(r.Context())
+	// pathMap feeds both Path enrichment AND pickCurrentWorkspace tiebreak.
+	// jj ≥ 0.40: template emits self.root() — authoritative + complete (no
+	// additive-only gap). Older jj: fall back to the protobuf store parser.
+	var pathMap map[string]string
+	if withRoot {
+		pathMap = make(map[string]string, len(workspaces))
+		for _, ws := range workspaces {
+			pathMap[ws.Name] = ws.Path
+		}
+	} else {
+		pathMap, _ = s.readWorkspaceStore(r.Context())
+	}
 
 	// ws.Current = target.current_working_copy() = "is this workspace's target
 	// commit MY @?" — wrong question when two workspaces point at the same
-	// commit (both answer true, last-in-loop wins). Path-matching is reliable
-	// in local mode (RepoDir is canonical via ResolveWorkspaceRoot) but breaks
-	// in SSH mode (user-typed --remote path may not be canonical). Hybrid:
-	// ws.Current narrows candidates; path-match breaks ties. See commands.go
+	// commit (both answer true, last-in-loop wins). Hybrid: ws.Current
+	// narrows candidates; path-match breaks ties. See commands.go
 	// WorkspaceList comment for the history.
 	var candidates []string
 	resp := workspacesResponse{Workspaces: make([]workspaceWithPath, len(workspaces))}
@@ -624,7 +648,13 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 			candidates = append(candidates, ws.Name)
 		}
 	}
-	resp.Current = pickCurrentWorkspace(candidates, pathMap, s.RepoDir)
+	// RepoDir is canonical (ResolveWorkspaceRoot) in local mode; RepoPath is
+	// the SSH fallback (best-effort — matches when user typed canonical path).
+	ourRoot := s.RepoDir
+	if ourRoot == "" {
+		ourRoot = s.RepoPath
+	}
+	resp.Current = pickCurrentWorkspace(candidates, pathMap, ourRoot)
 	s.writeJSON(w, r, http.StatusOK, resp)
 }
 

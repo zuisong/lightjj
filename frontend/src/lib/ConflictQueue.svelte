@@ -27,11 +27,32 @@
 
   // Flatten commit-grouped entries into a navigable list. Each file becomes one
   // queue item; commit headers are rendered separately (they're not navigable).
+  // entries arrive in jj-log order (heads first); reverse so the EARLIEST commit
+  // is first — that's where conflicts originate, and resolving there propagates
+  // to descendants (jj's own "resolve at earliest" guidance). select(0) on mount
+  // then lands on a propagation root, not a downstream copy.
   let flat = $derived.by((): QueueItem[] =>
-    entries.flatMap(e =>
+    entries.slice().reverse().flatMap(e =>
       e.files.map(f => ({ commitId: e.commit_id, changeId: e.change_id, path: f.path, sides: f.sides })),
     ),
   )
+
+  // For each path, the first occurrence in flat (= earliest commit) is the
+  // propagation root; later occurrences likely auto-resolve once the root is
+  // fixed. HEURISTIC: assumes linear ancestry — for sibling branches both
+  // conflicting on the same path, the hint points at an unrelated commit.
+  // Tooltip says "may"; items stay navigable; non-destructive. Making it
+  // sound needs parent_ids in ConflictEntry (backend change).
+  let propagatedFrom = $derived.by(() => {
+    const firstSeen = new Map<string, string>() // path → earliest changeId
+    const result = new Map<string, string>() // key(item) → root changeId
+    for (const it of flat) {
+      const root = firstSeen.get(it.path)
+      if (root === undefined) firstSeen.set(it.path, it.changeId)
+      else result.set(key(it), root)
+    }
+    return result
+  })
 
   let resolvedCount = $derived(flat.filter(it => resolved.has(key(it))).length)
 
@@ -145,7 +166,10 @@
         oncontextmenu={e => openContextMenu(e, i)}
       >
         <span class="cq-dot">{resolved.has(key(item)) ? '●' : '○'}</span>
-        <span class="cq-path">{item.path}</span>
+        <span class="cq-path" class:cq-propagated={propagatedFrom.has(key(item))}>{item.path}</span>
+        {#if propagatedFrom.has(key(item))}
+          <span class="cq-hint" title="Same file conflicts in {propagatedFrom.get(key(item))?.slice(0,8)} — resolving there may auto-resolve this">↑</span>
+        {/if}
         {#if item.sides > 2}<span class="cq-nway">{item.sides}-way</span>{/if}
       </button>
     {/each}
@@ -154,7 +178,10 @@
     {/if}
   </div>
   {#if flat.length > 0}
-    <div class="cq-footer">{resolvedCount}/{flat.length} resolved</div>
+    <div class="cq-footer">
+      {resolvedCount}/{flat.length} resolved
+      {#if propagatedFrom.size > 0}<span class="cq-footer-hint"> · {propagatedFrom.size} propagated ↑</span>{/if}
+    </div>
   {/if}
 </div>
 
@@ -229,6 +256,13 @@
     white-space: nowrap;
     font-family: var(--font-mono);
   }
+  .cq-propagated { opacity: 0.55; }
+  .cq-hint {
+    font-size: 9px;
+    color: var(--overlay0);
+    cursor: help;
+  }
+  .cq-footer-hint { color: var(--overlay0); }
   .cq-nway {
     font-size: 9px;
     padding: 1px 4px;

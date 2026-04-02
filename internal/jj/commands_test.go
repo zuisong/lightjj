@@ -571,17 +571,20 @@ func TestParseEvolog_Malformed(t *testing.T) {
 }
 
 func TestWorkspaceList(t *testing.T) {
-	got := WorkspaceList()
-	assert.Equal(t, "workspace", got[0])
-	assert.Equal(t, "list", got[1])
-	assert.Contains(t, got, "--ignore-working-copy")
-	assert.Contains(t, got, "-T")
-	joined := strings.Join(got, " ")
-	assert.Contains(t, joined, "name")
-	assert.Contains(t, joined, "target.change_id()")
-	assert.Contains(t, joined, "target.commit_id()")
-	assert.Contains(t, joined, "target.current_working_copy()")
-	assert.Contains(t, joined, `\x1F`)
+	for _, withRoot := range []bool{false, true} {
+		got := WorkspaceList(withRoot)
+		assert.Equal(t, "workspace", got[0])
+		assert.Equal(t, "list", got[1])
+		assert.Contains(t, got, "--ignore-working-copy")
+		assert.Contains(t, got, "-T")
+		joined := strings.Join(got, " ")
+		assert.Contains(t, joined, "name")
+		assert.Contains(t, joined, "target.change_id()")
+		assert.Contains(t, joined, "target.commit_id()")
+		assert.Contains(t, joined, "target.current_working_copy()")
+		assert.Contains(t, joined, `\x1F`)
+		assert.Equal(t, withRoot, strings.Contains(joined, "self.root()"))
+	}
 }
 
 func TestParseWorkspaceList(t *testing.T) {
@@ -610,6 +613,15 @@ func TestParseWorkspaceList_NameWithColon(t *testing.T) {
 func TestParseWorkspaceList_Empty(t *testing.T) {
 	ws := ParseWorkspaceList("")
 	assert.Empty(t, ws)
+}
+
+func TestParseWorkspaceList_WithRoot(t *testing.T) {
+	output := "default\x1Fabc\x1Fdef\x1Ftrue\x1F/home/u/repo\n"
+	ws := ParseWorkspaceList(output)
+	assert.Len(t, ws, 1)
+	assert.Equal(t, "default", ws[0].Name)
+	assert.True(t, ws[0].Current)
+	assert.Equal(t, "/home/u/repo", ws[0].Path)
 }
 
 func TestResolve(t *testing.T) {

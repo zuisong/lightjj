@@ -199,7 +199,7 @@
     top: 20%;
     left: 50%;
     transform: translateX(-50%);
-    width: 520px;
+    width: 580px;
     max-height: 400px;
     background: var(--base);
     border: 1px solid var(--surface1);
@@ -400,10 +400,17 @@
     margin-left: auto;
     padding-left: 12px;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     min-width: 0;
     flex-shrink: 1;
+    /* 2-line clamp so alias bodies (the only hints that get long) show enough
+       to disambiguate. -webkit-line-clamp is cross-browser despite the prefix.
+       text-align keeps the ragged edge against the label, not the kbd. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.3;
+    text-align: right;
+    word-break: break-word;
   }
 
   .palette-empty {

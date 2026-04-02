@@ -523,6 +523,9 @@
     {#if onpreview && isMarkdown && !editing && fileStats?.type !== 'D'}
       <button class="btn btn-sm" onclick={(e: MouseEvent) => { e.stopPropagation(); onpreview(filePath) }} title="Render markdown (mermaid diagrams supported)">{previewContent !== undefined ? 'Source' : 'Preview'}</button>
     {/if}
+    {#if onfilehistory && !editing}
+      <button class="btn btn-sm" onclick={(e: MouseEvent) => { e.stopPropagation(); onfilehistory(filePath) }} title="View file history (Kaleidoscope-style two-cursor compare)">History</button>
+    {/if}
     {#if onedit && !editing && fileStats?.type !== 'D'}
       <button class="btn btn-sm" disabled={editBusy} onclick={(e: MouseEvent) => { e.stopPropagation(); onedit(filePath) }} title="Edit this file (switches to split view)">{editBusy ? 'Loading…' : 'Edit'}</button>
     {/if}

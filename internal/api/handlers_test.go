@@ -24,7 +24,22 @@ import (
 // newTestServer creates a Server with the op-id command pre-allowed on the mock.
 func newTestServer(runner *testutil.MockRunner) *Server {
 	runner.Allow(jj.CurrentOpId()).SetOutput([]byte("abc123"))
+	// jj.Version() is auto-resolved by jjSupports() on the first gated handler.
+	// Allow (not Expect) so tests that don't hit a gate aren't forced to match.
+	// 0.39.0 keeps existing tests on the pre-gate fallback paths; tests
+	// exercising a ≥0.40 gate set srv.jjVer directly via withJJ().
+	runner.Allow(jj.Version()).SetOutput([]byte("jj 0.39.0"))
 	return NewServer(runner, "")
+}
+
+// withJJ sets the resolved jj version on a test server so jjSupports() reads
+// it without a runner round-trip. Prefer this over re-stubbing jj.Version()
+// per test — Allow() in newTestServer already returns 0.39.0 by default.
+func withJJ(s *Server, v jj.Semver) *Server {
+	s.jjVersionMu.Lock()
+	s.jjVer, s.jjVerOK, s.jjVersionResolved = v, true, true
+	s.jjVersionMu.Unlock()
+	return s
 }
 
 // jsonPost creates a POST request with Content-Type: application/json.
@@ -1657,10 +1672,10 @@ func TestHandleOpShow_InvalidId(t *testing.T) {
 
 func TestHandleWorkspaces(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
-	runner.Expect(jj.WorkspaceList()).SetOutput([]byte("base2\x1Fskpssuxl\x1Fa14ce848\x1Ffalse\ndefault\x1Fqqqqpqpq\x1Fbbbbbbbb\x1Ftrue\n"))
+	runner.Expect(jj.WorkspaceList(false)).SetOutput([]byte("base2\x1Fskpssuxl\x1Fa14ce848\x1Ffalse\ndefault\x1Fqqqqpqpq\x1Fbbbbbbbb\x1Ftrue\n"))
 	defer runner.Verify()
 
-	srv := newTestServer(runner)
+	srv := newTestServer(runner) // newTestServer's Allow(Version)=0.39 → withRoot=false
 	req := httptest.NewRequest("GET", "/api/workspaces", nil)
 	w := httptest.NewRecorder()
 	srv.Mux.ServeHTTP(w, req)
@@ -1674,6 +1689,72 @@ func TestHandleWorkspaces(t *testing.T) {
 	assert.Equal(t, "default", resp.Workspaces[1].Name)
 	// Single candidate → template-derived (SSH mode's only signal).
 	assert.Equal(t, "default", resp.Current)
+}
+
+func TestHandleWorkspaces_WithRootTemplate(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	// jj ≥ 0.40: template includes self.root() as 5th field; protobuf
+	// reader is NOT called (no Allow for it — Verify would fail if it ran).
+	runner.Expect(jj.WorkspaceList(true)).SetOutput([]byte(
+		"base2\x1Fskpssuxl\x1Fa14ce848\x1Ffalse\x1F/home/u/repo-b2\n" +
+			"default\x1Fqqqqpqpq\x1Fbbbbbbbb\x1Ftrue\x1F/home/u/repo\n"))
+	defer runner.Verify()
+
+	srv := withJJ(newTestServer(runner), jj.Semver{0, 40})
+	req := httptest.NewRequest("GET", "/api/workspaces", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp workspacesResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Workspaces, 2)
+	assert.Equal(t, "/home/u/repo-b2", resp.Workspaces[0].Path)
+	assert.Equal(t, "/home/u/repo", resp.Workspaces[1].Path)
+	assert.Equal(t, "default", resp.Current)
+}
+
+func TestHandleWorkspaces_SSHTiebreak(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	// Collision: BOTH workspaces report Current=true (same @). jj ≥ 0.40
+	// template paths + RepoPath (SSH-mode signal) break the tie.
+	runner.Expect(jj.WorkspaceList(true)).SetOutput([]byte(
+		"base2\x1Fxx\x1Fyy\x1Ftrue\x1F/home/u/repo-b2\n" +
+			"default\x1Fxx\x1Fyy\x1Ftrue\x1F/home/u/repo\n"))
+	defer runner.Verify()
+
+	srv := withJJ(newTestServer(runner), jj.Semver{0, 40})
+	srv.RepoPath = "/home/u/repo-b2" // SSH mode: RepoDir empty, RepoPath set
+	req := httptest.NewRequest("GET", "/api/workspaces", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+
+	var resp workspacesResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "base2", resp.Current) // path-matched, not last-in-loop
+}
+
+func TestJJSupports(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner) // Allow(Version)="jj 0.39.0"
+
+	assert.True(t, srv.jjSupports(t.Context(), jj.Semver{0, 30}))
+	assert.True(t, srv.jjSupports(t.Context(), jj.Semver{0, 39}))
+	assert.False(t, srv.jjSupports(t.Context(), jj.Semver{0, 40}))
+	// Second call hits the resolved cache (Allow tolerates 0-or-1 calls but
+	// jjVersionResolved guards re-run regardless).
+	assert.False(t, srv.jjSupports(t.Context(), jj.Semver{1, 0}))
+}
+
+func TestJJSupports_Unparseable(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := NewServer(runner, "")
+	// Force resolved-but-unparseable (bypass newTestServer's 0.39 default).
+	srv.jjVersion, srv.jjVerOK, srv.jjVersionResolved = "jj-dev", false, true
+	// Unknown version → pessimistic (false) so gated handlers use fallback.
+	assert.False(t, srv.jjSupports(t.Context(), jj.Semver{0, 1}))
 }
 
 func TestPickCurrentWorkspace(t *testing.T) {
@@ -1784,7 +1865,7 @@ func TestReadWorkspaceStore_SSH_CatFails(t *testing.T) {
 
 func TestHandleWorkspaces_RunnerError(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
-	runner.Expect(jj.WorkspaceList()).SetError(errors.New("workspace list failed"))
+	runner.Expect(jj.WorkspaceList(false)).SetError(errors.New("workspace list failed"))
 	defer runner.Verify()
 
 	srv := newTestServer(runner)

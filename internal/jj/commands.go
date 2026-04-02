@@ -672,8 +672,16 @@ func WorkspaceUpdateStale() CommandArgs {
 // against RepoDir. Path-matching was the ORIGINAL approach but broke in SSH
 // mode where --remote path isn't canonical; the hybrid keeps ws.Current as
 // primary signal (works in SSH) and only path-matches on collision.
-func WorkspaceList() CommandArgs {
-	tmpl := `name ++ "\x1F" ++ target.change_id().short() ++ "\x1F" ++ target.commit_id().short() ++ "\x1F" ++ stringify(target.current_working_copy()) ++ "\n"`
+//
+// withRoot appends self.root() (jj ≥ 0.40) so paths come from jj directly
+// instead of the protobuf workspace_store parser. The fallback stays for
+// older jj — handleWorkspaces picks via s.jjSupports(WorkspaceRootTmpl).
+func WorkspaceList(withRoot bool) CommandArgs {
+	tmpl := `name ++ "\x1F" ++ target.change_id().short() ++ "\x1F" ++ target.commit_id().short() ++ "\x1F" ++ stringify(target.current_working_copy())`
+	if withRoot {
+		tmpl += ` ++ "\x1F" ++ self.root()`
+	}
+	tmpl += ` ++ "\n"`
 	return []string{"workspace", "list", "--color", "never", "--ignore-working-copy", "-T", tmpl}
 }
 
@@ -683,20 +691,28 @@ type Workspace struct {
 	ChangeId string `json:"change_id"`
 	CommitId string `json:"commit_id"`
 	Current  bool   `json:"current"`
+	// Path is absolute root from self.root() (jj ≥ 0.40, withRoot=true).
+	// Empty on older jj — handleWorkspaces backfills from workspace_store.
+	Path string `json:"path,omitempty"`
 }
 
 // ParseWorkspaceList parses WorkspaceList template output.
-// Each line: name\x1Fchange_id\x1Fcommit_id\x1Fcurrent
+// Each line: name\x1Fchange_id\x1Fcommit_id\x1Fcurrent[\x1Fpath]
+// 5th field present only when withRoot=true.
 func ParseWorkspaceList(output string) []Workspace {
 	workspaces := []Workspace{}
 	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
-		parts := strings.SplitN(line, "\x1F", 4)
-		if len(parts) != 4 {
+		parts := strings.SplitN(line, "\x1F", 5)
+		if len(parts) < 4 {
 			continue
 		}
-		workspaces = append(workspaces, Workspace{
+		ws := Workspace{
 			Name: parts[0], ChangeId: parts[1], CommitId: parts[2], Current: parts[3] == "true",
-		})
+		}
+		if len(parts) == 5 {
+			ws.Path = parts[4]
+		}
+		workspaces = append(workspaces, ws)
 	}
 	return workspaces
 }

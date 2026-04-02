@@ -1314,7 +1314,7 @@
           </button>
         {/each}
       </div>
-      <button class="ann-export" onclick={() => navigator.clipboard.writeText(exportAnnotationsMarkdown())} title="Copy markdown for agent prompt">
+      <button class="btn btn-sm" onclick={() => navigator.clipboard.writeText(exportAnnotationsMarkdown())} title="Copy markdown for agent prompt">
         Export ↗
       </button>
       <button
@@ -1733,16 +1733,6 @@
   .ann-chip.severity-question { border-left-color: var(--blue); }
   .ann-chip.severity-nitpick { border-left-color: var(--surface2); }
   .ann-chip.orphaned { opacity: 0.6; border-style: dashed; }
-  .ann-export {
-    background: transparent;
-    border: 1px solid var(--surface1);
-    color: var(--subtext0);
-    border-radius: 3px;
-    padding: 2px 8px;
-    font-size: 10px;
-    cursor: pointer;
-  }
-  .ann-export:hover { color: var(--text); border-color: var(--surface2); }
 
   /* --- Diff toolbar --- */
   .diff-toolbar {

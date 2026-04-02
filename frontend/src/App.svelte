@@ -33,7 +33,8 @@
   // state_referenced_locally warning; we DO want the mount-time snapshot.
   const init = untrack(() => initialState)
 
-  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, wireAutoRefresh, clearAllCaches, parseJJVersion, MIN_JJ_VERSION, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
+  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, wireAutoRefresh, clearAllCaches, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
+  import { setDetectedJJVersion, missingJJFeatures } from './lib/jj-features.svelte'
   import MessageBar, { errorMessage, type Message } from './lib/MessageBar.svelte'
   import { clearDiffCaches, parseDiffCached } from './lib/diff-cache'
   import { hunkKey, fileSelectionState, planHunkSpec, resolvePlan, normalizeFileType } from './lib/hunk-apply'
@@ -623,10 +624,11 @@
       defaultRemote = default_remote
       repoPath = repo_path
       configuredLogRevset = log_revset
-      const v = parseJJVersion(jj_version)
-      if (v && (v[0] < MIN_JJ_VERSION[0] || (v[0] === MIN_JJ_VERSION[0] && v[1] < MIN_JJ_VERSION[1]))) {
+      setDetectedJJVersion(jj_version)
+      const missing = missingJJFeatures()
+      if (missing.length > 0) {
         setMessage({ kind: 'warning',
-          text: `jj ${v[0]}.${v[1]} detected — some features need ≥${MIN_JJ_VERSION[0]}.${MIN_JJ_VERSION[1]} (file history, changed-path index)` })
+          text: `jj ${jj_version.replace(/^jj\s*/, '')} — missing: ${missing.join(', ')}` })
       }
     } catch { /* static <title> fallback + editorConfigured stays false (fail-safe) */ }
   }
