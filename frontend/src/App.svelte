@@ -2543,6 +2543,7 @@
   <GitModal
     bind:open={gitModalOpen}
     currentChangeId={selectedRevision?.commit.change_id ?? null}
+    currentBookmarks={selectedRevision?.bookmarks?.map(b => b.name) ?? []}
     onexecute={handleGitOp}
   />
 

@@ -30,9 +30,14 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
   return {
     open: true,
     currentChangeId: null as string | null,
+    currentBookmarks: [] as string[],
     onexecute: vi.fn(),
     ...overrides,
   }
+}
+
+function localBm(name: string): Bookmark {
+  return makeBookmark({ name, local: { remote: '.', commit_id: 'aaa', description: '', ago: '', tracked: false, ahead: 0, behind: 0 } })
 }
 
 // Waits for git command elements to render, then returns their text content.
@@ -67,13 +72,48 @@ describe('GitModal', () => {
 
     it('local bookmark → shows per-bookmark push op', async () => {
       mockBookmarks.mockResolvedValue([
-        makeBookmark({ name: 'feat', local: { remote: '.', commit_id: 'aaa', description: '', ago: '', tracked: false, ahead: 0, behind: 0 } }),
+        localBm('feat'),
       ])
       mockRemotes.mockResolvedValue(['origin'])
       const { container } = render(GitModal, { props: defaultProps() })
 
       const cmds = await waitForCmds(container)
       expect(cmds).toContain('git push --bookmark feat --remote origin')
+    })
+
+    it('currentBookmarks → those push ops sort first, hotkey 1 fires it', async () => {
+      const onexecute = vi.fn()
+      mockBookmarks.mockResolvedValue([localBm('aaa'), localBm('bbb'), localBm('ccc')])
+      mockRemotes.mockResolvedValue(['origin'])
+      const { container } = render(GitModal, { props: defaultProps({ currentBookmarks: ['bbb'], onexecute }) })
+
+      const cmds = await waitForCmds(container)
+      const bmCmds = cmds.filter(c => c.includes('--bookmark'))
+      expect(bmCmds[0]).toBe('git push --bookmark bbb --remote origin')
+      expect(bmCmds[1]).toBe('git push --bookmark aaa --remote origin')
+      expect(bmCmds[2]).toBe('git push --bookmark ccc --remote origin')
+
+      const here = container.querySelectorAll('.git-here')
+      expect(here.length).toBe(1)
+      expect(here[0].closest('.git-item')?.querySelector('.git-bm-badge')?.textContent).toContain('bbb')
+
+      await fireEvent.keyDown(container.querySelector('.modal')!, { key: '1' })
+      expect(onexecute).toHaveBeenCalledWith('push', ['--bookmark', 'bbb', '--remote', 'origin'])
+    })
+
+    it('multiple currentBookmarks → api order preserved within here-group', async () => {
+      mockBookmarks.mockResolvedValue([localBm('aaa'), localBm('bbb'), localBm('ccc')])
+      mockRemotes.mockResolvedValue(['origin'])
+      const { container } = render(GitModal, { props: defaultProps({ currentBookmarks: ['ccc', 'aaa'] }) })
+
+      const cmds = await waitForCmds(container)
+      const bmCmds = cmds.filter(c => c.includes('--bookmark'))
+      expect(bmCmds).toEqual([
+        'git push --bookmark aaa --remote origin',
+        'git push --bookmark ccc --remote origin',
+        'git push --bookmark bbb --remote origin',
+      ])
+      expect(container.querySelectorAll('.git-here').length).toBe(2)
     })
 
     it('non-local bookmark → no per-bookmark push', async () => {
@@ -244,7 +284,7 @@ describe('GitModal', () => {
 
     it('hotkey fires op directly', async () => {
       const onexecute = vi.fn()
-      mockBookmarks.mockResolvedValue([makeBookmark({ name: 'feat', local: { remote: '.', commit_id: 'aaa', description: '', ago: '', tracked: false, ahead: 0, behind: 0 } })])
+      mockBookmarks.mockResolvedValue([localBm('feat')])
       mockRemotes.mockResolvedValue(['origin'])
 
       const { container } = render(GitModal, { props: defaultProps({ onexecute }) })

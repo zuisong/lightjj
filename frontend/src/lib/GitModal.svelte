@@ -12,6 +12,7 @@
     title: string
     hotkey?: string    // single-char; rendered as kbd hint + wired into handleKeydown
     bookmark?: string  // → badge (mirrors RevisionGraph's .bookmark-badge)
+    here?: boolean     // bookmark sits on the selected revision → sorts first, gets ▸ marker
     scope?: 'all' | 'deleted' | 'tracked' | 'all-remotes'  // → chip
     changeId?: string  // short form, for the --change entry
     flags: string[]
@@ -20,10 +21,11 @@
   interface Props {
     open: boolean
     currentChangeId: string | null
+    currentBookmarks?: string[]
     onexecute: (type: 'push' | 'fetch', flags: string[]) => void
   }
 
-  let { open = $bindable(false), currentChangeId, onexecute }: Props = $props()
+  let { open = $bindable(false), currentChangeId, currentBookmarks = [], onexecute }: Props = $props()
 
   let query: string = $state('')
   let index: number = $state(0)
@@ -43,16 +45,19 @@
   let remotes = $derived(data.value[1])
   let selectedRemote = $derived(remoteOverride ?? remotes[0] ?? 'origin')
 
-  function buildOps(bms: Bookmark[], remote: string, allRemotes: string[], changeId: string | null): GitOp[] {
+  function buildOps(bms: Bookmark[], remote: string, allRemotes: string[], changeId: string | null, here: ReadonlySet<string>): GitOp[] {
     const ops: GitOp[] = []
     const r = ['--remote', remote]
 
-    // Bookmarks get 1-9 (first 9 only — beyond that, j/k is faster than scanning for a digit)
+    // Bookmarks get 1-9 (first 9 only — beyond that, j/k is faster than scanning for a digit).
+    // Bookmarks on the selected revision sort first so `g 1` pushes the one under your cursor.
+    const local = bms.filter(bm => bm.local)
+    const ordered = [...local.filter(bm => here.has(bm.name)), ...local.filter(bm => !here.has(bm.name))]
     let n = 0
-    for (const bm of bms) {
-      if (!bm.local) continue
+    for (const bm of ordered) {
       n++
       ops.push({ type: 'push', title: 'Push bookmark', bookmark: bm.name,
+        here: here.has(bm.name),
         hotkey: n <= 9 ? String(n) : undefined,
         flags: ['--bookmark', bm.name, ...r] })
     }
@@ -81,7 +86,7 @@
     return ops
   }
 
-  let allOps = $derived(buildOps(bookmarks, selectedRemote, remotes, currentChangeId))
+  let allOps = $derived(buildOps(bookmarks, selectedRemote, remotes, currentChangeId, new Set(currentBookmarks)))
   let hotkeyMap = $derived(new Map(allOps.filter(o => o.hotkey).map(o => [o.hotkey!, o])))
 
   let filtered = $derived.by(() => {
@@ -284,6 +289,7 @@
             >
               <div class="git-title" class:is-push={op.type === 'push'} class:is-fetch={op.type === 'fetch'}>
                 {op.title}
+                {#if op.here}<span class="git-here" title="on selected revision" aria-label="on selected revision">▸</span>{/if}
                 {#if op.bookmark}<span class="git-bm-badge">⑂ {op.bookmark}</span>{/if}
                 {#if op.changeId}<span class="git-change-chip">{op.changeId}</span>{/if}
                 {#if op.scope}<span class="git-scope-chip">{op.scope}</span>{/if}
@@ -397,6 +403,11 @@
 
   /* Mirrors RevisionGraph .bookmark-badge — same visual language for
      bookmark identity across the app. */
+  .git-here {
+    color: var(--amber);
+    font-size: 11px;
+  }
+
   .git-bm-badge {
     display: inline-flex;
     align-items: center;

@@ -16,6 +16,7 @@
   import { createDiffDerivation } from './diff-derivation.svelte'
   import { createLoader } from './loader.svelte'
   import DiffFileView, { type DiffLineInfo } from './DiffFileView.svelte'
+  import SearchResults from './SearchResults.svelte'
   import FileComparePicker from './FileComparePicker.svelte'
   import { reconstructSides, type MergeSides } from './conflict-extract'
   import FileSelectionPanel from './FileSelectionPanel.svelte'
@@ -1078,6 +1079,7 @@
   // --- Diff search ---
   let searchOpen = $state(false)
   let searchQuery = $state('')
+  let searchListOpen = $state(true)
   let searchInputEl: HTMLInputElement | undefined = $state(undefined)
   let currentMatchIdx = $state(0)
 
@@ -1087,19 +1089,32 @@
     lineIdx: number
     startCol: number
     endCol: number
+    // Captured at scan time for the results dropdown — the inline highlighter
+    // only needs the indices above, but the dropdown needs display data.
+    lineNum: number
+    side: 'add' | 'remove' | 'context'
+    content: string
   }
 
   function findMatchesInFile(file: DiffFile, query: string, matches: SearchMatch[]) {
     for (let hunkIdx = 0; hunkIdx < file.hunks.length; hunkIdx++) {
       const hunk = file.hunks[hunkIdx]
+      let oldLine = hunk.oldStart
+      let newLine = hunk.newStart
       for (let lineIdx = 0; lineIdx < hunk.lines.length; lineIdx++) {
-        const text = hunk.lines[lineIdx].content.slice(1) // strip +/-/space prefix
+        const line = hunk.lines[lineIdx]
+        const text = line.content.slice(1) // strip +/-/space prefix
+        const side = line.type === 'add' ? 'add' : line.type === 'remove' ? 'remove' : 'context'
+        const lineNum = side === 'remove' ? oldLine : newLine
         let pos = 0
         const lower = text.toLowerCase()
         while ((pos = lower.indexOf(query, pos)) !== -1) {
-          matches.push({ filePath: file.filePath, hunkIdx, lineIdx, startCol: pos, endCol: pos + query.length })
+          matches.push({ filePath: file.filePath, hunkIdx, lineIdx, startCol: pos, endCol: pos + query.length, lineNum, side, content: text })
           pos += 1
         }
+        if (line.type === 'context') { oldLine++; newLine++ }
+        else if (line.type === 'add') newLine++
+        else if (line.type === 'remove') oldLine++
       }
     }
   }
@@ -1148,6 +1163,7 @@
       return
     }
     searchOpen = true
+    searchListOpen = true
     requestAnimationFrame(() => searchInputEl?.focus())
   }
 
@@ -1161,8 +1177,15 @@
     if (e.key === 'Enter') {
       e.preventDefault()
       e.shiftKey ? prevMatch() : nextMatch()
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      nextMatch()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      prevMatch()
     } else if (e.key === 'Escape') {
       e.preventDefault()
+      if (searchListOpen && searchMatches.length > 0) { searchListOpen = false; return }
       closeSearch()
     }
   }
@@ -1176,6 +1199,11 @@
   function prevMatch() {
     if (searchMatches.length === 0) return
     currentMatchIdx = (currentMatchIdx - 1 + searchMatches.length) % searchMatches.length
+    scrollToMatch()
+  }
+
+  function goToMatch(idx: number) {
+    currentMatchIdx = idx
     scrollToMatch()
   }
 
@@ -1336,24 +1364,41 @@
     </div>
   {/if}
   {#if searchOpen}
-    <div class="search-bar">
-      <input
-        bind:this={searchInputEl}
-        bind:value={searchQuery}
-        class="search-input"
-        placeholder="Search in diff..."
-        onkeydown={handleSearchKeydown}
-      />
-      <span class="search-count">
-        {#if searchMatches.length > 0}
-          {currentMatchIdx + 1} / {searchMatches.length}
-        {:else if searchQuery.length >= 2}
-          No matches
-        {/if}
-      </span>
-      <button class="btn btn-sm" onclick={prevMatch} disabled={searchMatches.length === 0}>&#9650;</button>
-      <button class="btn btn-sm" onclick={nextMatch} disabled={searchMatches.length === 0}>&#9660;</button>
-      <button class="btn btn-sm" onclick={closeSearch}>&#10005;</button>
+    <div class="search-wrap">
+      <div class="search-bar">
+        <input
+          bind:this={searchInputEl}
+          bind:value={searchQuery}
+          class="search-input"
+          placeholder="Search in diff..."
+          onkeydown={handleSearchKeydown}
+        />
+        <span class="search-count">
+          {#if searchMatches.length > 0}
+            {currentMatchIdx + 1} / {searchMatches.length}
+          {:else if searchQuery.length >= 2}
+            No matches
+          {/if}
+        </span>
+        <button
+          class="btn btn-sm"
+          onclick={() => searchListOpen = !searchListOpen}
+          disabled={searchMatches.length === 0}
+          title="Toggle results list"
+          aria-pressed={searchListOpen}
+        >☰</button>
+        <button class="btn btn-sm" onclick={prevMatch} disabled={searchMatches.length === 0}>&#9650;</button>
+        <button class="btn btn-sm" onclick={nextMatch} disabled={searchMatches.length === 0}>&#9660;</button>
+        <button class="btn btn-sm" onclick={closeSearch}>&#10005;</button>
+      </div>
+      {#if searchListOpen && searchMatches.length > 0}
+        <SearchResults
+          matches={searchMatches}
+          currentIdx={currentMatchIdx}
+          fileCount={matchesByFile.size}
+          onjump={goToMatch}
+        />
+      {/if}
     </div>
   {/if}
   <div class="panel-content" bind:this={panelContentEl}>
@@ -1747,6 +1792,9 @@
   }
 
   /* --- Search bar --- */
+  .search-wrap {
+    position: relative;
+  }
   .search-bar {
     display: flex;
     align-items: center;
