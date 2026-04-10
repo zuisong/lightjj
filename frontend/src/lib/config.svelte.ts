@@ -31,8 +31,11 @@ interface Config {
   fontMono: string
   /** Markdown preview body font. Empty → system-ui. */
   fontMdBody: string
-  /** Markdown preview heading font. Empty → falls through to fontMdBody. */
+  /** Markdown preview heading font (h2–h6). Empty → falls through to fontMdBody. */
   fontMdHeading: string
+  /** Markdown preview display font (h1 only — serif-h1/sans-h2 pairing).
+   *  Empty → falls through to fontMdHeading. */
+  fontMdDisplay: string
   /** Markdown preview code/pre font. Empty → --font-mono. */
   fontMdCode: string
   revisionPanelWidth: number
@@ -62,6 +65,7 @@ const defaults: Config = {
   fontMono: '',
   fontMdBody: '',
   fontMdHeading: '',
+  fontMdDisplay: '',
   fontMdCode: '',
   revisionPanelWidth: 420,
   evologPanelHeight: 360,
@@ -235,6 +239,9 @@ function createConfig() {
 
     get fontMdHeading() { return state.fontMdHeading },
     set fontMdHeading(v: string) { state.fontMdHeading = v },
+
+    get fontMdDisplay() { return state.fontMdDisplay },
+    set fontMdDisplay(v: string) { state.fontMdDisplay = v },
 
     get fontMdCode() { return state.fontMdCode },
     set fontMdCode(v: string) { state.fontMdCode = v },

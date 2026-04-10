@@ -419,6 +419,7 @@
     ['--font-mono',       () => config.fontMono],
     ['--font-md-body',    () => config.fontMdBody],
     ['--font-md-heading', () => config.fontMdHeading],
+    ['--font-md-display', () => config.fontMdDisplay],
     ['--font-md-code',    () => config.fontMdCode],
   ] as const
   $effect(() => {

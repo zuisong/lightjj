@@ -76,6 +76,9 @@ body {
      fontMdBody cascades. Code defaults to --font-mono so diffs/preview match. */
   --font-md-body: system-ui, -apple-system, sans-serif;
   --font-md-heading: var(--font-md-body);
+  /* h1-only display face (serif h1, sans h2–h6). Cascades to heading so
+     setting fontMdBody alone still flows through all four. */
+  --font-md-display: var(--font-md-heading);
   --font-md-code: var(--font-mono);
 
   /* Typography scale. --font-size is the config override hook (App.svelte sets

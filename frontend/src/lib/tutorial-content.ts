@@ -6,6 +6,7 @@ export interface TutorialFeature {
 }
 
 export const FEATURES: TutorialFeature[] = [
+  { version: '1.15.0', shortcut: null, title: 'Prose-grade markdown typography', description: 'Looser leading (1.72), negative tracking on h1/h2, variable-font weights (370 body / 650 h2), zebra tables, hover-underline links. New fontMdDisplay config sets a serif h1 independent of h2–h6.' },
   { version: '1.14.0', shortcut: '⇧J / ⇧K', title: 'Slide commits (jj arrange lite)', description: 'Single-step reorder: swap the selected revision with its topological parent (⇧J) or child (⇧K). Linear segments only — at merges/forks, use Rebase mode.' },
   { version: '1.14.0', shortcut: null, title: 'Graph colors avoid semantic clash', description: 'Ghostty-derived themes now rank graph-lane hues by distance from amber/green/red and desaturate 25% — lane 0 is no longer the same color as your selection highlight.' },
   { version: '1.14.0', shortcut: null, title: 'Markdown preview fonts', description: 'Set fontMdBody/Heading/Code in config for serif prose, display headings, or a different code face. Heading defaults to body; code defaults to your fontMono.' },

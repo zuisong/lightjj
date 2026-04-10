@@ -217,15 +217,19 @@
 
 <style>
   .md-preview {
-    padding: 12px 24px 12px 0;
+    padding: 20px 24px 40px 0;
     font-family: var(--font-md-body);
     font-size: var(--fs-lg);
-    line-height: 1.6;
+    /* Prose rhythm: 1.72 leading + weight 370. 370 rounds to 400 on
+       non-variable fonts (graceful); with a variable face it's the "designed"
+       look. 920px ≈ 70ch — classic readable measure (was 1100/90ch). */
+    line-height: 1.72;
+    font-weight: 370;
     color: var(--text);
-    /* 1100px ≈ 90ch at 14px — upper bound of readable prose. Code blocks
-       and mermaid get the full width; margin:auto centers on wider panes. */
-    max-width: 1100px;
+    max-width: 920px;
     margin: 0 auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   .md-body {
     position: relative;  /* anchor for .md-gutter absolute */
@@ -279,8 +283,20 @@
        DiffFileView's sticky .diff-file-header (~33px) without this. */
     scroll-margin-top: 40px;
   }
-  .md-preview :global(h1) { font-size: 2em; }
-  .md-preview :global(h2) { font-size: 1.5em; }
+  /* h1 alone gets the display face + tighter tracking. h2 stays
+     --font-md-heading but with the in-between 650 weight that variable
+     fonts expose. */
+  .md-preview :global(h1) {
+    font-family: var(--font-md-display);
+    font-size: 2em;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .md-preview :global(h2) {
+    font-size: 1.5em;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
   .md-preview :global(h3) { font-size: 1.25em; }
   .md-preview :global(h4) { font-size: 1em; }
   .md-preview :global(h5) { font-size: 0.875em; }
@@ -299,9 +315,10 @@
   }
   .md-preview :global(pre) {
     background: var(--surface0);
-    padding: 12px;
-    border-radius: 4px;
+    padding: 14px 16px;
+    border-radius: 8px;
     overflow-x: auto;
+    line-height: 1.55;
   }
   .md-preview :global(pre code) {
     background: none;
@@ -322,17 +339,27 @@
     overflow-x: auto;
     max-width: 100%;
   }
-  .md-preview :global(th),
-  .md-preview :global(td) {
-    border: 1px solid var(--surface2);
-    padding: 6px 12px;
-  }
   .md-preview :global(th) {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 2px solid var(--surface2);
     background: var(--surface0);
+    font-weight: 600;
+  }
+  .md-preview :global(td) {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--surface1);
+  }
+  .md-preview :global(tbody tr:nth-child(even)) {
+    background: color-mix(in srgb, var(--surface0) 40%, transparent);
   }
   .md-preview :global(a) {
     color: var(--blue);
+    text-decoration: none;
+    font-weight: 450;
   }
+  .md-preview :global(a:hover) { text-decoration: underline; }
+  .md-preview :global(li) { margin-bottom: 4px; }
   .md-preview :global(img) {
     /* contain:paint on .md-content silently CLIPS overflow — without this,
        wide screenshots lose their right edge with no scrollbar. */
