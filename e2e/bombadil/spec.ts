@@ -70,6 +70,31 @@ const messageBarShown = extract((s) =>
   s.document.querySelector(".message-bar") !== null
 );
 
+// Change_id rendered in RevisionHeader (8 chars). null when no header
+// (multi-check mode, DivergencePanel replaces DiffPanel, initial load).
+const headerChangeId = extract((s) =>
+  s.document.querySelector(".detail-change-id")?.textContent?.trim() ?? null
+);
+
+// Change_id of the selected graph row. .change-id span renders 12 chars +
+// optional /N divergence offset; slice(0,8) matches header's truncation.
+const selectedChangeId = extract((s) =>
+  s.document.querySelector(".graph-row.selected .change-id")
+    ?.textContent?.slice(0, 8) ?? null
+);
+
+// document.activeElement is a text input. The v1.12.1 bug class: focus
+// stuck in the revset filter / search input → j/k route to the input via
+// keyboard-gate's inInput slot, graph nav dead. The gate is correct; the
+// bug is when nothing BLURS the input on submit/escape.
+const focusInInput = extract((s) => {
+  const a = s.document.activeElement;
+  return a !== null && (
+    a.tagName === "INPUT" || a.tagName === "TEXTAREA" ||
+    (a as HTMLElement).isContentEditable
+  );
+});
+
 // -------------------------------------------------------------------------
 // Properties
 // -------------------------------------------------------------------------
@@ -159,6 +184,35 @@ export const inlineModeEscapable = always(
   )
 );
 
+// Diff/cursor coherence — the #1 historical bug class in this codebase.
+// revGen await-gap, post-await identity guards, navigateCached double-rAF
+// scheduling all exist to prevent "cursor is on C, diff shows A". When
+// neutral (no inline mode freezing diff on source, no panel replacing
+// DiffPanel) and both ids are rendered, the header eventually matches the
+// cursor. eventually-within covers the intentional double-rAF paint-first
+// deferral + localhost API round-trip; mismatch beyond that is stale state.
+// Null on either side → antecedent false (multi-check / initial-load).
+export const diffMatchesCursor = always(
+  now(() =>
+    !inlineModeActive.current && !modalOpen.current &&
+    headerChangeId.current !== null && selectedChangeId.current !== null
+  ).implies(
+    eventually(() =>
+      headerChangeId.current === selectedChangeId.current
+    ).within(3, "seconds")
+  )
+);
+
+// Input focus is escapable. Catches v1.12.1's exact regression: Enter in
+// the revset filter applied-but-stayed-focused → j/k dead until click-out.
+// Escape is weighted 30 in lightjjActions; if 10s of that can't blur an
+// input, the input is swallowing Escape without yielding focus.
+export const focusEscapable = always(
+  now(() => focusInInput.current).implies(
+    eventually(() => !focusInInput.current).within(10, "seconds")
+  )
+);
+
 // -------------------------------------------------------------------------
 // Action generators
 // -------------------------------------------------------------------------
@@ -244,6 +298,15 @@ export const clickDismiss = clicks("dismiss", dismissCenters);
 const triggerCenters = centers(".divergent-btn, .alert-badge");
 export const clickTriggers = clicks("trigger", triggerCenters);
 
+// Text inputs — reachability for focusEscapable. Without this the property
+// is vacuous (no action focuses an input). .revset-input is the v1.12.1
+// regression site; .modal-input covers BookmarkModal/GitModal; the bare
+// input[type=text] catches anything else. Low weight: we want to ENTER
+// input focus occasionally, not type into it (keypresses while focused
+// type chars into the field, harmless but wastes action budget).
+const inputCenters = centers('.revset-input, .modal-input, input[type="text"]');
+export const clickInputs = clicks("input", inputCenters);
+
 // Weighted composition. Escape is weighted highest — it's the universal
 // "get me out" key, and the trap properties depend on it being tried
 // frequently. Nav second (primary exploration). Mode entry lowest
@@ -255,4 +318,5 @@ export const lightjjActions = weighted([
   [10, clickTriggers],
   [8,  clickDismiss],
   [5,  modeKeys],
+  [4,  clickInputs],
 ]);

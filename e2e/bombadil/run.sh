@@ -11,13 +11,19 @@
 #   jq -r 'select(.violations != []) | .violations[]' out/trace.jsonl
 #
 # Prereqs:
-#   - bombadil binary on PATH (https://github.com/antithesishq/bombadil/releases)
+#   - bombadil binary >= 0.4.0 on PATH (https://github.com/antithesishq/bombadil/releases)
+#     v0.3.x cannot instrument <script type="module"> — blank page (fixed in #75).
 #   - lightjj built at repo root (go build ./cmd/lightjj)
 #   - pnpm install in this dir (for @antithesishq/bombadil types)
 
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+
+BV=$(bombadil --version 2>/dev/null | awk '{print $2}')
+case "$BV" in
+  0.[0-3].*|"") echo "bombadil >= 0.4.0 required (found '${BV:-none}'); see prereqs above" >&2; exit 1 ;;
+esac
 
 FIXTURE="${FIXTURE:-/tmp/lightjj-bombadil-fixture}"
 PORT="${PORT:-3456}"
@@ -52,30 +58,24 @@ rm -rf "$OUT"
 HEADLESS_FLAG="--headless"
 [ -n "${HEADED:-}" ] && HEADLESS_FLAG=""
 
-# KNOWN ISSUE (bombadil v0.3.2): the Svelte 5 / Vite bundle does not
-# execute in Bombadil's managed Chromium — blank page, zero Click actions,
-# extractors see empty DOM. Same server renders fine in real Chrome.
-# Suspect: JS instrumentation proxy vs the `crossorigin` attr on Vite's
-# <script type="module">, or an outdated bundled Chromium. Tried
-# `--instrument-javascript ""` — no effect.
-#
-# Workaround: use test-external against a Chrome launched with
-#   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-#     --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-bombadil
-# then swap `bombadil test` → `bombadil test-external --remote-debugger
-# http://localhost:9222 --create-target` below. Left as the managed-mode
-# path for now since test-external adds a manual-Chrome-launch step.
+# `chromiumoxide::handler WS Invalid message` warnings are benign — newer
+# CDP events the bundled chromiumoxide doesn't recognize; actions still fire.
+# Headless action rate is ~0.3/s (screenshot-capture-bound); time-windowed
+# `eventually(...).within(10,"seconds")` properties get ~3 actions per window.
+# Prefer step-count windows or HEADED=1 for liveness checks.
 timeout "${DURATION}s" bombadil test \
   "http://localhost:$PORT" \
   "$HERE/spec.ts" \
   --output-path "$OUT" \
   --exit-on-violation \
   $HEADLESS_FLAG \
+  ${BOMBADIL_FLAGS:-} \
   || true  # timeout exits 124; violations exit nonzero — both expected
 
 # --- report --------------------------------------------------------------
 if [ -f "$OUT/trace.jsonl" ]; then
   VIOLATED=$(jq -r 'select(.violations != []) | .violations[].name' "$OUT/trace.jsonl" 2>/dev/null | sort -u)
+  ACTIONS=$(jq -r '.action // empty | keys[0]' "$OUT/trace.jsonl" 2>/dev/null | wc -l | tr -d ' ')
   if [ -n "$VIOLATED" ]; then
     echo
     echo "=== VIOLATIONS ==="
@@ -85,7 +85,7 @@ if [ -f "$OUT/trace.jsonl" ]; then
     jq -c 'select(.violations != []) | .violations[]' "$OUT/trace.jsonl" | head -5
     exit 1
   fi
-  echo "✓ no violations in ${DURATION}s"
+  echo "✓ no violations in ${DURATION}s (${ACTIONS} actions)"
 else
   echo "no trace produced — bombadil may have failed to start" >&2
   exit 2

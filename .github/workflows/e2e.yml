@@ -1,0 +1,78 @@
+name: E2E Fuzz
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzz duration in seconds'
+        default: '60'
+
+# Bombadil property-based UI fuzzing — see e2e/bombadil/spec.ts for the LTL
+# properties. Exit-on-violation means a single counterexample fails the job;
+# trace + screenshots are uploaded as an artifact for replay.
+jobs:
+  bombadil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      JJ_VERSION: v0.40.0
+      BOMBADIL_VERSION: v0.4.2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # No third-party install-action — direct download keeps the dep surface
+      # at exactly the same actions release.yml already trusts.
+      - name: Install jj
+        run: |
+          curl -fsSL "https://github.com/jj-vcs/jj/releases/download/${JJ_VERSION}/jj-${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | sudo tar xz -C /usr/local/bin ./jj
+          jj --version
+
+      - name: Install bombadil
+        run: |
+          sudo curl -fsSL "https://github.com/antithesishq/bombadil/releases/download/${BOMBADIL_VERSION}/bombadil-x86_64-linux" \
+            -o /usr/local/bin/bombadil
+          sudo chmod +x /usr/local/bin/bombadil
+          bombadil --version
+
+      - name: Build lightjj
+        run: |
+          (cd frontend && pnpm install --frozen-lockfile && pnpm run build)
+          go build ./cmd/lightjj
+
+      - name: Typecheck spec
+        working-directory: e2e/bombadil
+        run: |
+          pnpm install
+          npx tsc --noEmit
+
+      - name: Run fuzz
+        working-directory: e2e/bombadil
+        env:
+          DURATION: ${{ inputs.duration || '60' }}
+          BOMBADIL_FLAGS: --no-sandbox
+        run: ./run.sh
+
+      - name: Upload trace
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bombadil-trace
+          path: e2e/bombadil/out/
+          retention-days: 7
