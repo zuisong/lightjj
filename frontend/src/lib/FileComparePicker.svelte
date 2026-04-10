@@ -118,7 +118,7 @@
     justify-content: space-between;
     padding: 6px 10px;
     border-bottom: 1px solid var(--surface0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     background: var(--mantle);
   }
   .fcp-title code {
@@ -141,11 +141,11 @@
     gap: 8px;
     padding: 6px 10px;
     border-bottom: 1px solid var(--surface0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
   .fcp-selected code {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--amber);
   }
   .fcp-desc {
@@ -156,7 +156,7 @@
     white-space: nowrap;
   }
   .fcp-age {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--subtext0);
     font-family: var(--font-mono);
   }
@@ -164,7 +164,7 @@
     padding: 20px;
     text-align: center;
     color: var(--subtext0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
   .fcp-error { color: var(--red); }
 </style>

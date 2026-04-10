@@ -93,7 +93,7 @@
     background: var(--mantle);
     border-bottom: 1px solid var(--surface0);
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -118,13 +118,13 @@
     font-family: var(--font-mono);
     color: var(--amber);
     font-weight: 600;
-    font-size: 12px;
+    font-size: var(--fs-md);
     flex-shrink: 0;
   }
 
   .detail-description-inline {
     color: var(--text);
-    font-size: 12px;
+    font-size: var(--fs-md);
     min-width: 0;
     white-space: pre-wrap;
     word-break: break-word;
@@ -169,7 +169,7 @@
     color: var(--subtext0);
     padding: 0 5px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     border: 1px solid var(--border-bookmark);
     line-height: 1.15;
@@ -186,7 +186,7 @@
     color: var(--subtext0);
     padding: 0 6px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     border: 1px solid var(--border-pr);
     line-height: 1.15;

@@ -83,7 +83,7 @@
     border-left: 3px solid var(--msg-fg);
     border-top: 1px solid color-mix(in srgb, var(--msg-fg) 30%, transparent);
     color: var(--msg-fg);
-    font-size: 12px;
+    font-size: var(--fs-md);
     animation: slide-up var(--anim-duration) var(--anim-ease);
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
   }
@@ -120,7 +120,7 @@
     border-radius: 3px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     line-height: 1.5;
   }
@@ -138,7 +138,7 @@
     border-radius: 3px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
 
   .action-btn {
@@ -160,7 +160,7 @@
   .message-details pre {
     margin: 0;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--text);
     max-height: 30vh;
     overflow-y: auto;

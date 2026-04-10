@@ -325,15 +325,15 @@
     border-bottom: 1px solid var(--surface0);
     align-items: center;
   }
-  .git-remotes-label { font-size: 11px; color: var(--overlay0); }
-  .git-remotes-hint { font-size: 10px; color: var(--surface2); margin-left: auto; }
+  .git-remotes-label { font-size: var(--fs-sm); color: var(--overlay0); }
+  .git-remotes-hint { font-size: var(--fs-xs); color: var(--surface2); margin-left: auto; }
   .git-remote-pill {
     padding: 2px 8px;
     border: 1px solid var(--surface1);
     border-radius: 10px;
     background: transparent;
     color: var(--subtext0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-family: inherit;
     cursor: pointer;
   }
@@ -365,7 +365,7 @@
 
   .git-section-header {
     padding: 8px 16px 4px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     color: var(--overlay0);
     text-transform: uppercase;
@@ -383,7 +383,7 @@
     display: block;
     width: 100%;
     padding: 7px 16px;
-    font-size: 13px;
+    font-size: var(--font-size);
     user-select: none;
     cursor: pointer;
   }
@@ -392,7 +392,7 @@
 
   /* Title line: description + inline badge/chip. Color-coded by op type. */
   .git-title {
-    font-size: 13px;
+    font-size: var(--font-size);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -405,7 +405,7 @@
      bookmark identity across the app. */
   .git-here {
     color: var(--amber);
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
 
   .git-bm-badge {
@@ -415,7 +415,7 @@
     color: var(--subtext0);
     padding: 0 5px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     border: 1px solid var(--border-bookmark);
     line-height: 1.4;
@@ -425,7 +425,7 @@
   /* Scope modifiers (--all, --deleted, --tracked) — hollow chip,
      visually distinct from bookmark badges. */
   .git-scope-chip {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 0 6px;
     border: 1px solid var(--overlay0);
     border-radius: 3px;
@@ -437,7 +437,7 @@
   /* Change-id: mono font, matches commit_id styling elsewhere. */
   .git-change-chip {
     font-family: var(--font-mono, monospace);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 0 5px;
     background: var(--surface0);
     border-radius: 3px;
@@ -452,7 +452,7 @@
     min-width: 16px;
     padding: 1px 5px;
     font-family: var(--font-mono, monospace);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     text-align: center;
     background: var(--surface0);
     border: 1px solid var(--surface1);
@@ -465,7 +465,7 @@
   .git-cmd {
     color: var(--overlay0);
     font-family: var(--font-mono, monospace);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     margin-top: 2px;
   }
 
@@ -474,7 +474,7 @@
     padding: 16px;
     color: var(--surface2);
     text-align: center;
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 
   .git-error { color: var(--red); }

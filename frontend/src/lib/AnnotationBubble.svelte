@@ -123,7 +123,7 @@
     border-radius: 6px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     padding: 10px;
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
 
   .bubble-header {
@@ -139,7 +139,7 @@
     color: var(--text);
     border-radius: 4px;
     padding: 2px 6px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-family: inherit;
   }
 
@@ -152,7 +152,7 @@
     flex: 1;
     font-family: var(--font-mono);
     color: var(--subtext0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -166,7 +166,7 @@
     border-radius: 4px;
     padding: 6px;
     font-family: inherit;
-    font-size: 12px;
+    font-size: var(--fs-md);
     resize: vertical;
     min-height: 60px;
   }

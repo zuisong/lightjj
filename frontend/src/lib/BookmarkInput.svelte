@@ -163,7 +163,7 @@
 
   .bm-set-header {
     padding: 10px 16px 6px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 700;
     color: var(--subtext0);
     text-transform: uppercase;
@@ -178,7 +178,7 @@
     border-bottom: 1px solid var(--surface0);
     padding: 10px 16px;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     outline: none;
   }
 
@@ -198,7 +198,7 @@
     border: none;
     color: var(--text);
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--font-size);
     text-align: left;
     cursor: pointer;
   }
@@ -210,7 +210,7 @@
 
   .bm-set-move-hint {
     color: var(--amber);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     text-transform: uppercase;
   }
@@ -220,14 +220,14 @@
 
   .bm-set-error {
     padding: 8px 16px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: var(--red);
     border-bottom: 1px solid var(--surface0);
   }
 
   .bm-set-hint {
     padding: 6px 16px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--surface2);
   }
 </style>

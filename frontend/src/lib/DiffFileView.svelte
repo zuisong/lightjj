@@ -749,7 +749,7 @@
     background: var(--mantle);
     color: var(--text);
     font-weight: 600;
-    font-size: 12px;
+    font-size: var(--fs-md);
     border-bottom: 1px solid var(--surface0);
     position: sticky;
     top: 0;
@@ -787,7 +787,7 @@
     border: none;
     background: none;
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     line-height: 1;
     cursor: pointer;
     color: var(--amber);
@@ -807,7 +807,7 @@
     border-radius: 3px;
     background: var(--mantle);
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     line-height: 1;
     cursor: pointer;
@@ -836,7 +836,7 @@
   .hunk-rejected-label {
     margin-left: auto;
     padding: 1px 6px;
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -862,7 +862,7 @@
   .hunk-reviewing .expand-btn { display: none; }
 
   .file-type-badge {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     padding: 0 4px;
     border-radius: 3px;
@@ -911,7 +911,7 @@
     display: flex;
     gap: 6px;
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
   }
 
@@ -936,7 +936,7 @@
     border-top: 1px dashed var(--border-hunk-header);
     border-bottom: 1px dashed var(--border-hunk-header);
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     cursor: pointer;
     text-align: center;
     transition: background var(--anim-duration) var(--anim-ease),
@@ -946,11 +946,11 @@
   .expand-dots {
     letter-spacing: 2px;
     color: var(--surface2);
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
 
   .expand-label {
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
 
   .expand-btn:hover {
@@ -969,14 +969,14 @@
     padding: 3px 12px;
     background: var(--bg-hunk-header);
     color: var(--overlay0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     border-bottom: 1px solid var(--border-hunk-header);
     font-family: var(--font-mono);
   }
 
   .hunk-range {
     color: var(--surface2);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
   }
 
@@ -990,8 +990,11 @@
 
   .diff-lines {
     font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: var(--fs-md);
+    /* 18px (not 1.5) — must match cmTheme .cm-line so split-edit columns stay
+       row-aligned when --fs-md varies. Was effectively 18 (12×1.5) before
+       --fs-md became configurable. */
+    line-height: 18px;
   }
 
   .diff-line {
@@ -1021,7 +1024,7 @@
     color: var(--surface2);
     user-select: none;
     -webkit-user-select: none;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     opacity: 0.5;
     border-right: 1px solid var(--line-gutter-border, transparent);
     margin-right: 1ch;
@@ -1038,11 +1041,11 @@
   .diff-line { position: relative; }
   :global(.diff-line .annotation-badge) {
     right: 2px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     padding: 1px 2px;
     transition: opacity var(--anim-duration) var(--anim-ease);
   }
-  :global(.diff-line .annotation-badge sup) { font-size: 8px; }
+  :global(.diff-line .annotation-badge sup) { font-size: var(--fs-3xs); }
 
   .diff-add {
     background: var(--diff-add-bg);
@@ -1103,8 +1106,8 @@
     min-width: 0;
     overflow-x: auto;
     font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: var(--fs-md);
+    line-height: 18px;
   }
   .split-col .diff-line { --diff-gutter-w: 6ch; }
 
@@ -1131,14 +1134,14 @@
     align-items: center;
     gap: 4px;
     color: var(--red);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     letter-spacing: 0.02em;
     flex-shrink: 0;
   }
 
   .conflict-glyph {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     filter: drop-shadow(0 0 2px color-mix(in srgb, var(--red) 40%, transparent));
   }
 
@@ -1154,7 +1157,7 @@
     border-radius: 4px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     flex-shrink: 0;
     white-space: nowrap;
@@ -1176,7 +1179,7 @@
     height: 16px;
     padding: 0 4px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 800;
     font-family: var(--font-mono);
     letter-spacing: 0.02em;
@@ -1227,7 +1230,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     color: var(--red);
     text-transform: lowercase;
@@ -1243,7 +1246,7 @@
     gap: 6px;
     padding: 3px 10px 3px 4px;
     margin: 2px 0 2px -2px; /* align with region border, small breathing room */
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 500;
     color: var(--subtext0);
     background: var(--mantle);

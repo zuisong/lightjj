@@ -52,7 +52,7 @@ Without the guard, the UI would recommend keeping whichever version the user mos
 | Heuristic | Why it fails |
 |---|---|
 | **Later `committer_ts` = intentional** | `--at-op` stamps `now()`, so it's ALWAYS the newer ts, and it's ALWAYS the rewrite from the oldest view. Structurally inverted, not clock skew. Plus clock skew across workspaces/machines is also possible. |
-| **commit_id sort matches jj's `/N`** | `/N` is index-insertion order (`GlobalCommitPosition`). commit_id is a content hash — unrelated. `DivergencePanel.svelte:62` currently sorts by commit_id → will mislabel. |
+| **commit_id sort matches jj's `/N`** | `/N` is index-insertion order (`GlobalCommitPosition`). commit_id is a content hash — unrelated. An early `DivergencePanel` revision sorted by commit_id and mislabeled; current code preserves jj's emission order. |
 | **Tree delta has files outside `fileUnion` → trunk noise → reclassify as pure rebase** | One-bit test poisons a multi-file delta. If trunk touched one unrelated file AND the stale version has a real edit, the real edit gets classified as "trunk noise" too. Correct: **subtract** outside-fileUnion files from the delta, then check if remainder is empty. |
 | **"Will clear on its own" for immutable** | Never clears. Trunk ancestry is permanent. |
 
@@ -90,7 +90,7 @@ stacks = groupBy(mutableDivergentChanges, findRoot)
 
 The naive check — "parent change_id agrees and is in byChange" — can loop forever. `byChange` is filtered by `& mutable()`. A commit's parent can be the **immutable** copy of a change whose **mutable** copy is in byChange. `byChange.has(parent_change_id)` returns true but the actual parent commit was filtered out. Recursing follows an edge that doesn't exist in our view of the DAG.
 
-Observed in a large large repo with an automated warm-merge train: 154 merge commits, each divergent (mutable + immutable copy), forming a chain. One commit's parent was the immutable copy of a change further up → phantom edge closed the loop → `findRoot` stack overflow.
+Observed in a large repo with an automated warm-merge train: 154 merge commits, each divergent (mutable + immutable copy), forming a chain. One commit's parent was the immutable copy of a change further up → phantom edge closed the loop → `findRoot` stack overflow.
 
 Fix (`divergence.ts:56-78`): require `vs.length >= 2` (single-copy entries aren't stack-inherited — nothing to "all agree" on) AND each version's `parent_commit_ids[0]` must be a commit_id present in `byChange.get(p0)`. This constrains the walk to real commit-DAG edges, which are acyclic. The panel separately rejects single-version groups as "divergent with immutable sibling, cannot resolve" — can't abandon immutable copies.
 

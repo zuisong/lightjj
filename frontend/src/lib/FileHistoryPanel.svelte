@@ -167,7 +167,7 @@
     justify-content: space-between;
     padding: 8px 12px;
     border-bottom: 1px solid var(--surface0);
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
   .fh-title code {
     font-family: var(--font-mono);
@@ -203,12 +203,12 @@
     background: var(--surface0);
     border-radius: 4px;
     border-left: 3px solid transparent;
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
   .fh-card-a { border-left-color: var(--amber); }
   .fh-card-label {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: bold;
     color: var(--amber);
   }
@@ -218,17 +218,17 @@
   }
   .fh-card-id {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--subtext1);
   }
   .fh-card-age {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--subtext0);
   }
   .fh-swap {
     align-self: center;
     color: var(--subtext0);
-    font-size: 14px;
+    font-size: var(--fs-lg);
   }
   .fh-diff-scroll {
     flex: 1;
@@ -238,14 +238,14 @@
     padding: 40px;
     text-align: center;
     color: var(--subtext0);
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
   .fh-empty-state kbd {
     padding: 1px 4px;
     border: 1px solid var(--surface1);
     border-radius: 3px;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
   .fh-error { color: var(--red); }
 </style>

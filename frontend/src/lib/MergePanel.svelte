@@ -722,7 +722,7 @@
     padding: 5px 10px;
     background: var(--mantle);
     border-bottom: 1px solid var(--surface0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
   }
   .merge-title { color: var(--subtext0); }
@@ -731,7 +731,7 @@
 
   .merge-counter {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 1px 6px;
     border-radius: 8px;
     background: color-mix(in srgb, var(--amber) 18%, transparent);
@@ -748,7 +748,7 @@
     align-items: center;
     gap: 2px;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--subtext0);
   }
   .merge-nav-pos {
@@ -766,14 +766,14 @@
     border-radius: 3px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--font-size);
     line-height: 1;
     transition: background 120ms ease;
   }
   .merge-nav-btn:hover { background: var(--surface1); }
 
   .merge-error {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 2px 8px;
     border-radius: 3px;
     background: color-mix(in srgb, var(--red) 15%, transparent);
@@ -803,7 +803,7 @@
     display: flex;
     background: var(--crust);
     border-bottom: 1px solid var(--surface0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
   }
   .merge-header {
@@ -834,7 +834,7 @@
   .merge-ref {
     font-family: var(--font-mono);
     color: var(--amber);
-    font-size: 9px;
+    font-size: var(--fs-2xs);
   }
 
   /* ── Pane layout ─────────────────────────────────────────────────────── */
@@ -891,7 +891,7 @@
     border: none;
     border-radius: 3px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 700;
     line-height: 18px;
     font-family: var(--font-mono);

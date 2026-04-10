@@ -347,7 +347,7 @@
     align-items: center;
     gap: 10px;
     padding: 6px 16px;
-    font-size: 13px;
+    font-size: var(--font-size);
     user-select: none;
     cursor: pointer;
   }
@@ -364,17 +364,17 @@
 
   .bm-commit {
     font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--overlay0);
   }
 
   .bm-here {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--green);
   }
 
   .bm-badge {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 1px 6px;
     border-radius: 3px;
     background: var(--surface0);
@@ -406,7 +406,7 @@
     padding: 16px;
     color: var(--surface2);
     text-align: center;
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 
   .bm-error { color: var(--red); }

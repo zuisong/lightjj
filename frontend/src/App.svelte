@@ -57,11 +57,12 @@
   import { routeKeydown, type ActiveView } from './lib/keyboard-gate'
   import { createLoader } from './lib/loader.svelte'
   import { createRevisionNavigator } from './lib/revision-navigator.svelte'
-  import { config } from './lib/config.svelte'
+  import { config, FONT_SIZE_MIN, FONT_SIZE_MAX, FONT_SIZE_DEFAULT } from './lib/config.svelte'
   import { THEMES, isThemeDark, loadGhosttyThemes, applyGhosttyTheme, type GhosttyTheme } from './lib/themes'
   import { APP_VERSION, CURRENT_RELEASE_URL, RELEASES_URL, parseSemver, semverMinorGt, checkForUpdate, type UpdateInfo } from './lib/version'
   import { FEATURES, type TutorialFeature } from './lib/tutorial-content'
   import WelcomeModal from './lib/WelcomeModal.svelte'
+  import ConfigModal from './lib/ConfigModal.svelte'
   import { buildVisibilityRevset, revsetQuote, syncVisibility } from './lib/remote-visibility'
   import ConflictQueue from './lib/ConflictQueue.svelte'
   import FileHistoryPanel from './lib/FileHistoryPanel.svelte'
@@ -270,6 +271,7 @@
   let bookmarkModalFilter: string = $state('')
   let bookmarkInputOpen: boolean = $state(false)
   let gitModalOpen: boolean = $state(false)
+  let configModalOpen: boolean = $state(false)
   const rebase = createRebaseMode()
   const squash = createSquashMode()
   const split = createSplitMode()
@@ -330,7 +332,7 @@
   // feature that 400s on click. See docs/CONFIG.md for the invariant.
   let editorConfigured = $state(false)
 
-  let anyModalOpen = $derived(paletteOpen || bookmarkModalOpen || bookmarkInputOpen || gitModalOpen || !!contextMenu || divergence.active || welcomeOpen || !!fileHistoryPath)
+  let anyModalOpen = $derived(paletteOpen || bookmarkModalOpen || bookmarkInputOpen || gitModalOpen || configModalOpen || !!contextMenu || divergence.active || welcomeOpen || !!fileHistoryPath)
   let inlineMode = $derived(rebase.active || squash.active || split.active)
   // Which mode (if any). `inlineMode` answers "is ANY mode active?" for
   // toolbar gates; `activeInlineMode.diffFollows` answers the per-mode
@@ -406,6 +408,16 @@
   })
   $effect(() => {
     document.documentElement.classList.toggle('reduce-motion', config.reduceMotion)
+  })
+  // Typography. setProperty on :root overrides the theme.css defaults (inline
+  // style > stylesheet); removeProperty falls back to them. Empty fontUI/Mono
+  // = "use default", so a hand-edited config.json with the key absent and one
+  // with "" behave identically. Clamping lives in the config.fontSize getter.
+  $effect(() => {
+    const s = document.documentElement.style
+    s.setProperty('--font-size', `${config.fontSize}px`)
+    config.fontUI ? s.setProperty('--font-ui', config.fontUI) : s.removeProperty('--font-ui')
+    config.fontMono ? s.setProperty('--font-mono', config.fontMono) : s.removeProperty('--font-mono')
   })
 
   // Saved config.theme might be a ghostty id — load eagerly so the first
@@ -598,6 +610,7 @@
     { label: 'Set bookmark', shortcut: 'B', category: 'Bookmarks', action: () => openModal('bookmarkInput'), when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
 
     // View (non-dynamic)
+    { label: 'Edit config (JSON)…', category: 'View', hint: 'theme, fonts, editorArgs', action: () => { closeAllModals(); configModalOpen = true } },
     { label: 'Toggle split/unified diff', category: 'View', action: () => { config.splitView = !config.splitView } },
     { label: 'Toggle operation log', shortcut: 'O', category: 'View', action: toggleOplog },
     { label: 'Toggle evolution log', shortcut: 'E', category: 'View', action: toggleEvolog, when: () => !!selectedRevision },
@@ -645,6 +658,9 @@
     { label: darkMode ? 'Light theme' : 'Dark theme', shortcut: 't', category: 'View', action: toggleTheme },
     themeSubmenuCommand,
     { label: config.reduceMotion ? 'Enable animations' : 'Reduce motion', category: 'View', action: () => { config.reduceMotion = !config.reduceMotion } },
+    { label: `Font size: increase (${config.fontSize}px)`, category: 'View', action: () => { config.fontSize += 1 }, when: () => config.fontSize < FONT_SIZE_MAX },
+    { label: `Font size: decrease (${config.fontSize}px)`, category: 'View', action: () => { config.fontSize -= 1 }, when: () => config.fontSize > FONT_SIZE_MIN },
+    { label: 'Font size: reset', category: 'View', action: () => { config.fontSize = FONT_SIZE_DEFAULT }, when: () => config.fontSize !== FONT_SIZE_DEFAULT },
     { label: `View: Open PRs (${pullRequests.length})`, hint: prsRevset, category: 'Navigation', action: () => applyRevsetExample(prsRevset), when: () => pullRequests.length > 0 },
   ])
 
@@ -1640,6 +1656,7 @@
     bookmarkModalOpen = false
     bookmarkInputOpen = false
     gitModalOpen = false
+    configModalOpen = false
     contextMenu = null
     // dismissWelcome (not welcomeOpen=false) — persist tutorialVersion so it
     // doesn't re-show next launch. Guarded: Cmd+K path calls this frequently.
@@ -2581,6 +2598,13 @@
     <WelcomeModal version={APP_VERSION} features={welcomeFeatures} title={welcomeTitle} onclose={dismissWelcome} />
   {/if}
 
+  <ConfigModal
+    open={configModalOpen}
+    onclose={() => configModalOpen = false}
+    onerror={(e) => setMessage(errorMessage(e))}
+  />
+
+
   {#if fileHistoryPath}
     <div class="file-history-overlay">
       {#key fileHistoryPath}
@@ -2641,7 +2665,7 @@
 
   .revset-icon {
     color: var(--surface2);
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 700;
     flex-shrink: 0;
   }
@@ -2654,7 +2678,7 @@
     border-radius: 3px;
     padding: 3px 6px;
     font-family: inherit;
-    font-size: 12px;
+    font-size: var(--fs-md);
     outline: none;
     transition: border-color 0.15s ease;
   }
@@ -2678,7 +2702,7 @@
   }
   .preset-chip {
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     padding: 2px 8px;
     border-radius: 3px;
     background: var(--surface0);
@@ -2697,7 +2721,7 @@
     color: var(--surface2);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     padding: 0 4px;
     line-height: 1;
     flex-shrink: 0;
@@ -2717,7 +2741,7 @@
     color: var(--overlay0);
     cursor: pointer;
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     line-height: 14px;
     flex-shrink: 0;
@@ -2736,7 +2760,7 @@
     border-radius: 6px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.25);
     z-index: 10;
-    font-size: 12px;
+    font-size: var(--fs-md);
     line-height: 1.5;
   }
   .revset-help-popover p { margin: 0 0 8px; }
@@ -2746,12 +2770,12 @@
     border-radius: 3px;
   }
   .revset-help-popover code {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     background: var(--surface0);
     padding: 1px 4px;
   }
   .help-ex {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     background: var(--surface0);
     color: var(--text);
     border: 1px solid var(--surface1);
@@ -2764,11 +2788,11 @@
     color: var(--amber);
   }
   .revset-help-popover kbd {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     border: 1px solid var(--surface1);
     padding: 0 3px;
   }
-  .help-examples { color: var(--subtext0); font-size: 11px; }
+  .help-examples { color: var(--subtext0); font-size: var(--fs-sm); }
 
   .panel-divider {
     width: 4px;
@@ -2893,7 +2917,7 @@
     border: 1px solid var(--surface1);
     border-radius: 4px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
     cursor: pointer;
   }
@@ -2905,7 +2929,7 @@
 
   .toolbar-ws-glyph {
     color: var(--subtext0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
 
   .toolbar-ws-name {
@@ -2913,7 +2937,7 @@
   }
 
   .toolbar-ws-chevron {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--surface2);
   }
 
@@ -2941,7 +2965,7 @@
     border-radius: 4px;
     color: var(--subtext0);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     cursor: pointer;
     text-align: left;
   }
@@ -2961,7 +2985,7 @@
   }
 
   .toolbar-ws-open {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--surface2);
     margin-left: auto;
     opacity: 0;
@@ -2977,7 +3001,7 @@
 
   .toolbar-theme {
     border: none;
-    font-size: 13px;
+    font-size: var(--font-size);
     padding: 3px 6px;
   }
 
@@ -2988,7 +3012,7 @@
     border-radius: 4px;
     color: var(--subtext0);
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     cursor: pointer;
     line-height: 1.4;
     white-space: nowrap;
@@ -3021,7 +3045,7 @@
     border-radius: 4px;
     color: var(--surface2);
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
 
@@ -3031,7 +3055,7 @@
 
   .toolbar-search-kbd {
     font-family: var(--font-mono);
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--surface2);
     background: none;
     border: 1px solid var(--surface1);

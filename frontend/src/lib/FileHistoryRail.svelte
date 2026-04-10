@@ -161,7 +161,7 @@
     background: transparent;
     color: var(--text);
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
     overflow: hidden;
@@ -181,14 +181,14 @@
   .fh-badge {
     width: 10px;
     font-family: var(--font-mono);
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     font-weight: bold;
     color: var(--amber);
     text-align: center;
   }
   .fh-id {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--amber);
   }
   .fh-id-rest { color: var(--subtext0); }
@@ -200,7 +200,7 @@
     white-space: nowrap;
   }
   .fh-age {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--subtext0);
     font-family: var(--font-mono);
   }
@@ -210,7 +210,7 @@
     color: var(--subtext0);
     border-top: 1px solid var(--surface0);
   }
-  .fh-sparse small { display: block; margin-bottom: 6px; font-size: 10px; }
+  .fh-sparse small { display: block; margin-bottom: 6px; font-size: var(--fs-xs); }
   .fh-load-full {
     padding: 4px 10px;
     border: 1px solid var(--surface1);
@@ -218,7 +218,7 @@
     background: var(--surface0);
     color: var(--text);
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .fh-load-full:hover { background: var(--surface1); }
@@ -226,7 +226,7 @@
     padding: 16px;
     text-align: center;
     color: var(--subtext0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
   .fh-error { color: var(--red); }
 </style>

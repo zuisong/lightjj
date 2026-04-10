@@ -12,10 +12,23 @@ import type { RemoteVisibilityByRepo } from './api'
 
 const STORAGE_KEY = 'lightjj-config'
 
+// 18px graph-row height is the hard ceiling — see theme.css and CLAUDE.md.
+export const FONT_SIZE_MIN = 10
+export const FONT_SIZE_MAX = 16
+export const FONT_SIZE_DEFAULT = 13
+
 interface Config {
   theme: string  // matches THEMES[].id in themes.ts; legacy 'dark'|'light' values are valid ids
   splitView: boolean
   reduceMotion: boolean
+  /** Base font size in px. The --fs-* scale derives from this. Clamped to
+   *  [10,16] at apply time — beyond that --fs-md overflows the fixed 18px
+   *  graph row height (virtualization arithmetic assumes it). */
+  fontSize: number
+  /** CSS font-family stack for UI text. Empty → theme.css default. */
+  fontUI: string
+  /** CSS font-family stack for code/diffs. Empty → theme.css default. */
+  fontMono: string
   revisionPanelWidth: number
   evologPanelHeight: number
   tutorialVersion: string
@@ -38,6 +51,9 @@ const defaults: Config = {
   theme: 'dark',
   splitView: false,
   reduceMotion: false,
+  fontSize: 13,
+  fontUI: '',
+  fontMono: '',
   revisionPanelWidth: 420,
   evologPanelHeight: 360,
   tutorialVersion: '',
@@ -105,16 +121,18 @@ function createConfig() {
   // binds the type per key.
   const applyKey = <K extends keyof Config>(k: K, v: Config[K]) => { state[k] = v }
 
-  loadRemote().then(remote => {
-    if (remote) {
-      // Narrow unknown-shape remote to known keys. Backend preserves unknown
-      // fields for forward-compat, but we only apply fields we understand.
-      for (const k of Object.keys(defaults) as (keyof Config)[]) {
-        if (k in remote && remote[k] !== undefined) {
-          applyKey(k, remote[k] as Config[typeof k])
-        }
+  // Narrow unknown-shape partial to known keys. Backend preserves unknown
+  // fields for forward-compat, but we only apply fields we understand.
+  function applyPartial(partial: Partial<Config>) {
+    for (const k of Object.keys(defaults) as (keyof Config)[]) {
+      if (k in partial && partial[k] !== undefined) {
+        applyKey(k, partial[k] as Config[typeof k])
       }
     }
+  }
+
+  loadRemote().then(remote => {
+    if (remote) applyPartial(remote)
     // Set AFTER the property writes so Svelte's microtask-batched effect
     // sees hydrated=true alongside the new values.
     hydrated = true
@@ -185,6 +203,24 @@ function createConfig() {
     get reduceMotion() { return state.reduceMotion },
     set reduceMotion(v: boolean) { state.reduceMotion = v },
 
+    // Getter clamps so every read site (CSS var, palette label, ±1 arithmetic)
+    // sees a sane value regardless of how it was loaded — applyKey/loadLocal
+    // write state directly, bypassing the setter. Number() coerces "14" and
+    // rejects "14px"/{} → NaN → default.
+    get fontSize() {
+      const n = Number(state.fontSize)
+      return Number.isFinite(n)
+        ? Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, n))
+        : FONT_SIZE_DEFAULT
+    },
+    set fontSize(v: number) { state.fontSize = v },
+
+    get fontUI() { return state.fontUI },
+    set fontUI(v: string) { state.fontUI = v },
+
+    get fontMono() { return state.fontMono },
+    set fontMono(v: string) { state.fontMono = v },
+
     get revisionPanelWidth() { return state.revisionPanelWidth },
     set revisionPanelWidth(v: number) { state.revisionPanelWidth = v },
 
@@ -210,6 +246,11 @@ function createConfig() {
      *  need the "real" config (not just localStorage defaults) should await this
      *  before reading — e.g., the tutorial/what's-new check. */
     ready,
+
+    /** Push a parsed config object into reactive state (known keys only).
+     *  Used by ConfigModal after a manual JSON edit so theme/font changes
+     *  apply without reload. The save-effect then persists to disk + localStorage. */
+    applyPartial,
   }
 }
 

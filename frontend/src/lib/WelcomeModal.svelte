@@ -83,7 +83,7 @@
 
   .welcome-header {
     padding: 20px 24px 12px;
-    font-size: 16px;
+    font-size: var(--fs-xl);
     font-weight: 600;
     color: var(--text);
   }
@@ -112,7 +112,7 @@
     border: 1px solid var(--surface1);
     border-radius: 4px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
     white-space: nowrap;
     flex-shrink: 0;
@@ -126,13 +126,13 @@
   }
 
   .welcome-feature-title {
-    font-size: 13px;
+    font-size: var(--font-size);
     font-weight: 600;
     color: var(--text);
   }
 
   .welcome-feature-desc {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: var(--subtext0);
     line-height: 1.4;
   }
@@ -145,7 +145,7 @@
   }
 
   .welcome-links {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     text-align: center;
     color: var(--subtext0);
   }
@@ -172,7 +172,7 @@
     border: none;
     border-radius: 6px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--font-size);
     font-weight: 600;
     cursor: pointer;
   }

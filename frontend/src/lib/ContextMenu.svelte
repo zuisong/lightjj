@@ -200,7 +200,7 @@
     border-radius: 5px;
     color: var(--text);
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--font-size);
     cursor: pointer;
     text-align: left;
     transition: background 0.08s ease;
@@ -218,7 +218,7 @@
 
   .ctx-shortcut {
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--surface2);
     background: var(--surface0);
     border: 1px solid var(--surface1);

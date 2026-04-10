@@ -2,7 +2,7 @@
 
 Open items only. Done-item narratives live in [docs/CHANGELOG-ARCHIVE.md](docs/CHANGELOG-ARCHIVE.md).
 
-Last shipped: **2026-04-07** v1.11.3 — createLoader migration sweep (BookmarkModal/GitModal/DivergencePanel.crossDiff; GitModal selectedRemote → $derived(override ?? remotes[0]); DivergencePanel 41-line diffGen effect → 11 lines). Backend: 7 handleBookmark* (90 lines) → 3 factories (bookmarkMutation/RevMutation/RemoteMutation, opMutation pattern). DiffPanel: drop 2 redundant 'Operation in progress' editError writes (withMutation already setMessage's it). DiffPanel.previewGen scoped out (barrier-gen, not loader). −73 net.
+Last shipped: **2026-04-09** v1.12.1 — keybind tweaks (issue #6): revset filter Enter blurs (was apply-but-stay-focused → j/k dead until click-out); diff scroll Ctrl+e/y line-step + Ctrl+d/u half-page via new `diffScroll` gate slot in keyboard-gate.ts (between inInput and hasModifier passthrough so Ctrl+E in text fields stays readline end-of-line). 25 gate tests (+2 ordering invariants).
 
 ## Active
 

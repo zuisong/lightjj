@@ -88,7 +88,7 @@
     flex-shrink: 0;
     user-select: none;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
 
   .tab {
@@ -120,7 +120,7 @@
   }
 
   .tab-glyph {
-    font-size: 8px;
+    font-size: var(--fs-3xs);
     opacity: 0.5;
   }
   .tab.active .tab-glyph {
@@ -136,7 +136,7 @@
 
   .tab-close {
     opacity: 0;
-    font-size: 13px;
+    font-size: var(--font-size);
     line-height: 1;
     padding: 0 2px;
     border-radius: 3px;
@@ -159,7 +159,7 @@
     border: none;
     color: var(--surface2);
     font: inherit;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     line-height: 1;
     cursor: pointer;
   }

@@ -12,21 +12,21 @@ A fast, powerful UI for Jujutsu VCS didn't exist, so I built one! In addition to
 - Smart divergence resolution
 - File history
 - Review diffs with markdown preview, annotate lines with severity and comments, export to agent prompt, repeat
-- Works everywhere locally over SSH or port-forwarded
+- Works everywhere — locally, over SSH, or port-forwarded
 - Multi-repo, multi-workspace support
 
 ## Core Features
 
 - **Revision graph** — SVG DAG, working-copy `@` indicator, immutable `◆` markers, bookmark badges with PR status
 - **Diff viewer** — unified/split, Lezer syntax highlighting, word-level diffs, context expansion, conflict A/B labels, open-in-$EDITOR
-- **Bookmarks panel** (`2`) — sync state at a glance: ahead/behind/diverged/conflict, PR badges, staleness. `d`/`f`/`t` for delete/forget/track, per-remote visibility togglesÏ
+- **Bookmarks panel** (`2`) — sync state at a glance: ahead/behind/diverged/conflict, PR badges, staleness. `d`/`f`/`t` for delete/forget/track, per-remote visibility toggles
 - **Inline rebase** — pick source (`-r`/`-s`/`-b`) and target (onto/after/before) modes, cursor to destination, Enter
 - **Multi-select** — batch abandon, squash, rebase across revisions with `Space`
 - **Op log & evolog** — full operation history with undo/restore, per-revision evolution with inter-diffs
 - **File history** — right-click any diff line, two-cursor compare (j/k + Space to pin), scoped to mutable for speed
 - **Inline annotations** — per-line review comments keyed by `change_id`; auto-re-anchor on rewrite; export markdown/JSON
 - **Stale-WC detection** — concurrent CLI op left the working copy stale? Warning bar with one-click recovery
-- **Themes** — dark/light (`t` to toggle)
+- **Themes** — 7 hand-tuned builtins + 486 derived from Ghostty's palette set; `t` toggles dark/light, full picker in Cmd+K
 
 ## Install & Usage
 
@@ -71,7 +71,7 @@ SSH proxy mode adds ~400ms per command (reduce to ~20ms with ControlMaster). Aut
 |         | Theme                 |                                                                                              |
 | ------- | --------------------- | -------------------------------------------------------------------------------------------- |
 | **1.0** | Ship-ready core       | done                                                                                         |
-| **2.0** | Code editing & review | Hunk-level accept/reject, mega-file virtualization, cross-revision search, LSP-in-FileEditor |
+| **2.0** | Code editing & review | Mega-file virtualization, cross-revision search, N-way conflict resolution, LSP-in-FileEditor |
 | **3.0** | Agentic               | Annotations as a library, agent-writable API, MCP server mode                                |
 
 ## Requirements

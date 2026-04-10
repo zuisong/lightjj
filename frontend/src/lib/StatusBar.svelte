@@ -147,7 +147,7 @@
     border-top: 1px solid var(--surface1);
     flex-shrink: 0;
     user-select: none;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
     transition: border-top-color var(--anim-duration) var(--anim-ease);
   }
@@ -175,7 +175,7 @@
     background: var(--amber);
     color: var(--crust);
     font-weight: 800;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     padding: 1px 7px;
@@ -198,7 +198,7 @@
 
   .key {
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     padding: 0 4px;
     border-radius: 3px;
@@ -221,7 +221,7 @@
 
   .key-label {
     color: var(--overlay0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     margin-right: 4px;
   }
 
@@ -233,7 +233,7 @@
 
   .file-count {
     color: var(--subtext0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
 
   .file-count-empty {
@@ -246,12 +246,12 @@
     align-items: center;
     gap: 4px;
     color: var(--surface2);
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
 
   .key-hints kbd {
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--subtext0);
     background: var(--surface0);
     padding: 0 3px;

@@ -663,7 +663,7 @@
     border-radius: 4px;
     padding: 6px 10px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--font-size);
     outline: none;
   }
 
@@ -671,7 +671,7 @@
   .bp-filter::placeholder { color: var(--surface2); }
 
   .bp-count {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--overlay0);
     padding: 2px 8px;
     background: var(--surface0);
@@ -692,7 +692,7 @@
     gap: 8px;
     padding: 6px 14px;
     background: var(--mantle);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--subtext0);
     text-transform: uppercase;
@@ -704,12 +704,12 @@
     background: var(--surface0);
   }
   .bp-chevron {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     width: 10px;
     text-align: center;
   }
   .bp-group-count {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--overlay0);
     font-weight: normal;
     text-transform: none;
@@ -739,7 +739,7 @@
     align-items: flex-start;
     gap: 14px;
     padding: 8px 16px;
-    font-size: 13px;
+    font-size: var(--font-size);
     cursor: pointer;
     border-left: 2px solid transparent;
   }
@@ -794,7 +794,7 @@
   .bp-sync {
     width: 100px;
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
     text-align: left;
   }
@@ -820,7 +820,7 @@
 
   .bp-cid {
     font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--overlay0);
     flex-shrink: 0;
   }
@@ -828,7 +828,7 @@
   .bp-cid-conflict { color: var(--red); }
 
   .bp-desc {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: var(--subtext0);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -841,14 +841,14 @@
   .bp-commit-remote .bp-desc { color: var(--overlay1); }
 
   .bp-ago {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--surface2);
     flex-shrink: 0;
     margin-right: 4px;
   }
 
   .bp-remote-tag {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--overlay0);
     padding: 0 5px;
     background: var(--surface0);
@@ -860,7 +860,7 @@
     display: inline-block;
     margin-left: 6px;
     padding: 0 6px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     background: var(--green);
     color: var(--crust);
@@ -893,7 +893,7 @@
     padding: 24px;
     color: var(--surface2);
     text-align: center;
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 
   .bp-error { color: var(--red); }

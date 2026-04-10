@@ -15,7 +15,7 @@ Status: **released** · Version: `1.0.0`
 | | Theme | What ships |
 |---|---|---|
 | **1.0** | Ship-ready core | Everything above, stable |
-| **2.0** | Code editing/review | Hunk-level accept/reject (`jj split --tool` protocol), mega-file virtualization, cross-revision search, maybe LSP-in-FileEditor |
+| **2.0** | Code editing/review | Hunk-level accept/reject (shipped — `jj split --tool` protocol), mega-file virtualization, cross-revision search, maybe LSP-in-FileEditor |
 | **3.0** | Agentic | Annotations as a library, agent-writable API, auto-re-anchor, maybe MCP server mode |
 
 ---
@@ -71,13 +71,15 @@ Status: **released** · Version: `1.0.0`
 
 ---
 
-## Punted to 1.x (historical — several have since shipped)
+## Punted to 1.x (historical — all have since shipped)
 
 | Item | Status |
 |---|---|
 | `recent-actions` localStorage port loss | **Shipped v1.7.3** — moved to `config.recentActions` (server-side) |
 | `storage` event listener | **Shipped v1.7.3** — cross-tab config sync via `storage` event |
-| `selectedFiles` scratchpad / revset input ownership / `RepoDir == ""` sentinel | Still open (internal debt, see BACKLOG.md) |
+| revset input ownership | **Shipped** — App.svelte owns the filter bar directly (no callback props) |
+| `RepoDir == ""` sentinel | **Shipped** — `s.hasLocalFS()` / `s.isSSHMode()` helpers |
+| `selectedFiles` scratchpad | Still open (internal debt) |
 
 ---
 

@@ -55,7 +55,7 @@ export function getCmLanguage(filePath: string): LanguageSupport | null {
 
 /** CSS-var-driven CM6 theme. 18px line height matches .diff-line / RevisionGraph rows. */
 export const cmTheme = EditorView.theme({
-  '&': { height: '100%', fontSize: '12px', backgroundColor: 'var(--base)', color: 'var(--text)' },
+  '&': { height: '100%', fontSize: 'var(--fs-md)', backgroundColor: 'var(--base)', color: 'var(--text)' },
   '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--font-mono, monospace)' },
   '.cm-content': { padding: '0', caretColor: 'var(--text)' },
   '.cm-line': { padding: '0 4px', lineHeight: '18px' },

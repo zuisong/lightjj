@@ -6,6 +6,8 @@ export interface TutorialFeature {
 }
 
 export const FEATURES: TutorialFeature[] = [
+  { version: '1.13.0', shortcut: '\u2318K \u2192 Font size', title: 'Configurable typography', description: 'Set base font size (10\u201316px, everything scales) and custom font families via Cmd+K \u2192 "Edit config (JSON)". Live-apply on save \u2014 no reload.' },
+  { version: '1.13.0', shortcut: '\u2318K \u2192 Edit config', title: 'In-app config editor', description: 'Edit ~/.config/lightjj/config.json in a CodeMirror modal. Parse-validated; theme/font/editorArgs apply immediately.' },
   { version: '1.12.0', shortcut: 'm', title: 'Excalidraw preview', description: '.excalidraw files get a Preview button (and the `m` key) like markdown. Zero-dep in-tree SVG renderer \u2014 clean shapes, panzoom, 2KB lazy chunk.' },
   { version: '1.11.0', shortcut: '\u2318K → Theme', title: '493 color themes', description: '7 hand-tuned builtins + 486 derived from Ghostty\'s palette set. Swatch preview in the picker; `t` still toggles dark↔light.' },
   { version: '0.1.0', shortcut: 'j / k', title: 'Navigate revisions', description: 'Move through the revision graph. Enter to view diff.' },

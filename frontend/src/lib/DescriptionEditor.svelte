@@ -48,7 +48,7 @@
 
   .desc-label {
     display: block;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
     margin-bottom: 6px;
     font-weight: 600;
@@ -64,7 +64,7 @@
     border-radius: 4px;
     padding: 8px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--font-size);
     resize: vertical;
     outline: none;
     transition: border-color 0.15s ease;
@@ -85,7 +85,7 @@
     background: var(--bg-btn-kbd);
     padding: 0 4px;
     border-radius: 2px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-family: inherit;
   }
 </style>

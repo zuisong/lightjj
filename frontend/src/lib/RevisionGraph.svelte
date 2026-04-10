@@ -531,7 +531,7 @@
 
   .view-btn {
     padding: 2px 8px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-family: inherit;
     font-weight: 500;
     border: none;
@@ -563,7 +563,7 @@
 
   .batch-label {
     color: var(--green);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     margin-right: 4px;
   }
@@ -620,7 +620,7 @@
     color: var(--subtext0);
     padding: 0 6px;
     border-radius: 8px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
   }
 
@@ -667,7 +667,9 @@
     contain-intrinsic-size: 18px;
     height: 18px;
     line-height: 18px;
-    font-size: 13px;
+    /* --fs-md (base-1) not --font-size: leaves descender headroom at max base
+       (15 in 18 vs 16 in 18) for fontUI overrides with taller metrics. */
+    font-size: var(--fs-md);
     cursor: pointer;
     outline: none;
     -webkit-tap-highlight-color: transparent;
@@ -728,7 +730,7 @@
     flex-shrink: 0;
     text-align: center;
     color: var(--green);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 400;
     padding-left: 2px;
     opacity: 0.85;
@@ -756,7 +758,7 @@
 
   .change-id {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--amber);
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -790,7 +792,7 @@
 
   .elided-label {
     color: var(--surface2);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     letter-spacing: 0.04em;
     flex-shrink: 0;
   }
@@ -805,7 +807,7 @@
 
   .commit-id {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--overlay0);
     letter-spacing: 0.02em;
   }
@@ -817,7 +819,7 @@
     color: var(--subtext0);
     padding: 0 5px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     border: 1px solid var(--border-bookmark);
     line-height: 1.15;
@@ -847,7 +849,7 @@
     align-items: center;
     padding: 0 4px;
     border-radius: 3px;
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     font-weight: 500;
     color: var(--overlay0);
     border: 1px solid var(--surface0);
@@ -864,7 +866,7 @@
     color: var(--subtext0);
     padding: 0 5px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     border: 1px solid var(--border-pr);
     line-height: 1.15;
@@ -919,13 +921,13 @@
     color: var(--subtext0);
     padding: 0 5px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     line-height: 1.15;
   }
 
   .timestamp-chip {
     color: var(--overlay0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     line-height: 1.15;
   }
 
@@ -936,7 +938,7 @@
     color: var(--subtext0);
     padding: 0 5px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     border: 1px solid var(--border-workspace);
     line-height: 1.15;
@@ -945,7 +947,7 @@
   }
 
   .mode-badge {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     padding: 0 4px;
     border-radius: 3px;
@@ -966,7 +968,7 @@
    * needs attention" states that block clean shipping. The ×-glyph in GraphSvg
    * is the gutter indicator for conflict; this badge makes it scannable. */
   .alert-badge {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     padding: 0 4px;
     border-radius: 3px;
@@ -997,18 +999,18 @@
   .desc-placeholder,
   .empty-label {
     color: var(--overlay0);
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
 
   .rebase-preview {
     color: var(--overlay0);
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-style: italic;
   }
 
   .description-text {
     color: var(--text);
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
 
   .wc .description-text {
@@ -1024,7 +1026,7 @@
     gap: 8px;
     padding: 48px 24px;
     color: var(--surface2);
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 
 

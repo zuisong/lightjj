@@ -55,11 +55,12 @@ The revision graph uses multiple colors to distinguish parallel branches:
 
 - **Muted** (~60% saturation) so they don't compete with semantic tier
 - **Reduced opacity**: lines at `0.45`, nodes at `0.8`
-- **Never amber, green, or red** — avoids confusion with semantic meaning
+- **Never amber, green, or red** (builtin themes) — avoids confusion with semantic meaning
 - **Never used outside the graph** — purely decorative
 
-8 graph colors (dark/light):
-- Ochre, Terra, Mauve, Plum, Slate, Teal, Moss, Olive
+Each builtin theme hand-picks 8 hues; the default dark/light pair uses Ochre, Terra, Mauve, Plum, Slate, Teal, Moss, Olive. Nord/Gruvbox/Dracula/Tokyo Night/Rosé Pine use their native accent sets.
+
+**Ghostty-derived themes are exempt from the never-red/green rule.** `deriveTheme()` maps `--graph-N` straight from the 16-slot ANSI palette (`p[1]`, `p[2]`, …) — there aren't 8 distinct non-semantic hues available in 16 ANSI slots. The 0.45/0.8 opacity tier still applies, which mutes them enough that semantic confusion hasn't surfaced in practice.
 
 ---
 
@@ -140,8 +141,9 @@ BADGES (entity types — neutral by default):
 
 GRAPH (isolated, decorative only):
   8 muted colors, 0.45 opacity lines, 0.8 opacity nodes
-  Never amber/green/red. Never used outside the graph.
+  Never amber/green/red (builtins). Never used outside the graph.
   Exception: semantic nodes (@=amber, ×=red) use Tier 1 colors at full opacity.
+  Exception: Ghostty themes map graph-N from ANSI p[] — may include red/green.
 
 DIFF:
   Added lines   → green bg + green text

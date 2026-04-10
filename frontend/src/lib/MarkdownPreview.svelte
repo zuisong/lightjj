@@ -208,7 +208,7 @@
         {/each}
       </div>
     {/if}
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="md-content" bind:this={container} onclick={handleContentClick}>
       {@html html}
     </div>
@@ -219,7 +219,7 @@
   .md-preview {
     padding: 12px 24px 12px 0;
     font-family: system-ui, -apple-system, sans-serif;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     line-height: 1.6;
     color: var(--text);
     /* 1100px ≈ 90ch at 14px — upper bound of readable prose. Code blocks
@@ -253,11 +253,11 @@
   .md-gutter :global(.annotation-badge) {
     position: static;  /* override theme.css absolute */
     pointer-events: auto;
-    font-size: 13px;
+    font-size: var(--font-size);
     padding: 2px 4px;
     margin-top: 2px;
   }
-  .md-gutter :global(.annotation-badge sup) { font-size: 9px; vertical-align: super; }
+  .md-gutter :global(.annotation-badge sup) { font-size: var(--fs-2xs); vertical-align: super; }
   .md-content {
     padding-left: 36px;
     /* Containing block for fixed-position descendants — neutralizes the
@@ -428,7 +428,7 @@
     background: color-mix(in srgb, var(--mantle) 80%, transparent);
     border-radius: 6px;
     backdrop-filter: blur(6px);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     opacity: 0.75;
     transition: opacity 120ms ease;
     z-index: 1;
@@ -468,7 +468,7 @@
   }
   .md-toc-item.deep {
     color: var(--overlay0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
   .md-toc-close {
     align-self: flex-end;
@@ -480,7 +480,7 @@
     background: transparent;
     border: none;
     color: var(--overlay0);
-    font-size: 12px;
+    font-size: var(--fs-md);
     line-height: 1;
     cursor: pointer;
     border-radius: 3px;
@@ -506,7 +506,7 @@
     border: none;
     border-radius: 6px 0 0 6px;
     color: var(--subtext0);
-    font-size: 12px;
+    font-size: var(--fs-md);
     cursor: pointer;
     backdrop-filter: blur(6px);
   }
@@ -514,7 +514,7 @@
 
   .md-hint {
     display: inline-block;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--overlay0);
     margin: -4px 0 12px 36px;
     padding: 2px 8px;

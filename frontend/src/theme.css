@@ -39,7 +39,7 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--font-size);
   background: var(--base);
   color: var(--text);
   overflow: hidden;
@@ -71,6 +71,21 @@ body {
 :root {
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+
+  /* Typography scale. --font-size is the config override hook (App.svelte sets
+     it via root.style.setProperty); the --fs-* derived sizes are what
+     components reference. Additive offsets (not ratios) so default 13 yields
+     the exact px values the UI was tuned for. max() floors on the smallest
+     tiers stop badge/hint text underflowing to 5-7px when base is lowered for
+     density. Keep the 13px in sync with FONT_SIZE_DEFAULT (config.svelte.ts). */
+  --font-size: 13px;
+  --fs-3xs: max( 8px, calc(var(--font-size) - 5px));
+  --fs-2xs: max( 9px, calc(var(--font-size) - 4px));
+  --fs-xs:  max(10px, calc(var(--font-size) - 3px));
+  --fs-sm:  calc(var(--font-size) - 2px);   /* 11 */
+  --fs-md:  calc(var(--font-size) - 1px);   /* 12 */
+  --fs-lg:  calc(var(--font-size) + 1px);   /* 14 */
+  --fs-xl:  calc(var(--font-size) + 3px);   /* 16 */
 
   /* surface0/1 derived: text-tinted transparency works for both dark (white
      tint on black) and light (black tint on white) without per-theme hex. */
@@ -243,7 +258,7 @@ body {
   border-radius: 4px;
   color: var(--subtext0);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   line-height: 1.4;
   cursor: pointer;
   transition: background-color var(--anim-duration) var(--anim-ease),
@@ -263,7 +278,7 @@ body {
 /* Compact variant for dense contexts (file headers, inline actions). */
 .btn-sm {
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 /* Filled accent — commits an action (Save, Commit, Keep). */
@@ -305,7 +320,7 @@ body {
   border-color: var(--green);
 }
 
-/* Segmented toggle (Unified|Split, Log|Tracked). Container + segments. */
+/* Segmented toggle (Unified|Split, Code|Preview). Container + segments. */
 .seg {
   display: inline-flex;
   background: var(--surface0);
@@ -319,7 +334,7 @@ body {
   border: none;
   color: var(--subtext0);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 .seg-btn:hover:not(.active) { color: var(--text); }
@@ -343,7 +358,7 @@ body {
   user-select: none;
 }
 .panel-title {
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -378,7 +393,7 @@ body {
 }
 .modal-header {
   padding: 10px 16px 6px;
-  font-size: 12px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--subtext0);
   text-transform: uppercase;
@@ -395,7 +410,7 @@ body {
   border: none;
   border-bottom: 1px solid var(--surface0);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-size);
   outline: none;
 }
 .modal-input::placeholder { color: var(--surface2); }
@@ -406,7 +421,7 @@ body {
   border: none;
   color: var(--subtext0);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-lg);
   padding: 0 4px;
   line-height: 1;
 }
@@ -424,7 +439,7 @@ body {
    Used via <kbd class="nav-hint">j</kbd><kbd class="nav-hint">k</kbd>. */
 .nav-hint {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 500;
   text-transform: none;
   letter-spacing: 0;
@@ -523,7 +538,7 @@ body {
   gap: 14px;
   padding: 8px 16px;
   border-top: 1px solid var(--surface0);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   color: var(--subtext0);
   background: var(--mantle);
 }
@@ -533,7 +548,7 @@ kbd.key, .key-footer kbd {
   min-width: 14px;
   padding: 1px 4px;
   font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   text-align: center;
   background: var(--surface0);
   border: 1px solid var(--surface1);

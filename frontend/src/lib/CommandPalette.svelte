@@ -262,7 +262,7 @@
 
   .palette-arrow {
     color: var(--amber);
-    font-size: 14px;
+    font-size: var(--fs-lg);
     flex-shrink: 0;
   }
 
@@ -273,7 +273,7 @@
     border: none;
     padding: 0;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     outline: none;
   }
 
@@ -283,7 +283,7 @@
 
   .palette-esc {
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--surface2);
     background: var(--surface0);
     border: 1px solid var(--surface1);
@@ -313,7 +313,7 @@
 
   .cheatsheet-header {
     color: var(--green);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -332,7 +332,7 @@
     border: none;
     color: var(--text);
     font-family: inherit;
-    font-size: 12px;
+    font-size: var(--fs-md);
     cursor: pointer;
     text-align: left;
     border-radius: 3px;
@@ -351,7 +351,7 @@
     color: var(--amber);
     min-width: 36px;
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     background: none;
     border: none;
     padding: 0;
@@ -359,14 +359,14 @@
 
   .cheatsheet-label {
     color: var(--subtext0);
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
 
   .cheatsheet-hint {
     column-span: all;
     text-align: center;
     color: var(--surface2);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     padding: 8px 0 4px;
   }
 
@@ -386,7 +386,7 @@
     border: none;
     color: var(--text);
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--font-size);
     cursor: pointer;
     text-align: left;
   }
@@ -405,7 +405,7 @@
     color: var(--subtext0);
     padding: 1px 6px;
     border-radius: 3px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-family: inherit;
     border: 1px solid var(--surface1);
     margin-left: 12px;
@@ -416,7 +416,7 @@
   }
 
   .palette-badge {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     font-weight: 500;
     letter-spacing: 0.02em;
     color: var(--overlay0);
@@ -434,7 +434,7 @@
     border: none;
     color: var(--amber);
     font-family: inherit;
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 600;
     padding: 0 4px 0 0;
     cursor: pointer;
@@ -459,7 +459,7 @@
   .palette-hint {
     color: var(--surface2);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     margin-left: auto;
     padding-left: 12px;
     overflow: hidden;
@@ -480,6 +480,6 @@
     padding: 16px;
     color: var(--surface2);
     text-align: center;
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 </style>

@@ -147,7 +147,7 @@
     justify-content: space-between;
     padding: 6px 12px;
     background: var(--bg-selected);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--amber);
   }
@@ -163,7 +163,7 @@
     padding: 0 4px;
     border-radius: 3px;
     font-family: inherit;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     border: 1px solid var(--surface1);
     color: var(--overlay0);
     font-weight: 500;
@@ -181,7 +181,7 @@
     border: none;
     color: var(--subtext0);
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 500;
     cursor: pointer;
     padding: 0;
@@ -212,7 +212,7 @@
     gap: 6px;
     padding: 4px 12px;
     color: var(--text);
-    font-size: 12px;
+    font-size: var(--fs-md);
     cursor: pointer;
     user-select: none;
     transition: background-color var(--anim-duration) var(--anim-ease);
@@ -230,7 +230,7 @@
     width: 14px;
     flex-shrink: 0;
     text-align: center;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 700;
     transition: color var(--anim-duration) var(--anim-ease),
                 transform var(--anim-duration) var(--anim-ease);
@@ -247,7 +247,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
   }
 
@@ -271,7 +271,7 @@
   .file-tab-stats {
     display: inline-flex;
     gap: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     opacity: 0.7;
   }
 

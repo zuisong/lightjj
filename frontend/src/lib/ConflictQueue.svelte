@@ -205,7 +205,7 @@
     align-items: baseline;
     gap: 6px;
     padding: 6px 10px 4px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     border-top: 1px solid var(--surface0);
     color: var(--subtext0);
   }
@@ -213,7 +213,7 @@
   .cq-change-id {
     font-family: var(--font-mono);
     color: var(--amber);
-    font-size: 10px;
+    font-size: var(--fs-xs);
   }
   .cq-desc {
     flex: 1;
@@ -232,7 +232,7 @@
     background: transparent;
     color: var(--text);
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
   }
@@ -258,13 +258,13 @@
   }
   .cq-propagated { opacity: 0.55; }
   .cq-hint {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--overlay0);
     cursor: help;
   }
   .cq-footer-hint { color: var(--overlay0); }
   .cq-nway {
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     padding: 1px 4px;
     border-radius: 3px;
     background: color-mix(in srgb, var(--red) 18%, transparent);
@@ -274,12 +274,12 @@
     padding: 20px;
     text-align: center;
     color: var(--subtext0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
   }
   .cq-footer {
     padding: 6px 10px;
     border-top: 1px solid var(--surface0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-family: var(--font-mono);
     color: var(--subtext0);
     text-align: center;

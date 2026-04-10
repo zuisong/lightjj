@@ -99,7 +99,7 @@
 
   .sr-summary {
     padding: 6px 12px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
     border-bottom: 1px solid var(--surface0);
     user-select: none;
@@ -128,7 +128,7 @@
     display: flex;
     align-items: baseline;
     gap: 8px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     margin-bottom: 2px;
   }
   .sr-path {
@@ -143,7 +143,7 @@
 
   .sr-line {
     font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     padding: 0 5px;
     border-radius: 3px;
     background: var(--surface0);
@@ -155,7 +155,7 @@
 
   .sr-snippet {
     font-family: var(--font-mono, monospace);
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: var(--subtext0);
     white-space: pre;
     overflow: hidden;

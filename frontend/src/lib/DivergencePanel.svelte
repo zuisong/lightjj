@@ -607,12 +607,12 @@
     display: flex; align-items: center; gap: 8px;
   }
   .kind-badge {
-    font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: 0;
+    font-size: var(--fs-xs); font-weight: 600; text-transform: none; letter-spacing: 0;
     padding: 1px 6px; border-radius: 3px;
     background: var(--surface1); color: var(--subtext0);
   }
   .stack-badge {
-    font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: 0;
+    font-size: var(--fs-xs); font-weight: 600; text-transform: none; letter-spacing: 0;
     padding: 1px 6px; border-radius: 3px;
     background: var(--amber); color: var(--crust);
   }
@@ -622,16 +622,16 @@
     display: flex; gap: 8px; align-items: flex-start;
     padding: 8px 10px; margin-bottom: 12px;
     background: var(--surface0); border-left: 3px solid var(--amber);
-    border-radius: 4px; font-size: 11px;
+    border-radius: 4px; font-size: var(--fs-sm);
   }
   .warn-icon { color: var(--amber); flex-shrink: 0; }
   .warn-text { color: var(--subtext0); }
   .warn-id { color: var(--text); font-family: var(--font-mono); }
 
-  .divergence-info { color: var(--subtext0); font-size: 12px; margin-bottom: 12px; }
+  .divergence-info { color: var(--subtext0); font-size: var(--fs-md); margin-bottom: 12px; }
   .change-id-highlight { color: var(--amber); font-family: var(--font-mono); font-weight: 600; }
-  .info-detail { color: var(--overlay0); font-size: 11px; }
-  .live-hint { color: var(--green); font-size: 11px; margin-left: 6px; }
+  .info-detail { color: var(--overlay0); font-size: var(--fs-sm); }
+  .live-hint { color: var(--green); font-size: var(--fs-sm); margin-left: 6px; }
 
   .version-columns {
     display: grid;
@@ -663,21 +663,21 @@
 
   .col-header {
     display: flex; align-items: center; gap: 6px;
-    font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+    font-family: var(--font-mono); font-size: var(--fs-md); font-weight: 700;
     color: var(--subtext1); padding-bottom: 6px;
   }
   .col-idx {
     color: var(--overlay0);
     /* /N is the column's "name" — make it readable. */
-    font-size: 13px; letter-spacing: -0.02em;
+    font-size: var(--font-size); letter-spacing: -0.02em;
   }
-  .live-dot { color: var(--green); font-size: 10px; }
+  .live-dot { color: var(--green); font-size: var(--fs-xs); }
 
   /* Description — THE discriminator for metadata-only. When it IS the key
      difference (.col-desc-key), quote-block it with an amber accent so the
      eye lands there first. */
   .col-desc {
-    font-size: 11px; color: var(--text); line-height: 1.4;
+    font-size: var(--fs-sm); color: var(--text); line-height: 1.4;
     padding: 2px 0 6px; border-bottom: 1px solid var(--surface1);
     overflow: hidden; text-overflow: ellipsis;
     display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
@@ -695,10 +695,10 @@
      the subdued default styling de-emphasizes. */
   .col-parent {
     display: inline-flex; align-items: baseline; gap: 4px;
-    padding: 2px 0; font-size: 10px;
+    padding: 2px 0; font-size: var(--fs-xs);
   }
   .col-parent-label {
-    color: var(--overlay0); font-size: 9px;
+    color: var(--overlay0); font-size: var(--fs-2xs);
     text-transform: uppercase; letter-spacing: 0.04em;
   }
   .col-parent-id {
@@ -715,23 +715,23 @@
 
   .version-cell {
     display: flex; align-items: baseline; gap: 6px;
-    font-family: var(--font-mono); font-size: 11px;
+    font-family: var(--font-mono); font-size: var(--fs-sm);
     padding: 2px 0; min-width: 0;
   }
   .cell-change-id { color: var(--amber); flex-shrink: 0; }
   .cell-commit-id { color: var(--subtext0); flex-shrink: 0; }
   .cell-bookmarks {
-    color: var(--lavender); font-size: 10px;
+    color: var(--lavender); font-size: var(--fs-xs);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .cell-desc {
-    color: var(--text); font-family: inherit; font-size: 10px;
+    color: var(--text); font-family: inherit; font-size: var(--fs-xs);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .descendant-cell { opacity: 0.7; padding-left: 8px; }
   .descendant-marker { color: var(--overlay0); }
   .empty-tag {
-    font-size: 9px; padding: 0 4px; border-radius: 2px;
+    font-size: var(--fs-2xs); padding: 0 4px; border-radius: 2px;
     background: var(--surface2); color: var(--overlay1);
   }
 
@@ -739,7 +739,7 @@
     margin-top: auto; padding: 6px 10px;
     background: var(--surface1); border: 1px solid var(--surface2); color: var(--text);
     border-radius: 4px; cursor: pointer;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+    font-size: var(--fs-sm); font-weight: 700; letter-spacing: 0.02em;
     transition: background 100ms ease, transform 80ms ease;
   }
   .keep-btn.keep-live {
@@ -756,17 +756,17 @@
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 10px; flex-wrap: wrap;
   }
-  .compare-label { color: var(--subtext0); font-size: 11px; font-weight: 600; }
+  .compare-label { color: var(--subtext0); font-size: var(--fs-sm); font-weight: 600; }
   .compare-select {
     background: var(--surface0); color: var(--text);
     border: 1px solid var(--surface1); border-radius: 3px;
-    padding: 2px 6px; font-family: var(--font-mono); font-size: 11px;
+    padding: 2px 6px; font-family: var(--font-mono); font-size: var(--fs-sm);
   }
   .compare-arrow { color: var(--overlay0); }
-  .file-count { color: var(--overlay0); font-size: 10px; margin-left: auto; }
+  .file-count { color: var(--overlay0); font-size: var(--fs-xs); margin-left: auto; }
 
   .diff-loading, .diff-empty {
-    color: var(--surface2); font-size: 12px; padding: 12px 0; text-align: center;
+    color: var(--surface2); font-size: var(--fs-md); padding: 12px 0; text-align: center;
   }
   .diff-error { color: var(--red); }
   .cross-diff { margin-top: 4px; }
@@ -784,26 +784,26 @@
   .confirm-title { font-weight: 700; margin-bottom: 10px; color: var(--red); }
   .confirm-item {
     display: flex; gap: 8px; padding: 4px 0;
-    font-family: var(--font-mono); font-size: 11px;
+    font-family: var(--font-mono); font-size: var(--fs-sm);
   }
   .confirm-id { color: var(--subtext0); }
   .confirm-desc { color: var(--text); }
-  .confirm-hint { margin-top: 10px; font-size: 11px; color: var(--overlay0); }
+  .confirm-hint { margin-top: 10px; font-size: var(--fs-sm); color: var(--overlay0); }
   .confirm-actions { display: flex; gap: 8px; margin-top: 14px; }
   .dp-btn-confirm {
     padding: 4px 12px; background: var(--green); color: var(--crust);
-    border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 600;
+    border: none; border-radius: 3px; cursor: pointer; font-size: var(--fs-sm); font-weight: 600;
   }
   .dp-btn-abandon {
     padding: 4px 12px; background: var(--red); color: var(--crust);
-    border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 600;
+    border: none; border-radius: 3px; cursor: pointer; font-size: var(--fs-sm); font-weight: 600;
   }
 
   .empty-state {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 8px; padding: 48px 24px; color: var(--surface2); font-size: 13px;
+    gap: 8px; padding: 48px 24px; color: var(--surface2); font-size: var(--font-size);
   }
-  .error-message { color: var(--red); font-size: 12px; padding: 12px; }
+  .error-message { color: var(--red); font-size: var(--fs-md); padding: 12px; }
 
   .kind-immut { background: var(--amber); color: var(--crust); }
 
@@ -826,7 +826,7 @@
     display: flex; align-items: center; gap: 6px; margin-bottom: 3px;
   }
   .strategy-verb {
-    font-size: 13px; font-weight: 700; color: var(--text);
+    font-size: var(--font-size); font-weight: 700; color: var(--text);
     letter-spacing: -0.01em;
   }
   .strategy-target {
@@ -834,7 +834,7 @@
     margin-left: 1px;
   }
   .strategy-conf {
-    font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    font-size: var(--fs-3xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
     padding: 2px 6px; border-radius: 3px;
     background: var(--surface1); color: var(--subtext0);
     /* Sit tight against the verb, not floating off to the right. */
@@ -847,7 +847,7 @@
   }
 
   .strategy-reason {
-    font-size: 11px; color: var(--subtext0); line-height: 1.45;
+    font-size: var(--fs-sm); color: var(--subtext0); line-height: 1.45;
   }
   .strategy-reason:not(:last-child) { margin-bottom: 8px; }
 
@@ -855,7 +855,7 @@
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   }
   .strategy-apply {
-    padding: 5px 16px; font-size: 11px; font-weight: 700;
+    padding: 5px 16px; font-size: var(--fs-sm); font-weight: 700;
     background: var(--surface1); color: var(--text);
     border: 1px solid var(--surface2); border-radius: 4px; cursor: pointer;
     letter-spacing: 0.01em;
@@ -875,7 +875,7 @@
   .strategy-apply:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .strategy-pill {
-    padding: 3px 10px; font-size: 10px; font-weight: 500;
+    padding: 3px 10px; font-size: var(--fs-xs); font-weight: 500;
     background: transparent; color: var(--subtext0);
     border: 1px solid var(--surface2); border-radius: 12px; cursor: pointer;
     transition: background 100ms ease, color 100ms ease;

@@ -145,7 +145,8 @@ Not caches, but the mechanism that keeps async writes from clobbering state.
 | `loader.generation` | `createLoader()` | result application — `set()` bumps so in-flight `load()` loses |
 | `derivation.generation` | `createDiffDerivation()` | per-file writes + memo-write; `update`/`clear`/`tryRestore` all bump |
 | `revGen` | `createRevisionNavigator()` | the await-before-load gap (below) |
-| `conflictFetchGen` | DiffPanel | in-flight `api.fileShow()` on revision switch |
+| `previewGen` | DiffPanel | barrier-gen — bumped once per identity-change to invalidate ALL in-flight per-file fetches; no single `.value`, so not a `createLoader` candidate |
+| `mergeGen` | App (merge mode) | `loadMergeFile`/`saveMergeResult` against rapid j/k in `ConflictQueue` |
 
 ### The `revGen` await-gap race
 

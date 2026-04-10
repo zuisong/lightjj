@@ -170,7 +170,7 @@
 
   .oplog-content {
     overflow-y: auto;
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
 
   .oplog-entry {
@@ -201,7 +201,7 @@
     font-family: var(--font-mono);
     color: var(--amber);
     font-weight: 600;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
     width: 100px;
   }
@@ -216,7 +216,7 @@
 
   .oplog-time {
     color: var(--surface2);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
     white-space: nowrap;
   }
@@ -227,7 +227,7 @@
     background: var(--mantle);
     border-bottom: 1px solid var(--surface0);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     line-height: 1.5;
     color: var(--subtext1);
     white-space: pre-wrap;
@@ -244,7 +244,7 @@
     gap: 8px;
     padding: 48px 24px;
     color: var(--surface2);
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 
   .error-state {

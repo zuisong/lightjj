@@ -38,12 +38,12 @@
   .ex-canvas:active { cursor: grabbing; }
   .ex-canvas :global(svg) { display: block; width: 100%; height: auto; }
   .ex-hint {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--overlay0);
     text-align: center;
     padding-bottom: 8px;
     user-select: none;
   }
-  .ex-error { padding: 16px; color: var(--subtext0); font-size: 13px; }
+  .ex-error { padding: 16px; color: var(--subtext0); font-size: var(--font-size); }
   .ex-error code { font-family: var(--font-mono, monospace); }
 </style>

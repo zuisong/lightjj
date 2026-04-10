@@ -1596,7 +1596,7 @@
 
   .file-list-label {
     color: var(--surface2);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -1604,7 +1604,7 @@
   }
 
   .total-stats {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     flex-shrink: 0;
     display: flex;
@@ -1626,7 +1626,7 @@
     bottom: 0;
     left: 50%;
     transform: translateX(-50%) translateY(50%);
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--subtext0);
     background: var(--surface0);
     padding: 0 6px;
@@ -1656,7 +1656,7 @@
     padding: 4px 10px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     white-space: nowrap;
     flex-shrink: 0;
     transition: all var(--anim-duration) var(--anim-ease);
@@ -1697,7 +1697,7 @@
   .file-tab-stats {
     display: inline-flex;
     gap: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     opacity: 0.7;
   }
 
@@ -1718,12 +1718,12 @@
     padding: 8px 12px;
     background: var(--mantle);
     border-bottom: 1px solid var(--surface0);
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 600;
   }
 
   .badge-C {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     padding: 0 4px;
     border-radius: 3px;
@@ -1734,7 +1734,7 @@
 
   .conflict-loading {
     color: var(--overlay0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 400;
     font-style: italic;
     flex: 1;
@@ -1748,7 +1748,7 @@
     padding: 4px 12px;
     background: rgba(from var(--amber) r g b / 0.04);
     border-bottom: 1px solid var(--surface0);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
   }
   .annotations-label { color: var(--subtext0); white-space: nowrap; }
@@ -1765,7 +1765,7 @@
     border-left-width: 3px;
     border-radius: 3px;
     padding: 1px 6px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-family: var(--font-mono);
     cursor: pointer;
     white-space: nowrap;
@@ -1794,7 +1794,7 @@
     gap: 4px;
   }
   .ann-hint {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--overlay0);
     padding: 1px 6px;
     user-select: none;
@@ -1822,7 +1822,7 @@
     padding: 3px 8px;
     border-radius: 3px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--fs-md);
     outline: none;
   }
 
@@ -1831,7 +1831,7 @@
   }
 
   .search-count {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: var(--subtext0);
     white-space: nowrap;
     min-width: 60px;
@@ -1849,17 +1849,17 @@
     gap: 8px;
     padding: 48px 24px;
     color: var(--surface2);
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 
   .empty-hint {
     color: var(--overlay0);
-    font-size: 14px;
+    font-size: var(--fs-lg);
   }
 
   .empty-subhint {
     color: var(--surface1);
-    font-size: 12px;
+    font-size: var(--fs-md);
   }
 
   .empty-subhint kbd {
@@ -1867,7 +1867,7 @@
     padding: 1px 4px;
     border-radius: 3px;
     font-family: inherit;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     border: 1px solid var(--surface1);
     color: var(--overlay0);
   }
@@ -1899,7 +1899,7 @@
     background: var(--bg-error);
     border-bottom: 1px solid var(--red);
     color: var(--red);
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 600;
   }
   .edit-error-dismiss {
@@ -1907,7 +1907,7 @@
     background: none;
     border: none;
     color: inherit;
-    font-size: 16px;
+    font-size: var(--fs-xl);
     cursor: pointer;
     padding: 0 4px;
     opacity: 0.7;

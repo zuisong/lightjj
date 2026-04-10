@@ -195,7 +195,7 @@
     flex-shrink: 0;
     overflow-y: auto;
     border-right: 1px solid var(--surface0);
-    font-size: 12px;
+    font-size: var(--fs-md);
     outline: none;
   }
 
@@ -210,7 +210,7 @@
     background: transparent;
     cursor: pointer;
     font-family: inherit;
-    font-size: 12px;
+    font-size: var(--fs-md);
     text-align: left;
   }
 
@@ -234,7 +234,7 @@
     font-family: var(--font-mono);
     color: var(--subtext0);
     font-weight: 600;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
     width: 96px;
   }
@@ -246,13 +246,13 @@
 
   .entry-multi {
     color: var(--overlay0);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     margin-left: 4px;
   }
 
   .entry-time {
     color: var(--surface2);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
     white-space: nowrap;
   }
@@ -271,7 +271,7 @@
     gap: 8px;
     padding: 48px 24px;
     color: var(--surface2);
-    font-size: 13px;
+    font-size: var(--font-size);
   }
 
 </style>
