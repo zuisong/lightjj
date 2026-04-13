@@ -6,6 +6,8 @@ export interface TutorialFeature {
 }
 
 export const FEATURES: TutorialFeature[] = [
+  { version: '1.16.0', shortcut: null, title: 'Out-of-sync bookmark indicator', description: 'Local bookmark badges show jj\'s amber * when they differ from any tracked remote — same decorator the CLI uses. Conflict (??) takes precedence; never-pushed bookmarks stay undecorated.' },
+  { version: '1.16.0', shortcut: null, title: 'Tab title disconnect indicator', description: 'The browser tab title prefixes ⚠ and appends "— disconnected" when the backend stops responding. Clears automatically on reconnect — no reload needed.' },
   { version: '1.15.0', shortcut: null, title: 'Prose-grade markdown typography', description: 'Looser leading (1.72), negative tracking on h1/h2, variable-font weights (370 body / 650 h2), zebra tables, hover-underline links. New fontMdDisplay config sets a serif h1 independent of h2–h6.' },
   { version: '1.14.0', shortcut: '⇧J / ⇧K', title: 'Slide commits (jj arrange lite)', description: 'Single-step reorder: swap the selected revision with its topological parent (⇧J) or child (⇧K). Linear segments only — at merges/forks, use Rebase mode.' },
   { version: '1.14.0', shortcut: null, title: 'Graph colors avoid semantic clash', description: 'Ghostty-derived themes now rank graph-lane hues by distance from amber/green/red and desaturate 25% — lane 0 is no longer the same color as your selection highlight.' },

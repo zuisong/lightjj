@@ -38,6 +38,8 @@ export interface LocalRef {
   name: string
   /** jj's "??" — bookmark points at multiple commits, appears on each. */
   conflict?: boolean
+  /** jj's "*" — bookmark differs from at least one tracked remote. */
+  unsynced?: boolean
 }
 
 export interface RemoteRef {
@@ -135,6 +137,16 @@ function notifyStaleWC(stale: boolean) {
   for (const cb of staleWCCallbacks) cb(stale)
 }
 
+// SSE liveness subscribers. Edge-only (mirrors watcher.go setStale) so the
+// `op` event firing every few seconds doesn't churn document.title writes.
+const sseStateCallbacks = new Set<(connected: boolean) => void>()
+let lastSSEConnected = true
+function notifySSEState(connected: boolean) {
+  if (connected === lastSSEConnected) return
+  lastSSEConnected = connected
+  for (const cb of sseStateCallbacks) cb(connected)
+}
+
 // Per-revision cache keyed by commit_id. A commit_id is a content hash of
 // tree + parents + message — if it hasn't changed, the cached diff/files/
 // description are provably valid. No op-id suffix, no clear-on-mutation.
@@ -161,6 +173,18 @@ export function onStale(callback: () => void): () => void {
 export function onStaleWC(callback: (stale: boolean) => void): () => void {
   staleWCCallbacks.add(callback)
   return () => { staleWCCallbacks.delete(callback) }
+}
+
+/**
+ * Subscribe to SSE connection state (true=connected, false=server unreachable).
+ * Pushes current state immediately — module-level lastSSEConnected survives the
+ * {#key activeTabId} remount, so a fresh App's $state(true) would otherwise miss
+ * a pre-existing disconnect (edge-dedup swallows the next false).
+ */
+export function onSSEState(callback: (connected: boolean) => void): () => void {
+  sseStateCallbacks.add(callback)
+  callback(lastSSEConnected)
+  return () => { sseStateCallbacks.delete(callback) }
 }
 
 // Per-repo session memos — cleared by both setActiveTab (different repo) and
@@ -297,6 +321,7 @@ export function wireAutoRefresh(): () => void {
       everSawEvent = true
       sawEventThisConn = true
       closesWithoutEvent = 0
+      notifySSEState(true)
     }
     es.addEventListener('op', (ev) => {
       mark()
@@ -314,10 +339,13 @@ export function wireAutoRefresh(): () => void {
     // Non-200 response (including 204 from handleEventsDisabled — spec is
     // exact-match "status is not 200") → readyState CLOSED.
     es.addEventListener('error', () => {
+      if (stopped) return
+      // Any error (including CONNECTING auto-retry) means the server isn't
+      // responding right now; mark() flips this back on the next event.
+      notifySSEState(false)
       if (es?.readyState !== EventSource.CLOSED) return
       es.close()
       es = null
-      if (stopped) return
       if (!sawEventThisConn) closesWithoutEvent++
       // handleEvents sends op-id immediately on connect. Never seeing one means
       // the watcher isn't wired. `everSawEvent` covers first-connect; the counter

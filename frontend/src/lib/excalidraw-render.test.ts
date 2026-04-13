@@ -28,8 +28,22 @@ describe('renderExcalidrawSVG', () => {
     ]))!
     // PAD=20 → viewBox starts at -10,0; size 140,80
     expect(svg).toMatch(/viewBox="-10 0 140 80"/)
+    // type 3, minSide=40 → min(32, 40*0.25)=10 (under cap)
     expect(svg).toContain('<rect x="10" y="20" width="100" height="40" rx="10"')
     expect(svg).toContain('fill="#ff0000"')
+  })
+
+  it('rectangle roundness: type-3 caps at 32; type-2 stays proportional; null omits rx', () => {
+    const r = (width: number, roundness: object | null) =>
+      renderExcalidrawSVG(doc([{ ...base, type: 'rectangle', x: 0, y: 0, width, height: width, roundness }]))!
+    // type 3 (ADAPTIVE): 400×400 → min(32, 100) = 32. Previously emitted 100.
+    expect(r(400, { type: 3 })).toContain('rx="32"')
+    // type 3 with explicit value
+    expect(r(400, { type: 3, value: 16 })).toContain('rx="16"')
+    // type 2 (PROPORTIONAL): uncapped 25%
+    expect(r(400, { type: 2 })).toContain('rx="100"')
+    // null → sharp, no rx attr
+    expect(r(400, null)).not.toContain('rx=')
   })
 
   it('non-solid fillStyle / transparent bg → fill=none', () => {

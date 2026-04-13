@@ -29,9 +29,12 @@ type RemoteRef struct {
 
 // LocalRef is a local bookmark with its conflict state. A conflicted bookmark
 // (jj's "??" decorator) points at multiple commits and appears on each of them.
+// Unsynced (jj's "*" decorator) means the bookmark has at least one tracked
+// remote whose target differs.
 type LocalRef struct {
 	Name     string `json:"name"`
 	Conflict bool   `json:"conflict,omitempty"`
+	Unsynced bool   `json:"unsynced,omitempty"`
 }
 
 // GraphRow represents one revision in the log, with its graph lines and commit data.
@@ -204,11 +207,17 @@ func parseNodeLine(line string) GraphRow {
 					Remote: remote,
 				})
 			} else {
-				name, conflict, _ := strings.Cut(bm, "\x1d")
-				row.Bookmarks = append(row.Bookmarks, LocalRef{
-					Name:     stripRefQuotes(name),
-					Conflict: conflict == "true",
-				})
+				parts := strings.SplitN(bm, "\x1d", 3)
+				ref := LocalRef{Name: stripRefQuotes(parts[0])}
+				if len(parts) > 1 {
+					ref.Conflict = parts[1] == "true"
+				}
+				if len(parts) > 2 {
+					// Template emits b.synced(); store the inverse so the
+					// zero value (omitted under omitempty) means "synced".
+					ref.Unsynced = parts[2] == "false"
+				}
+				row.Bookmarks = append(row.Bookmarks, ref)
 			}
 		}
 	}

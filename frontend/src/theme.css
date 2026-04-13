@@ -513,6 +513,14 @@ body {
   margin-left: 1px;
 }
 
+/* --- .sync-marker — jj's * decorator on local bookmarks not synced with their
+   tracked remote(s). Shared by RevisionGraph + RevisionHeader. */
+.sync-marker {
+  color: var(--amber);
+  font-weight: 600;
+  margin-left: 1px;
+}
+
 /* --- .spinner + @keyframes spin — was duplicated in 5 components ---
    Svelte scopes keyframe names so they didn't collide, but each was a
    separate stylesheet rule. Amber top-border on gray ring, 0.8s rotation. */

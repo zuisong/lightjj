@@ -64,13 +64,15 @@
           <a class="detail-pr-badge" class:is-draft={pr.is_draft} class:conflicted={bm.conflict}
              href={pr.url} target="_blank" rel="noopener"
              title="{pr.is_draft ? 'Draft ' : ''}PR #{pr.number} — click to open on GitHub">
-            <span class="pr-name">↗ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{/if}</span>
+            <span class="pr-name">↗ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{:else if bm.unsynced}<span class="sync-marker">*</span>{/if}</span>
             <span class="pr-number">#{pr.number}</span>
           </a>
         {:else}
           <button class="detail-bookmark-badge" class:conflicted={bm.conflict}
              onclick={() => onbookmarkclick(bm.name)}
-             title={bm.conflict ? 'Conflicted — this bookmark points at multiple commits' : undefined}>⑂ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{/if}</button>
+             title={bm.conflict ? 'Conflicted — this bookmark points at multiple commits'
+                  : bm.unsynced ? 'Out of sync with tracked remote' : undefined}
+             >⑂ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{:else if bm.unsynced}<span class="sync-marker">*</span>{/if}</button>
         {/if}
       {/each}
     </div>

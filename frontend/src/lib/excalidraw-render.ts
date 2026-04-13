@@ -59,6 +59,16 @@ const DEFAULT_FONT = 'Inter, sans-serif'
 
 const num = (v: unknown, d = 0): number => typeof v === 'number' && Number.isFinite(v) ? v : d
 
+// Mirrors upstream getCornerRadius (excalidraw packages/element/src/utils.ts).
+// type 1/2 (LEGACY/PROPORTIONAL) = 25% of min side. type 3 (ADAPTIVE — the
+// modern rectangle default) = min(value ?? 32, 25%). The 32px cap is what we
+// were missing; an 800×600 box previously got rx=150 vs upstream's 32.
+function cornerRadius(r: ExElement['roundness'], minSide: number): number {
+  if (r?.type === 1 || r?.type === 2) return minSide * 0.25
+  if (r?.type === 3) return Math.min(num(r.value, 32), minSide * 0.25)
+  return 0
+}
+
 export function renderExcalidrawSVG(jsonText: string): string | null {
   let doc: ExDoc
   try {
@@ -108,8 +118,8 @@ function renderElement(e: ExElement): string {
 
   switch (e.type) {
     case 'rectangle': {
-      const rx = e.roundness ? Math.min(w, h) * 0.25 : 0
-      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}"${attrs}/>`
+      const rx = cornerRadius(e.roundness, Math.min(w, h))
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}"${rx ? ` rx="${rx}"` : ''}${attrs}/>`
     }
     case 'ellipse':
       return `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}"${attrs}/>`

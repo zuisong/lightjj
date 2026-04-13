@@ -33,7 +33,7 @@
   // state_referenced_locally warning; we DO want the mount-time snapshot.
   const init = untrack(() => initialState)
 
-  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, wireAutoRefresh, clearAllCaches, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
+  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, onSSEState, wireAutoRefresh, clearAllCaches, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
   import { setDetectedJJVersion, missingJJFeatures } from './lib/jj-features.svelte'
   import MessageBar, { errorMessage, type Message } from './lib/MessageBar.svelte'
   import { clearDiffCaches, parseDiffCached } from './lib/diff-cache'
@@ -697,7 +697,7 @@
   async function loadInfo() {
     try {
       const { hostname, repo_path, editor_configured, default_remote, log_revset, jj_version } = await api.info()
-      document.title = formatTitle(hostname, repo_path)
+      pageTitle = formatTitle(hostname, repo_path)
       editorConfigured = editor_configured
       defaultRemote = default_remote
       repoPath = repo_path
@@ -2072,6 +2072,13 @@
   // body reads no reactive state → runs once on mount, cleanup on unmount.
   $effect(() => wireAutoRefresh())
   $effect(() => onStaleWC((s) => { workspaceStale = s }))
+
+  let sseConnected = $state(true)
+  let pageTitle = $state('lightjj')
+  $effect(() => onSSEState((c) => { sseConnected = c }))
+  $effect(() => {
+    document.title = sseConnected ? pageTitle : `⚠ ${pageTitle} — disconnected`
+  })
 
   // Raw setTimeout escapes {#key} remount — clear on tab-switch unmount so
   // stale closures don't keep the old instance's signals alive. nav.cancel()

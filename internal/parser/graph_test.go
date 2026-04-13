@@ -366,3 +366,16 @@ func TestParseGraphLog_ConflictedBookmark(t *testing.T) {
 	assert.Equal(t, []LocalRef{{Name: "feat", Conflict: true}, {Name: "main"}}, rows[0].Bookmarks)
 	assert.Equal(t, []LocalRef{{Name: "feat", Conflict: true}}, rows[1].Bookmarks)
 }
+
+func TestParseGraphLog_UnsyncedBookmark(t *testing.T) {
+	// Third sub-field is b.synced(); parser inverts to Unsynced so the zero value
+	// (omitted under omitempty) is the common case.
+	output := "○  _PREFIX:a_PREFIX:1_PREFIX:false_PREFIX:false\x1faaaaaaaa\x1f11111111\x1f\x1f\x1f\x1f" +
+		"ahead\x1dfalse\x1dfalse\x1fmain\x1dfalse\x1dtrue\n"
+	rows := ParseGraphLog(output)
+	require.Len(t, rows, 1)
+	assert.Equal(t, []LocalRef{
+		{Name: "ahead", Unsynced: true},
+		{Name: "main"},
+	}, rows[0].Bookmarks)
+}

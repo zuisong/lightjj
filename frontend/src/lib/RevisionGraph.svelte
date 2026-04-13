@@ -440,14 +440,16 @@
                      onclick={(e: MouseEvent) => e.stopPropagation()}
                      title="{pr.is_draft ? 'Draft ' : ''}PR #{pr.number} — click to open on GitHub"
                      style={tinted ? `--lane-color: ${laneColorVar}` : ''} class:lane-tinted={tinted}>
-                    <span class="pr-name">↗ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{/if}</span>
+                    <span class="pr-name">↗ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{:else if bm.unsynced}<span class="sync-marker">*</span>{/if}</span>
                     <span class="pr-number">#{pr.number}</span>
                   </a>
                 {:else}
                   <button class="bookmark-badge" class:conflicted={bm.conflict}
                      onclick={(e: MouseEvent) => { e.stopPropagation(); onbookmarkclick(bm.name) }}
                      style={tinted ? `--lane-color: ${laneColorVar}` : ''} class:lane-tinted={tinted}
-                     title={bm.conflict ? 'Conflicted — this bookmark points at multiple commits' : undefined}>⑂ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{/if}</button>
+                     title={bm.conflict ? 'Conflicted — this bookmark points at multiple commits'
+                          : bm.unsynced ? 'Out of sync with tracked remote' : undefined}
+                     >⑂ {bm.name}{#if bm.conflict}<span class="conflict-marker">??</span>{:else if bm.unsynced}<span class="sync-marker">*</span>{/if}</button>
                 {/if}
               {/each}
               {#each visibleRemoteBookmarks as ref}

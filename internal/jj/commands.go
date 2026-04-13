@@ -81,7 +81,7 @@ func LogGraph(revset string, limit int) CommandArgs {
 	// present even if the value is empty. Parser's len(prefixParts)>=6/>=7/>=8
 	// checks still keep old test fixtures backward-compatible.
 	tmpl := fmt.Sprintf(
-		`stringify('%s' ++ separate('%s', change_id.shortest(), commit_id.shortest(), divergent, empty)) ++ '%s' ++ stringify(mine) ++ '%s' ++ author.email() ++ '%s' ++ committer.timestamp() ++ "\x1F" ++ change_id.short() ++ "\x1F" ++ commit_id.short() ++ "\x1F" ++ description.first_line() ++ "\x1F" ++ working_copies ++ "\x1F" ++ parents.map(|p| p.commit_id().short()).join(",") ++ "\x1F" ++ local_bookmarks.map(|b| b.name() ++ "\x1D" ++ stringify(b.conflict())).join("\x1F") ++ "\x1F" ++ remote_bookmarks.map(|b| b.name() ++ "\x1E" ++ b.remote()).join("\x1F") ++ "\n"`,
+		`stringify('%s' ++ separate('%s', change_id.shortest(), commit_id.shortest(), divergent, empty)) ++ '%s' ++ stringify(mine) ++ '%s' ++ author.email() ++ '%s' ++ committer.timestamp() ++ "\x1F" ++ change_id.short() ++ "\x1F" ++ commit_id.short() ++ "\x1F" ++ description.first_line() ++ "\x1F" ++ working_copies ++ "\x1F" ++ parents.map(|p| p.commit_id().short()).join(",") ++ "\x1F" ++ local_bookmarks.map(|b| b.name() ++ "\x1D" ++ stringify(b.conflict()) ++ "\x1D" ++ stringify(b.synced())).join("\x1F") ++ "\x1F" ++ remote_bookmarks.map(|b| b.name() ++ "\x1E" ++ b.remote()).join("\x1F") ++ "\n"`,
 		JJUIPrefix, JJUIPrefix, JJUIPrefix, JJUIPrefix, JJUIPrefix)
 	args = append(args, "-T", tmpl)
 	return args
