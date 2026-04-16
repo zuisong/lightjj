@@ -14,7 +14,7 @@
 // mark orphaned — likely means the agent addressed the feedback.
 
 import { api, type Annotation, type AnnotationSeverity } from './api'
-import { parseDiffContent } from './diff-parser'
+import { parseDiffContent, expandTabs } from './diff-parser'
 
 const FUZZY_WINDOW = 5 // ±lines to search for content match
 const NO_ANN: readonly Annotation[] = [] // shared empty result for forLine misses
@@ -69,6 +69,9 @@ export function reanchor(
   // Stage 1: diff-delta adjustment. For each hunk entirely above the
   // annotation's original line (in the OLD side = createdAt snapshot),
   // accumulate line-count delta.
+  // DiffLine.content is tab-expanded (issue #9); normalize the stored
+  // snapshot so annotations persisted before that change still re-anchor.
+  const annContent = expandTabs(ann.lineContent)
   let adjusted = ann.lineNum
   for (const h of interDiffHunks) {
     const oldEnd = h.oldStart + h.lines.filter(l => l.type !== 'add').length - 1
@@ -84,7 +87,7 @@ export function reanchor(
       let best = -1
       for (const l of h.lines) {
         if (l.type === 'remove') continue
-        if (l.content.slice(1) === ann.lineContent) {
+        if (l.content.slice(1) === annContent) {
           if (best < 0 || Math.abs(n - adjusted) < Math.abs(best - adjusted)) {
             best = n
           }
@@ -102,16 +105,16 @@ export function reanchor(
   // doesn't match the snapshot, the delta math was off (overlapping changes)
   // or the content was edited. Scan ±FUZZY_WINDOW for exact match.
   const contentHere = lineContentAt(interDiffHunks, adjusted)
-  if (contentHere === null || contentHere === ann.lineContent) {
+  if (contentHere === null || contentHere === annContent) {
     // null = line is between hunks (unchanged) → trust delta arithmetic.
     // equal = perfect match.
     return { lineNum: adjusted, status: 'open' }
   }
   for (let d = 1; d <= FUZZY_WINDOW; d++) {
-    if (lineContentAt(interDiffHunks, adjusted + d) === ann.lineContent) {
+    if (lineContentAt(interDiffHunks, adjusted + d) === annContent) {
       return { lineNum: adjusted + d, status: 'open' }
     }
-    if (lineContentAt(interDiffHunks, adjusted - d) === ann.lineContent) {
+    if (lineContentAt(interDiffHunks, adjusted - d) === annContent) {
       return { lineNum: adjusted - d, status: 'open' }
     }
   }

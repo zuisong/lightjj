@@ -2,7 +2,11 @@
 
 export interface DiffLine {
   type: 'add' | 'remove' | 'context' | 'header'
+  /** Display-ready: tabs expanded to spaces (issue #9). */
   content: string
+  /** Original line including diff marker — only set when it differs from
+   *  content (i.e., line had tabs). Write-back paths must prefer this. */
+  raw?: string
 }
 
 export interface DiffHunk {
@@ -23,6 +27,23 @@ export interface DiffFile {
   // restoring the source, turning the rename into a delete.
   sourcePath?: string
   hunks: DiffHunk[]
+}
+
+export function expandTabs(s: string, width = 4): string {
+  if (!s.includes('\t')) return s
+  let out = ''
+  let col = 0
+  for (const ch of s) {
+    if (ch === '\t') {
+      const n = width - (col % width)
+      out += ' '.repeat(n)
+      col += n
+    } else {
+      out += ch
+      col++
+    }
+  }
+  return out
 }
 
 export function parseDiffContent(raw: string): DiffFile[] {
@@ -63,13 +84,18 @@ export function parseDiffContent(raw: string): DiffFile[] {
       currentFile.sourcePath = line.slice('rename from '.length)
       currentFile.header += '\n' + line
     } else if (currentHunk) {
-      if (line.startsWith('+')) {
-        currentHunk.lines.push({ type: 'add', content: line })
-      } else if (line.startsWith('-')) {
-        currentHunk.lines.push({ type: 'remove', content: line })
-      } else {
-        currentHunk.lines.push({ type: 'context', content: line })
-      }
+      // Expand tabs in the SOURCE portion (after the +/-/space marker) for
+      // display. CSS tab stops are measured from the block's content edge, so
+      // the gutter width eats into the first tab and renders it ~1ch wide
+      // (issue #9). `raw` preserves the original for write-back paths
+      // (hunk-apply) — set only when expansion actually changed the string.
+      const src = line.slice(1)
+      const expanded = expandTabs(src)
+      const dl: DiffLine = { type: 'context', content: (line[0] ?? '') + expanded }
+      if (line.startsWith('+')) dl.type = 'add'
+      else if (line.startsWith('-')) dl.type = 'remove'
+      if (expanded !== src) dl.raw = line
+      currentHunk.lines.push(dl)
     } else if (currentFile && line.trim()) {
       // Lines between file header and first hunk (e.g. "Binary file..." or index lines)
       currentFile.header += '\n' + line

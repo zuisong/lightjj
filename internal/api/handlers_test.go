@@ -436,7 +436,7 @@ func TestHandler_ClearsStale(t *testing.T) {
 			defer runner.Verify()
 
 			srv := newTestServer(runner)
-			srv.Watcher = &Watcher{subs: make(map[chan string]struct{})}
+			srv.Watcher = newWatcher(srv)
 			srv.Watcher.stale.Store(true)
 			ch, unsub := srv.Watcher.subscribe()
 			defer unsub()

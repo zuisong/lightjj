@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -155,6 +156,32 @@ func TestTabCreate_DedupAndFactory(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &t2))
 	assert.Equal(t, t1.ID, t2.ID)
 	assert.Equal(t, 1, factoryCalls, "dedup should prevent second factory call")
+}
+
+func TestTabManager_SharedSnapshotPause(t *testing.T) {
+	tm := NewTabManager(nil, nil)
+	mk := func() *Server {
+		s := &Server{}
+		s.Watcher = newWatcher(s)
+		return s
+	}
+	a, b, c := mk(), mk(), mk()
+	tm.AddTab(a, "/repo/one")
+	tm.AddTab(b, "/repo/one") // same canonical path → shared counter
+	tm.AddTab(c, "/repo/two")
+
+	require.Same(t, a.Watcher.snapshotPaused, b.Watcher.snapshotPaused, "same-path tabs must share counter")
+	require.NotSame(t, a.Watcher.snapshotPaused, c.Watcher.snapshotPaused)
+
+	resume := a.pauseSnapshot()
+	assert.EqualValues(t, 1, b.Watcher.snapshotPaused.Load(), "push in tab A must pause tab B's snapshot")
+	assert.EqualValues(t, 0, c.Watcher.snapshotPaused.Load())
+
+	ran, _ := b.trySnapshot(context.Background())
+	assert.False(t, ran, "tab B's trySnapshot must skip while tab A's mutation is in flight")
+
+	resume()
+	assert.EqualValues(t, 0, b.Watcher.snapshotPaused.Load())
 }
 
 func TestTabFindByPath(t *testing.T) {

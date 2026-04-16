@@ -218,7 +218,7 @@ describe('reanchor — edge cases', () => {
     expect(r).toEqual({ lineNum: 10, status: 'open' })
   })
 
-  it('whitespace-only content differences orphan the annotation', () => {
+  it('tab vs space indentation normalizes — annotation re-anchors across reindent', () => {
     // Agent changed indentation: tab → 4 spaces. Content snapshot was with tab.
     const h: TestHunk = {
       oldStart: 10, newStart: 10,
@@ -227,9 +227,22 @@ describe('reanchor — edge cases', () => {
         { type: 'add', content: '+    foo()' },
       ],
     }
-    // Strict equality: '\tfoo()' ≠ '    foo()'. Orphaned is correct —
-    // Levenshtein would salvage this (deferred follow-up).
+    // reanchor expandTabs the stored snapshot (issue #9 backward-compat), so
+    // '\tfoo()' normalizes to '    foo()' and matches the add line.
     const r = reanchor(mkAnn(10, '\tfoo()'), [h])
+    expect(r).toEqual({ lineNum: 10, status: 'open' })
+  })
+
+  it('non-tab whitespace differences still orphan', () => {
+    // 2-space → 4-space reindent: expandTabs is tab-only, so this stays strict.
+    const h: TestHunk = {
+      oldStart: 10, newStart: 10,
+      lines: [
+        { type: 'remove', content: '-  foo()' },
+        { type: 'add', content: '+    foo()' },
+      ],
+    }
+    const r = reanchor(mkAnn(10, '  foo()'), [h])
     expect(r.status).toBe('orphaned')
   })
 

@@ -159,6 +159,13 @@
   // AFTER the clear effect already ran).
   let previewContents = $state(new Map<string, string>())
   let previewGen = 0
+  // Which revision's content to render. Multi-select previews the NEWEST checked
+  // commit (commitIds is log-order = newest-first via revisions.filter in App).
+  let previewCommitId = $derived(
+    diffTarget?.kind === 'single' ? diffTarget.commitId
+    : diffTarget?.kind === 'multi' ? diffTarget.commitIds[0]
+    : undefined
+  )
 
   function closePreview(path: string) {
     // NO gen bump — single-file close. All callers guard on has(path) so
@@ -433,14 +440,14 @@
 
   async function togglePreview(path: string) {
     if (previewContents.has(path)) return closePreview(path)
-    if (diffTarget?.kind !== 'single' || editBusy.has(path)) return
+    const revId = previewCommitId
+    if (!revId || editBusy.has(path)) return
     collapsedFiles.delete(path)
-    const revId = diffTarget.commitId
     const gen = previewGen
     editBusy.add(path)
     try {
       const { content } = await api.fileShow(revId, path)
-      if (gen !== previewGen || diffTarget?.kind !== 'single' || diffTarget.commitId !== revId) return
+      if (gen !== previewGen || previewCommitId !== revId) return
       previewContents = new Map(previewContents).set(path, content)
     } catch (e) {
       if (gen === previewGen) editError = `Preview failed: ${e instanceof Error ? e.message : String(e)}`
@@ -1478,9 +1485,9 @@
             editContent={editFileContents.get(filePath)}
             editBusy={editBusy.has(filePath)}
             onedit={canMutateFiles ? startEdit : undefined}
-            onpreview={diffTarget?.kind === 'single' && !hunkReview ? togglePreview : undefined}
+            onpreview={previewCommitId && !hunkReview ? togglePreview : undefined}
             previewContent={previewContents.get(filePath)}
-            previewRevision={diffTarget?.kind === 'single' ? diffTarget.changeId : undefined}
+            previewRevision={diffTarget?.kind === 'single' ? diffTarget.changeId : previewCommitId}
             onmerge={canMutateFiles ? startMerge : undefined}
             ondiscard={canMutateFiles ? discardFile : undefined}
             onsavefile={saveFile}

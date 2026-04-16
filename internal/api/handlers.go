@@ -972,6 +972,10 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if s.Watcher != nil && s.Watcher.snapshotPaused.Load() > 0 {
+		s.writeJSON(w, r, http.StatusOK, map[string]string{"output": ""})
+		return
+	}
 	s.runMutation(w, r, jj.DebugSnapshot())
 	// Successful snapshot proves not-stale (jj auto-update-stale would have
 	// either cleared it or errored). Same reasoning as handleWorkspaceUpdateStale
@@ -1525,7 +1529,7 @@ func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	// is ~440ms). The watcher watches op_heads/ not the WC — it won't fire
 	// until SOMETHING snapshots. Error swallowed: the write succeeded, which
 	// is the primary contract; a failed snapshot just means the UI lags.
-	_, _ = s.Runner.Run(r.Context(), jj.DebugSnapshot())
+	_, _ = s.trySnapshot(r.Context())
 	s.refreshOpId()
 	s.writeJSON(w, r, http.StatusOK, map[string]bool{"ok": true})
 }

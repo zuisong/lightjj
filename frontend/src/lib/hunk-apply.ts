@@ -82,7 +82,8 @@ export function applyHunks(leftContent: string, accepted: readonly DiffHunk[]): 
       if (line.type === 'remove') {
         pos++
       } else if (line.type === 'add') {
-        out.push(line.content.slice(1)) // strip leading `+`
+        // .raw preserves tabs (content has them expanded for display)
+        out.push((line.raw ?? line.content).slice(1))
       } else {
         // Context: advance left AND emit. Use left[pos] not line.content —
         // they should be identical, but left[] is the source of truth we're

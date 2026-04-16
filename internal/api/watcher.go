@@ -49,6 +49,17 @@ type Watcher struct {
 	stale   atomic.Bool
 	staleMu sync.Mutex
 
+	// snapshotPaused suppresses background snapshots while a foreground jj
+	// mutation is running. The race: `jj git push` releases the WC lock between
+	// network I/O and post-push checkout; a snapshot landing in that window
+	// observes a mid-transition WC → "Concurrent checkout" / op divergence.
+	// Counter (not bool) so concurrent mutations nest. Pointer so TabManager
+	// can share ONE counter across all tabs at the same canonical path
+	// (addLocked replaces this with the path-keyed instance). Checked by
+	// trySnapshot() — an in-flight snapshot at pause-start is not cancelled
+	// (~30ms snapshot vs ~21s push: finishes before the checkout phase).
+	snapshotPaused *atomic.Int32
+
 	stop     chan struct{}
 	stopOnce sync.Once
 }
@@ -79,10 +90,11 @@ func isStaleWCError(err error) bool {
 
 func newWatcher(srv *Server) *Watcher {
 	return &Watcher{
-		srv:      srv,
-		subs:     make(map[chan string]struct{}),
-		debounce: 150 * time.Millisecond,
-		stop:     make(chan struct{}),
+		srv:            srv,
+		subs:           make(map[chan string]struct{}),
+		debounce:       150 * time.Millisecond,
+		snapshotPaused: new(atomic.Int32),
+		stop:           make(chan struct{}),
 	}
 }
 
@@ -235,6 +247,17 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 			if !w.hasSubscribers() {
 				continue
 			}
+			// PollOpId implicitly snapshots; when paused, fall back to the
+			// --ignore-working-copy variant so SSE keeps flowing during
+			// long pushes (parity with local mode's ungated watchLoop).
+			// CurrentOpId success says nothing about WC freshness, so the
+			// setStale(false) below is gated on !paused — otherwise a 21s
+			// push with a stale WC would falsely broadcast evFreshWC.
+			paused := w.snapshotPaused.Load() > 0
+			pollCmd := jj.PollOpId()
+			if paused {
+				pollCmd = jj.CurrentOpId()
+			}
 			// preCached: the SHARED value, for the DURING-call CAS below.
 			// If a concurrent runMutation advances it while our SSH call is
 			// in flight, the poll result is stale and the CAS prevents
@@ -242,7 +265,7 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 			// case) — collapsing these was the bug_017 regression.
 			preCached := w.srv.getOpId()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			out, err := w.srv.Runner.Run(ctx, jj.PollOpId())
+			out, err := w.srv.Runner.Run(ctx, pollCmd)
 			cancel()
 			if err != nil {
 				// Snapshotting can hit stale-WC (same as snapshotLoop); the
@@ -258,7 +281,9 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 				}
 				continue
 			}
-			w.setStale(false)
+			if !paused {
+				w.setStale(false)
+			}
 			consecutiveErrors = 0
 			opId := strings.TrimSpace(string(out))
 			if opId == "" || opId == lastBroadcast {
@@ -306,8 +331,11 @@ func (w *Watcher) snapshotLoop(interval time.Duration) {
 			// errors (repo lock) are expected; persistent failure is worth
 			// surfacing once so the user knows auto-refresh is degraded.
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_, err := w.srv.Runner.Run(ctx, jj.DebugSnapshot())
+			ran, err := w.srv.trySnapshot(ctx)
 			cancel()
+			if !ran {
+				continue
+			}
 			if err != nil {
 				// Stale WC is a known, user-actionable condition — don't count
 				// as a transient error (it won't self-heal, and the log message

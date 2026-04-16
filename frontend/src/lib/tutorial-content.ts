@@ -6,6 +6,9 @@ export interface TutorialFeature {
 }
 
 export const FEATURES: TutorialFeature[] = [
+  { version: '1.17.0', shortcut: null, title: 'Snapshot pause during mutations', description: 'Background snapshots are suppressed while a jj git push (or any mutation) is in flight, avoiding the "Concurrent checkout" / op-divergence race that long pushes can hit. Tabs on the same working copy share the gate.' },
+  { version: '1.17.0', shortcut: 'm', title: 'Markdown preview with multi-select', description: 'Preview .md files when multiple revisions are checked — renders the file as it exists at the newest checked commit.' },
+  { version: '1.17.0', shortcut: null, title: 'Tab-aware diff display', description: 'Diff lines render tabs at the next 4-column stop (instead of literally), matching how editors display them. Hunk-apply and annotation re-anchor write back the original bytes.' },
   { version: '1.16.0', shortcut: null, title: 'Out-of-sync bookmark indicator', description: 'Local bookmark badges show jj\'s amber * when they differ from any tracked remote — same decorator the CLI uses. Conflict (??) takes precedence; never-pushed bookmarks stay undecorated.' },
   { version: '1.16.0', shortcut: null, title: 'Tab title disconnect indicator', description: 'The browser tab title prefixes ⚠ and appends "— disconnected" when the backend stops responding. Clears automatically on reconnect — no reload needed.' },
   { version: '1.15.0', shortcut: null, title: 'Prose-grade markdown typography', description: 'Looser leading (1.72), negative tracking on h1/h2, variable-font weights (370 body / 650 h2), zebra tables, hover-underline links. New fontMdDisplay config sets a serif h1 independent of h2–h6.' },

@@ -257,6 +257,40 @@ func (s *Server) refreshOpId() string {
 	return opId
 }
 
+// snapshotPauseMax bounds how long a single mutation can suppress background
+// snapshots. Beyond this we accept the (rare) race rather than disable
+// auto-refresh indefinitely. Var (not const) for test override.
+var snapshotPauseMax = 2 * time.Minute
+
+// pauseSnapshot suppresses the watcher's background snapshot for the duration
+// of a foreground mutation. Returns the resume func; callers `defer resume()`.
+// Nil-safe (Watcher absent under --no-watch and in tests). Idempotent (Once)
+// so the watchdog and the deferred resume can both fire safely; the watchdog
+// prevents a hung subprocess (network black-hole, hung pre-push hook) from
+// disabling snapshots for the server lifetime.
+func (s *Server) pauseSnapshot() (resume func()) {
+	if s.Watcher == nil {
+		return func() {}
+	}
+	s.Watcher.snapshotPaused.Add(1)
+	var once sync.Once
+	release := func() { once.Do(func() { s.Watcher.snapshotPaused.Add(-1) }) }
+	watchdog := time.AfterFunc(snapshotPauseMax, release)
+	return func() { watchdog.Stop(); release() }
+}
+
+// trySnapshot is the single chokepoint for "observe the WC now" — snapshotLoop,
+// handleSnapshot, handleFileWrite all go through here so they uniformly respect
+// snapshotPaused. Returns whether the snapshot ran; callers that do
+// stale-detection check err only when ran.
+func (s *Server) trySnapshot(ctx context.Context) (ran bool, err error) {
+	if s.Watcher != nil && s.Watcher.snapshotPaused.Load() > 0 {
+		return false, nil
+	}
+	_, err = s.Runner.Run(ctx, jj.DebugSnapshot())
+	return true, err
+}
+
 // runMutation executes a jj command, synchronously refreshes the op-id, and
 // writes the output as JSON. This is the standard pattern for all mutation handlers.
 //
@@ -277,6 +311,8 @@ func (s *Server) runMutation(w http.ResponseWriter, r *http.Request, args []stri
 // containing a "Warning:" line is returned as "warnings"; otherwise it's merged
 // into "output" so the MessageBar shows success but details are still expandable.
 func (s *Server) runMutationWithInput(w http.ResponseWriter, r *http.Request, args []string, stdin string) {
+	resume := s.pauseSnapshot()
+	defer resume()
 	stdout, stderr, err := s.Runner.RunForMutation(r.Context(), args, stdin)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
@@ -313,6 +349,8 @@ func hasWarningLine(s string) bool {
 // can dedup against SSE — without this, SSE arrives with the new op-id and
 // fires a redundant loadLog() (the race runMutation's doc warns about).
 func (s *Server) streamMutation(w http.ResponseWriter, r *http.Request, args []string) {
+	resume := s.pauseSnapshot()
+	defer resume()
 	rc, err := s.Runner.StreamCombined(r.Context(), args)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())

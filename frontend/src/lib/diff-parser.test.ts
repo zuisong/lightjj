@@ -1,5 +1,47 @@
 import { describe, it, expect } from 'vitest'
-import { parseDiffContent, filePathFromHeader, newSideAddedLines } from './diff-parser'
+import { parseDiffContent, filePathFromHeader, newSideAddedLines, expandTabs } from './diff-parser'
+
+describe('expandTabs', () => {
+  it('passes through tab-free strings unchanged', () => {
+    expect(expandTabs('hello world')).toBe('hello world')
+    expect(expandTabs('')).toBe('')
+  })
+
+  it('expands leading tab to full width at column 0', () => {
+    expect(expandTabs('\tfoo')).toBe('    foo')
+    expect(expandTabs('\t\tfoo')).toBe('        foo')
+  })
+
+  it('expands mid-line tab to next tab stop', () => {
+    expect(expandTabs('a\tb')).toBe('a   b')
+    expect(expandTabs('ab\tc')).toBe('ab  c')
+    expect(expandTabs('abc\td')).toBe('abc d')
+    expect(expandTabs('abcd\te')).toBe('abcd    e')
+  })
+
+  it('respects custom tab width', () => {
+    expect(expandTabs('\tx', 8)).toBe('        x')
+    expect(expandTabs('ab\tx', 2)).toBe('ab  x')
+  })
+})
+
+describe('parseDiffContent tab expansion', () => {
+  it('expands tabs in source content, not in the diff marker (issue #9)', () => {
+    const raw = [
+      'Modified regular file main.go:',
+      '@@ -1,2 +1,2 @@',
+      '+\tfoo',
+      '-\t\tbar',
+      ' \tbaz',
+      '+nospace',
+    ].join('\n')
+    const lines = parseDiffContent(raw)[0].hunks[0].lines
+    expect(lines[0]).toEqual({ type: 'add', content: '+    foo', raw: '+\tfoo' })
+    expect(lines[1]).toEqual({ type: 'remove', content: '-        bar', raw: '-\t\tbar' })
+    expect(lines[2]).toEqual({ type: 'context', content: '     baz', raw: ' \tbaz' })
+    expect(lines[3]).toEqual({ type: 'add', content: '+nospace' }) // no raw when no tabs
+  })
+})
 
 describe('parseDiffContent', () => {
   it('returns empty array for empty input', () => {

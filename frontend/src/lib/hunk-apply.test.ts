@@ -46,6 +46,21 @@ describe('applyHunks — round-trip invariants', () => {
     expect(applyHunks(LEFT, [H0, H1])).toBe(RIGHT)
   })
 
+  it('preserves tabs in add lines via .raw (issue #9 — display expansion must not leak to disk)', () => {
+    const left = 'func f() {\n}\n'
+    const right = 'func f() {\n\tbody()\n}\n'
+    const raw = [
+      'Modified regular file f.go:',
+      '@@ -1,2 +1,3 @@',
+      ' func f() {',
+      '+\tbody()',
+      ' }',
+    ].join('\n')
+    const hunks = parseDiffContent(raw)[0].hunks
+    expect(hunks[0].lines[1].content).toBe('+    body()') // display: expanded
+    expect(applyHunks(left, hunks)).toBe(right) // write-back: tab preserved
+  })
+
   it('applyHunks(left, []) === left', () => {
     expect(applyHunks(LEFT, [])).toBe(LEFT)
   })

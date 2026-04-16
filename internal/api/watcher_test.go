@@ -7,6 +7,9 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -152,6 +155,32 @@ func TestIsStaleWCError(t *testing.T) {
 	assert.False(t, isStaleWCError(nil))
 }
 
+// safeRecorder is a goroutine-safe http.ResponseWriter for SSE handler tests.
+// httptest.ResponseRecorder.Body is a bare bytes.Buffer — polling it while
+// handleEvents writes from its goroutine is a data race (-race flags it on
+// every TestHandleEvents_* below). Implements http.Flusher (handleEvents
+// type-asserts it at watcher.go:420).
+type safeRecorder struct {
+	mu   sync.Mutex
+	hdr  http.Header
+	body bytes.Buffer
+}
+
+func newSafeRecorder() *safeRecorder              { return &safeRecorder{hdr: make(http.Header)} }
+func (r *safeRecorder) Header() http.Header       { return r.hdr }
+func (r *safeRecorder) WriteHeader(int)           {}
+func (r *safeRecorder) Flush()                    {}
+func (r *safeRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.body.Write(p)
+}
+func (r *safeRecorder) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.body.String()
+}
+
 func TestHandleEvents_MetaEventSentinel(t *testing.T) {
 	srv := &Server{cachedOp: "op-before"}
 	watcher := &Watcher{
@@ -163,7 +192,7 @@ func TestHandleEvents_MetaEventSentinel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := newSafeRecorder()
 
 	done := make(chan struct{})
 	go func() {
@@ -172,23 +201,17 @@ func TestHandleEvents_MetaEventSentinel(t *testing.T) {
 	}()
 
 	// Wait for subscriber to register, then broadcast the sentinel.
-	deadline := time.Now().Add(1 * time.Second)
-	for time.Now().Before(deadline) && !watcher.hasSubscribers() {
-		time.Sleep(5 * time.Millisecond)
-	}
+	assert.Eventually(t, watcher.hasSubscribers, time.Second, 5*time.Millisecond)
 	watcher.broadcast(evStaleWC)
 
-	for time.Now().Before(deadline) {
-		if bytes.Contains(rec.Body.Bytes(), []byte("event: stale-wc")) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	assert.Eventually(t, func() bool {
+		return strings.Contains(rec.String(), "event: stale-wc")
+	}, time.Second, 10*time.Millisecond)
 
 	cancel()
 	<-done
 
-	body := rec.Body.String()
+	body := rec.String()
 	assert.Contains(t, body, "event: stale-wc\ndata: {}", "sentinel should emit as named SSE event")
 	// Initial op-id still written (sentinel doesn't interfere with op path).
 	assert.Contains(t, body, `"op_id":"op-before"`)
@@ -216,7 +239,7 @@ func TestHandleEvents_EmitsStaleStateOnConnect(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		req := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
-		rec := httptest.NewRecorder()
+		rec := newSafeRecorder()
 
 		done := make(chan struct{})
 		go func() {
@@ -224,16 +247,12 @@ func TestHandleEvents_EmitsStaleStateOnConnect(t *testing.T) {
 			close(done)
 		}()
 
-		deadline := time.Now().Add(1 * time.Second)
-		for time.Now().Before(deadline) {
-			if bytes.Contains(rec.Body.Bytes(), []byte(tc.want)) {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+		assert.Eventually(t, func() bool {
+			return strings.Contains(rec.String(), tc.want)
+		}, time.Second, 10*time.Millisecond)
 		cancel()
 		<-done
-		assert.Contains(t, rec.Body.String(), tc.want, "stale=%v", tc.stale)
+		assert.Contains(t, rec.String(), tc.want, "stale=%v", tc.stale)
 	}
 }
 
@@ -274,22 +293,18 @@ func TestHandleEvents_SendsInitialOpIdOnConnect(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			req := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
-			rec := httptest.NewRecorder()
+			rec := newSafeRecorder()
 
 			done := make(chan struct{})
 			go func() { watcher.handleEvents(rec, req); close(done) }()
 
-			deadline := time.Now().Add(1 * time.Second)
-			for time.Now().Before(deadline) {
-				if bytes.Contains(rec.Body.Bytes(), []byte(tc.wantOp)) {
-					break
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
+			assert.Eventually(t, func() bool {
+				return strings.Contains(rec.String(), tc.wantOp)
+			}, time.Second, 10*time.Millisecond)
 			cancel()
 			<-done
 
-			body := rec.Body.String()
+			body := rec.String()
 			assert.Contains(t, body, "event: op")
 			assert.Contains(t, body, `"op_id":"`+tc.wantOp+`"`)
 		})
@@ -322,9 +337,15 @@ type seqRunner struct {
 	// Optional per-call hook fired BEFORE returning output. Used by CAS tests
 	// to simulate a concurrent runMutation advancing cachedOp mid-SSH-call.
 	hook func(callIdx int)
+
+	mu      sync.Mutex
+	argsLog [][]string
 }
 
-func (r *seqRunner) Run(_ context.Context, _ []string) ([]byte, error) {
+func (r *seqRunner) Run(_ context.Context, args []string) ([]byte, error) {
+	r.mu.Lock()
+	r.argsLog = append(r.argsLog, args)
+	r.mu.Unlock()
 	n := int(r.calls.Add(1)) - 1
 	if n >= len(r.outputs) {
 		n = len(r.outputs) - 1
@@ -333,6 +354,15 @@ func (r *seqRunner) Run(_ context.Context, _ []string) ([]byte, error) {
 		r.hook(n)
 	}
 	return []byte(r.outputs[n]), nil
+}
+
+func (r *seqRunner) lastArgs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.argsLog) == 0 {
+		return nil
+	}
+	return r.argsLog[len(r.argsLog)-1]
 }
 
 func TestSSHPollLoop_BroadcastsOnChange(t *testing.T) {
@@ -472,6 +502,105 @@ func TestSSHPollLoop_NoSubscribers_NoPolls(t *testing.T) {
 
 	assert.Zero(t, r.calls.Load(), "polled with no subscribers")
 }
+
+func TestSSHPollLoop_PausedFallsBackToCurrentOpId(t *testing.T) {
+	r := &seqRunner{outputs: []string{"op-x"}}
+	srv := &Server{Runner: r}
+	w := newWatcher(srv)
+	srv.Watcher = w
+	_, unsub := w.subscribe()
+	defer unsub()
+
+	resume := srv.pauseSnapshot()
+	done := make(chan struct{})
+	go func() { w.sshPollLoop(5 * time.Millisecond); close(done) }()
+
+	assert.Eventually(t, func() bool { return r.calls.Load() > 0 }, time.Second, 5*time.Millisecond)
+	assert.Equal(t, jj.CurrentOpId(), r.lastArgs(), "paused: must use --ignore-working-copy variant")
+
+	resume()
+	assert.Eventually(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for _, a := range r.argsLog {
+			if slices.Equal(a, jj.PollOpId()) {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 5*time.Millisecond, "resumed: must switch back to PollOpId")
+
+	close(w.stop)
+	<-done
+}
+
+func TestSSHPollLoop_PausedDoesNotClearStale(t *testing.T) {
+	r := &seqRunner{outputs: []string{"op-x"}}
+	srv := &Server{Runner: r}
+	w := newWatcher(srv)
+	srv.Watcher = w
+	w.stale.Store(true)
+	_, unsub := w.subscribe()
+	defer unsub()
+
+	resume := srv.pauseSnapshot()
+	defer resume()
+	done := make(chan struct{})
+	go func() { w.sshPollLoop(5 * time.Millisecond); close(done) }()
+
+	assert.Eventually(t, func() bool { return r.calls.Load() > 2 }, time.Second, 5*time.Millisecond)
+	assert.True(t, w.stale.Load(), "CurrentOpId success must not clear stale (it has --ignore-working-copy)")
+
+	close(w.stop)
+	<-done
+}
+
+func TestPauseSnapshot_NestedCounter(t *testing.T) {
+	srv := &Server{}
+	srv.Watcher = newWatcher(srv)
+	r1 := srv.pauseSnapshot()
+	r2 := srv.pauseSnapshot()
+	assert.EqualValues(t, 2, srv.Watcher.snapshotPaused.Load())
+	r1()
+	assert.EqualValues(t, 1, srv.Watcher.snapshotPaused.Load(), "first resume must not unpause overlapping mutation")
+	r1() // double-call must be safe (sync.Once)
+	assert.EqualValues(t, 1, srv.Watcher.snapshotPaused.Load(), "non-idempotent resume would steal r2's count")
+	r2()
+	assert.EqualValues(t, 0, srv.Watcher.snapshotPaused.Load())
+}
+
+func TestPauseSnapshot_WatchdogReleases(t *testing.T) {
+	old := snapshotPauseMax
+	snapshotPauseMax = 20 * time.Millisecond
+	defer func() { snapshotPauseMax = old }()
+
+	srv := &Server{}
+	srv.Watcher = newWatcher(srv)
+	resume := srv.pauseSnapshot()
+	assert.EqualValues(t, 1, srv.Watcher.snapshotPaused.Load())
+	assert.Eventually(t, func() bool { return srv.Watcher.snapshotPaused.Load() == 0 },
+		time.Second, 5*time.Millisecond, "watchdog must release a hung mutation's pause")
+	resume() // must not double-decrement (Once)
+	assert.EqualValues(t, 0, srv.Watcher.snapshotPaused.Load())
+}
+
+func TestTrySnapshot_SkipsWhenPaused(t *testing.T) {
+	r := &seqRunner{outputs: []string{""}}
+	srv := &Server{Runner: r}
+	srv.Watcher = newWatcher(srv)
+
+	resume := srv.pauseSnapshot()
+	ran, err := srv.trySnapshot(context.Background())
+	assert.False(t, ran)
+	assert.NoError(t, err)
+	assert.Zero(t, r.calls.Load())
+
+	resume()
+	ran, _ = srv.trySnapshot(context.Background())
+	assert.True(t, ran)
+	assert.Equal(t, jj.DebugSnapshot(), r.lastArgs())
+}
+
 
 func TestSSHPollLoop_StopsCleanly(t *testing.T) {
 	r := testutil.NewMockRunner(t)
