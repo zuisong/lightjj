@@ -2,7 +2,7 @@
   import { newSideAddedLines, type DiffFile, type DiffHunk, type DiffLine } from './diff-parser'
   import { toSplitView, type SplitLine } from './split-view'
   import type { WordSpan } from './word-diff'
-  import { FILE_TYPE_LABELS, type FileChange, type Annotation } from './api'
+  import { api, FILE_TYPE_LABELS, IMAGE_RE, type FileChange, type Annotation } from './api'
   import { findConflicts } from './conflict-parser'
   import { hunkKey, fileSelectionState, type SelectionState } from './hunk-apply'
   import type { SearchMatch } from './DiffPanel.svelte'
@@ -117,6 +117,7 @@
   let isConflict = $derived(fileStats?.conflict ?? false)
   let isMarkdown = $derived(/\.md$/i.test(filePath))
   let isExcalidraw = $derived(/\.excalidraw$/i.test(filePath))
+  let isImage = $derived(IMAGE_RE.test(filePath))
 
   // Gutter marks for the markdown preview. Gated on previewContent so the
   // hunk walk doesn't run on every render of the (much hotter) source view.
@@ -522,8 +523,8 @@
         {#if fileStats.deletions > 0}<span class="stat-del">-{fileStats.deletions}</span>{/if}
       </span>
     {/if}
-    {#if onpreview && (isMarkdown || isExcalidraw) && !editing && fileStats?.type !== 'D'}
-      <button class="btn btn-sm" onclick={(e: MouseEvent) => { e.stopPropagation(); onpreview(filePath) }} title={isExcalidraw ? 'Render diagram' : 'Render markdown (mermaid diagrams supported)'}>{previewContent !== undefined ? 'Source' : 'Preview'}</button>
+    {#if onpreview && (isMarkdown || isExcalidraw || isImage) && !editing && fileStats?.type !== 'D'}
+      <button class="btn btn-sm" onclick={(e: MouseEvent) => { e.stopPropagation(); onpreview(filePath) }} title={isExcalidraw ? 'Render diagram' : isImage ? 'Render image' : 'Render markdown (mermaid diagrams supported)'}>{previewContent !== undefined ? 'Source' : 'Preview'}</button>
     {/if}
     {#if onfilehistory && !editing}
       <button class="btn btn-sm" onclick={(e: MouseEvent) => { e.stopPropagation(); onfilehistory(filePath) }} title="View file history (Kaleidoscope-style two-cursor compare)">History</button>
@@ -560,7 +561,11 @@
   </div>
   {#if !isCollapsed}
     {#if previewContent !== undefined}
-      {#if isExcalidraw}
+      {#if isImage && previewRevision}
+        <div class="image-preview">
+          <img src={api.fileRawUrl(previewRevision, filePath)} alt={filePath} />
+        </div>
+      {:else if isExcalidraw}
         {#await import('./ExcalidrawPreview.svelte') then { default: ExcalidrawPreview }}
           <ExcalidrawPreview content={previewContent} />
         {/await}
@@ -739,6 +744,19 @@
 
   .diff-file:last-child {
     border-bottom: none;
+  }
+
+  .image-preview {
+    padding: 12px;
+    display: flex;
+    justify-content: center;
+    background:
+      repeating-conic-gradient(var(--surface0) 0% 25%, var(--base) 0% 50%) 0 0 / 16px 16px;
+  }
+  .image-preview img {
+    max-width: 100%;
+    max-height: 70vh;
+    object-fit: contain;
   }
 
   .diff-file-header {

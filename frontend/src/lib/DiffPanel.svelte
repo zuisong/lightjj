@@ -2,7 +2,7 @@
   import { tick, untrack, onDestroy } from 'svelte'
   import type { Snippet } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
-  import { api, diffTargetKey, FILE_TYPE_LABELS, type FileChange, type DiffTarget } from './api'
+  import { api, diffTargetKey, FILE_TYPE_LABELS, IMAGE_RE, type FileChange, type DiffTarget } from './api'
   import { parseDiffContent, type DiffFile, type DiffLine } from './diff-parser'
   import { expandGaps, type ExpandedDiff } from './context-expand'
   import type { WordSpan } from './word-diff'
@@ -443,6 +443,10 @@
     const revId = previewCommitId
     if (!revId || editBusy.has(path)) return
     collapsedFiles.delete(path)
+    if (IMAGE_RE.test(path)) {
+      previewContents = new Map(previewContents).set(path, '')
+      return
+    }
     const gen = previewGen
     editBusy.add(path)
     try {

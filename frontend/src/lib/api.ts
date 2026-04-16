@@ -670,6 +670,8 @@ export interface FileChange {
 
 export const FILE_TYPE_LABELS: Record<string, string> = { A: 'Added', D: 'Deleted', M: 'Modified', R: 'Renamed', C: 'Copied' }
 
+export const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i
+
 export interface OpEntry {
   id: string
   description: string
