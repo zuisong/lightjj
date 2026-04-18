@@ -13,6 +13,11 @@ export type SyncState =
   | { kind: 'ahead'; by: number }                       // unpushed commits (remote.behind > 0)
   | { kind: 'behind'; by: number }                      // remote moved (remote.ahead > 0)
   | { kind: 'diverged'; ahead: number; behind: number } // both
+  // Default remote is synced but a SECONDARY tracked remote is off. Carries
+  // that remote + user-perspective counts so the label can name it (e.g.
+  // `upstream ↑107`) instead of the old "other remote out of sync" sentinel.
+  // Less severe than `diverged` — dot renders amber, not red.
+  | { kind: 'secondary'; remote: string; ahead: number; behind: number }
   | { kind: 'local-only' }                              // local ref, no tracked remote
   | { kind: 'remote-only'; tracked: boolean }           // no local (untracked remote OR delete-staged)
   | { kind: 'conflict'; sides: number }                 // multiple added_targets
@@ -54,9 +59,20 @@ export function classifyBookmark(bm: Bookmark, scopeRemote?: string): SyncState 
   }
   // Synced on the first tracked remote — but jj's all-remotes `synced` bool
   // knows about the others. Don't lie: if any tracked remote is out of sync,
-  // downgrade. (0,0) is a sentinel; syncLabel renders "other remote" instead
-  // of "↑0 ↓0".
-  if (!bm.synced) return { kind: 'diverged', ahead: 0, behind: 0 }
+  // identify WHICH one and carry its counts so the label can name it.
+  if (!bm.synced) {
+    const other = (bm.remotes ?? []).find(
+      rr => rr !== r && rr.tracked && (rr.ahead !== 0 || rr.behind !== 0),
+    )
+    if (other) {
+      // Invert like above: other.ahead = remote ahead of us = WE are behind.
+      return { kind: 'secondary', remote: other.remote, ahead: other.behind, behind: other.ahead }
+    }
+    // Defensive: bm.synced=false but no offending remote found (shouldn't
+    // happen in practice — either bm.synced is stale or counts are all zero).
+    // Fall back to the old generic sentinel rather than a false green dot.
+    return { kind: 'diverged', ahead: 0, behind: 0 }
+  }
   return { kind: 'synced' }
 }
 
@@ -66,9 +82,12 @@ const PRIORITY: Record<SyncState['kind'], number> = {
   'diverged': 1,
   'ahead': 2,
   'behind': 3,
-  'local-only': 4,
-  'remote-only': 5,
-  'synced': 6,
+  // Secondary remote out of sync — default is fine, so this is less urgent
+  // than direct ahead/behind on default. Still floats above the healthy states.
+  'secondary': 4,
+  'local-only': 5,
+  'remote-only': 6,
+  'synced': 7,
 }
 
 export function syncPriority(s: SyncState): number {
@@ -91,6 +110,10 @@ export function syncLabel(s: SyncState, remote: string): string {
     case 'diverged':
       if (s.ahead === 0 && s.behind === 0) return 'other remote out of sync'
       return `${remote} ↑${fmtCount(s.ahead)} ↓${fmtCount(s.behind)}`
+    case 'secondary':
+      if (s.ahead > 0 && s.behind > 0) return `${s.remote} ↑${fmtCount(s.ahead)} ↓${fmtCount(s.behind)}`
+      if (s.ahead > 0) return `${s.remote} ↑${fmtCount(s.ahead)}`
+      return `${s.remote} ↓${fmtCount(s.behind)}`
     case 'local-only':  return 'local only'
     case 'remote-only': return s.tracked ? `deleted @${remote}` : `untracked @${remote}`
     case 'conflict':    return `conflict (${s.sides} sides)`

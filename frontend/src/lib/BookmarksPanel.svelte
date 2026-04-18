@@ -409,11 +409,14 @@
   }
 
   // Dot color per sync kind. Uses existing palette vars.
+  // `secondary` is amber (not red): default remote is fine, only a secondary
+  // is off — red would overstate severity and crowd out real trouble.
   const DOT_CLASS: Record<SyncState['kind'], string> = {
     'conflict': 'bp-dot-red',
     'diverged': 'bp-dot-red',
     'ahead': 'bp-dot-amber',
     'behind': 'bp-dot-blue',
+    'secondary': 'bp-dot-amber',
     'local-only': 'bp-dot-gray',
     'remote-only': 'bp-dot-hollow',
     'synced': 'bp-dot-green',

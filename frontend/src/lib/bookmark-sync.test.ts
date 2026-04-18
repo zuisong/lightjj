@@ -68,10 +68,46 @@ describe('classifyBookmark', () => {
     expect(classifyBookmark(bm)).toEqual({ kind: 'conflict', sides: 3 })
   })
 
-  it('synced on first tracked remote but bm.synced=false → diverged(0,0) sentinel', () => {
-    // origin is 0/0 (synced) but jj's all-remotes synced bool says no —
-    // e.g. upstream is behind. Don't show green.
-    const bm = mkBm({ local: mkRemote({ remote: '.' }), remotes: [mkRemote()], synced: false })
+  it('synced on default remote + secondary out of sync → secondary with remote + counts', () => {
+    // origin (default) is 0/0 (synced) but upstream has behind=107 — we're
+    // 107 ahead of upstream. Label should name upstream instead of the old
+    // generic "other remote out of sync" sentinel.
+    const bm = mkBm({
+      local: mkRemote({ remote: '.' }),
+      remotes: [
+        mkRemote({ remote: 'origin', tracked: true }),
+        mkRemote({ remote: 'upstream', tracked: true, behind: 107 }),
+      ],
+      synced: false,
+    })
+    // user-perspective: r.behind (= 107) → weAhead
+    expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: 'upstream', ahead: 107, behind: 0 })
+  })
+
+  it('secondary diverged (both ahead and behind) reports both', () => {
+    const bm = mkBm({
+      local: mkRemote({ remote: '.' }),
+      remotes: [
+        mkRemote({ remote: 'origin', tracked: true }),
+        mkRemote({ remote: 'upstream', tracked: true, ahead: 3, behind: 5 }),
+      ],
+      synced: false,
+    })
+    expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: 'upstream', ahead: 5, behind: 3 })
+  })
+
+  it('untracked secondary is NOT the offender → fall back to sentinel', () => {
+    // An UNTRACKED remote with 0/0 isn't really "out of sync" — it's outside
+    // the tracking relationship. The `tracked` filter prevents us from naming
+    // it. No offending remote found → defensive sentinel.
+    const bm = mkBm({
+      local: mkRemote({ remote: '.' }),
+      remotes: [
+        mkRemote({ remote: 'origin', tracked: true }),
+        mkRemote({ remote: 'upstream', tracked: false }),
+      ],
+      synced: false,
+    })
     expect(classifyBookmark(bm)).toEqual({ kind: 'diverged', ahead: 0, behind: 0 })
   })
 })
@@ -169,11 +205,20 @@ describe('classifyBookmark — scopeRemote', () => {
 })
 
 describe('syncPriority', () => {
-  it('conflict < diverged < ahead < behind < local-only < remote-only < synced', () => {
+  it('conflict < diverged < ahead < behind < secondary < local-only < remote-only < synced', () => {
     const states = [
       classifyBookmark(mkBm({ local: mkRemote({ remote: '.' }), remotes: [mkRemote()], synced: true })),
       classifyBookmark(mkBm({ remotes: [mkRemote({ tracked: false })] })),
       classifyBookmark(mkBm({ local: mkRemote({ remote: '.' }) })),
+      // secondary: origin synced, upstream behind
+      classifyBookmark(mkBm({
+        local: mkRemote({ remote: '.' }),
+        remotes: [
+          mkRemote({ remote: 'origin', tracked: true }),
+          mkRemote({ remote: 'upstream', tracked: true, behind: 1 }),
+        ],
+        synced: false,
+      })),
       classifyBookmark(mkBm({ local: mkRemote({ remote: '.' }), remotes: [mkRemote({ ahead: 1 })] })),
       classifyBookmark(mkBm({ local: mkRemote({ remote: '.' }), remotes: [mkRemote({ behind: 1 })] })),
       classifyBookmark(mkBm({ local: mkRemote({ remote: '.' }), remotes: [mkRemote({ ahead: 1, behind: 1 })] })),
@@ -181,7 +226,7 @@ describe('syncPriority', () => {
     ]
     const sorted = [...states].sort((a, b) => syncPriority(a) - syncPriority(b))
     expect(sorted.map(s => s.kind)).toEqual([
-      'conflict', 'diverged', 'ahead', 'behind', 'local-only', 'remote-only', 'synced',
+      'conflict', 'diverged', 'ahead', 'behind', 'secondary', 'local-only', 'remote-only', 'synced',
     ])
   })
 })
@@ -203,6 +248,9 @@ describe('syncLabel', () => {
     [{ kind: 'behind' as const, by: 7392 }, 'origin', 'origin ↓7.4k'],
     [{ kind: 'diverged' as const, ahead: 1, behind: 130774 }, 'origin', 'origin ↑1 ↓131k'],
     [{ kind: 'diverged' as const, ahead: 0, behind: 0 }, 'origin', 'other remote out of sync'],
+    [{ kind: 'secondary' as const, remote: 'upstream', ahead: 107, behind: 0 }, 'origin', 'upstream ↑107'],
+    [{ kind: 'secondary' as const, remote: 'upstream', ahead: 0, behind: 7392 }, 'origin', 'upstream ↓7.4k'],
+    [{ kind: 'secondary' as const, remote: 'upstream', ahead: 3, behind: 5 }, 'origin', 'upstream ↑3 ↓5'],
     [{ kind: 'local-only' as const }, 'origin', 'local only'],
     [{ kind: 'remote-only' as const, tracked: true }, 'origin', 'deleted @origin'],
     [{ kind: 'remote-only' as const, tracked: false }, 'origin', 'untracked @origin'],
