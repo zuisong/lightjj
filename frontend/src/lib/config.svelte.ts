@@ -93,24 +93,44 @@ function saveLocal(c: Config) {
 // Raw fetch (not api.ts) — config.svelte.ts is imported at module load time
 // before api.ts's auto-refresh setup should run, and we don't want op-id
 // tracking on a non-jj endpoint.
-async function loadRemote(): Promise<Partial<Config> | null> {
+//
+// loadRemote returns { config, error }. 422 = file exists but has a syntax
+// error — config is null (don't clobber in-memory state with defaults), error
+// is the parser message so the UI can surface a warning with "Edit config".
+// Other non-ok statuses + network failures return { null, null } (leave state
+// alone without user-visible noise).
+interface LoadResult { config: Partial<Config> | null; error: string | null }
+async function loadRemote(): Promise<LoadResult> {
   try {
     const res = await fetch('/api/config')
-    if (res.status === 204) return null // backend can't resolve config dir
-    if (!res.ok) return null
-    return await res.json()
+    if (res.status === 204) return { config: null, error: null } // backend can't resolve config dir
+    if (res.status === 422) return { config: null, error: await res.text() }
+    if (!res.ok) return { config: null, error: null }
+    return { config: await res.json(), error: null }
   } catch {
-    return null
+    return { config: null, error: null }
   }
 }
 
-async function saveRemote(c: Config): Promise<void> {
+// saveRemote captures 422 → lastError via the closure. Other failures are
+// silent (network blip != syntax error; localStorage is the durable cache).
+async function saveRemote(
+  c: Config,
+  onError: (msg: string | null) => void,
+): Promise<void> {
   try {
-    await fetch('/api/config', {
+    const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
     })
+    if (res.status === 422) {
+      onError(await res.text())
+    } else if (res.ok) {
+      onError(null)
+    }
+    // Other non-ok statuses: don't clobber lastError. A 500 (disk full) isn't
+    // actionable in the UI the same way a syntax error is.
   } catch { /* backend down — localStorage already has it */ }
 }
 
@@ -128,6 +148,11 @@ function createConfig() {
   let resolveReady: () => void
   const ready = new Promise<void>(r => { resolveReady = r })
 
+  // Set when the backend reports the on-disk config has a JSONC syntax error
+  // (422). App wires this into MessageBar as a non-dismissable warning with
+  // an "Edit config" action. Cleared on successful load/save.
+  let lastError = $state<string | null>(null)
+
   // Per-key typed assignment — the `keyof Config` cast on Object.keys() is
   // correct (iterating defaults, not the untrusted remote), but TS can't track
   // that state[k] and remote[k] are compatibly typed for THIS k. The generic
@@ -144,10 +169,13 @@ function createConfig() {
     }
   }
 
-  loadRemote().then(remote => {
+  loadRemote().then(({ config: remote, error }) => {
     if (remote) applyPartial(remote)
+    lastError = error
     // Set AFTER the property writes so Svelte's microtask-batched effect
-    // sees hydrated=true alongside the new values.
+    // sees hydrated=true alongside the new values. On 422 `remote` is null
+    // so in-memory state stays on localStorage — we do NOT overwrite with
+    // defaults (the whole point of this correction).
     hydrated = true
     resolveReady()
   })
@@ -157,7 +185,7 @@ function createConfig() {
   const flush = () => {
     if (!pendingSnap) return
     saveLocal(pendingSnap)
-    saveRemote(pendingSnap)
+    saveRemote(pendingSnap, msg => { lastError = msg })
     pendingSnap = undefined
   }
   // Flush on unload so a mid-drag close doesn't lose the last 500ms of writes.
@@ -276,6 +304,11 @@ function createConfig() {
      *  Used by ConfigModal after a manual JSON edit so theme/font changes
      *  apply without reload. The save-effect then persists to disk + localStorage. */
     applyPartial,
+
+    /** Non-null when the on-disk config has a JSONC syntax error (422 from
+     *  /api/config). App wires this into MessageBar so the user gets a warning
+     *  with "Edit config" action instead of silently reseeding. */
+    get lastError() { return lastError },
   }
 }
 

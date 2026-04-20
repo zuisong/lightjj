@@ -3,21 +3,30 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/tailscale/hujson"
 )
+
+// ErrConfigUnparseable wraps a hujson.Parse failure on a file that exists
+// with content. Distinguished from other errors so handlers can return 422
+// (the user's file, not the server, is the problem). A silent reseed from
+// the template would destroy the user's hand-edits on the next panel-drag
+// write; we surface a warning in the frontend and leave the file alone.
+var ErrConfigUnparseable = errors.New("config file has a syntax error")
 
 // Serializes read-merge-write. Two tabs writing simultaneously (panel resize +
 // theme toggle) each read disk state, merge their delta, rename — last writer
-// wins, other's key dropped. maps.Copy preserves unknown keys across versions
-// but not across concurrent same-version writes.
+// wins, other's key dropped. The RFC 6902 patch preserves unknown keys across
+// versions but not across concurrent same-version writes.
 var configMu sync.Mutex
 
 // User config is stored at $XDG_CONFIG_HOME/lightjj/config.json (or platform
@@ -52,17 +61,25 @@ func handleConfigGet(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Missing file is the zero state — return {} so the frontend merges
-		// over defaults. Don't 404: that would log as an error in the browser
-		// console on first run.
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write([]byte("{}"))
 		return
 	}
+	// Comments/trailing-commas would break the browser's JSON.parse — strip
+	// them. Standardize preserves byte offsets; the payload is the same size.
+	std, err := standardizeJSONC(data)
+	if err != nil {
+		// Don't return {} — the frontend would overwrite in-memory state with
+		// defaults. Tell it the file is broken so it can show a warning and
+		// keep whatever it already has. The raw endpoint still serves the
+		// unparseable bytes so the user can open the modal and fix the typo.
+		writeJSONError(w, http.StatusUnprocessableEntity, "config file has a syntax error: "+err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(data)
+	w.Write(std)
 }
 
 // isLocalOrigin checks whether an Origin header value points at a loopback
@@ -110,50 +127,85 @@ func handleConfigSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := mergeAndWriteConfig(path, incoming); err != nil {
+		// 422: the user's file is the problem, not the server. Distinct from
+		// 500 so the frontend can surface a dedicated warning and stop retrying
+		// — debounced panel-drag writes would otherwise hammer the endpoint.
+		if errors.Is(err, ErrConfigUnparseable) {
+			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-// mergeAndWriteConfig reads the existing config (best-effort), overlays
-// incoming keys, atomic-writes back. Holds configMu for the whole cycle.
-// Used by handleConfigSet; writePersistedTabs needs INTRA-key filtering
-// (not whole-key overlay) so it builds its own merged map and calls
-// writeConfigLocked directly.
+// mergeAndWriteConfig reads the existing config (JSONC-aware), applies each
+// incoming key as an RFC 6902 `add` patch (replaces if present, inserts if
+// missing), and atomic-writes back. Holds configMu for the whole cycle.
+// Comments attached to EXISTING members survive; added-by-patch members get
+// no comments (acceptable — they're typically openTabs/recentActions).
+//
+// If the file doesn't exist, configTemplate seeds it (fresh install gets
+// teaching comments on first save). If it's unparseable, the error propagates
+// so the caller can surface a warning — we never silently replace the user's
+// bad file. A debounced panel-drag that blew away a carefully commented
+// config on every mousemove would be unrecoverable.
+//
+// Used by handleConfigSet; writePersistedTabs needs filter-merge so it builds
+// its own patch and calls writeConfigBytesLocked directly.
 func mergeAndWriteConfig(path string, incoming map[string]json.RawMessage) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 
-	merged := map[string]json.RawMessage{}
-	if existing, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(existing, &merged) // best-effort; corrupt file → treat as empty
-	}
-	maps.Copy(merged, incoming)
-	return writeConfigLocked(path, merged)
-}
-
-// writeConfigLocked atomic-writes the given config map. Caller must hold
-// configMu. Separate from mergeAndWriteConfig so writePersistedTabs can do
-// its own intra-key filter-merge under the same lock.
-func writeConfigLocked(path string, merged map[string]json.RawMessage) error {
-	out, err := json.MarshalIndent(merged, "", "  ")
+	existing, err := readOrTemplate(path)
 	if err != nil {
 		return err
 	}
+	keys := make(map[string][]byte, len(incoming))
+	for k, v := range incoming {
+		keys[k] = []byte(v)
+	}
+	out, err := patchConfigKeys(existing, keys)
+	if err != nil {
+		return err
+	}
+	return writeConfigBytesLocked(path, out)
+}
+
+// readOrTemplate returns the on-disk JSONC bytes if the file exists and parses.
+// ENOENT → template bytes (fresh install, normal first run). Any other
+// ReadFile error OR a hujson parse error returns an error — callers must
+// propagate so the user's bad file is NEVER silently replaced by the template.
+// A user-visible warning in the frontend is the right failure mode here.
+func readOrTemplate(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return []byte(configTemplate), nil
+		}
+		return nil, err
+	}
+	if _, parseErr := hujson.Parse(data); parseErr != nil {
+		return nil, fmt.Errorf("%w: %v", ErrConfigUnparseable, parseErr)
+	}
+	return data, nil
+}
+
+// writeConfigBytesLocked atomic-writes raw bytes. Caller must hold configMu.
+// The bytes are written verbatim (no re-Marshal) — callers compose them
+// through patchConfigKeys, which preserves comments.
+func writeConfigBytesLocked(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	// Atomic write: temp file in same dir + rename. Prevents a half-written
-	// config if lightjj is killed mid-write (e.g., user Ctrl+C during a
-	// panel-resize drag that triggered a debounced save).
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.json")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op if rename succeeded
-	if _, err := tmp.Write(out); err != nil {
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -221,21 +273,29 @@ func writePersistedTabs(mode, host string, tabs []PersistedTab) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 
-	// Read existing config (RawMessage → preserves theme/editorArgs/etc).
-	merged := map[string]json.RawMessage{}
-	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &merged)
+	existing, err := readOrTemplate(path)
+	if err != nil {
+		// Unparseable config shouldn't eat this session's tab persistence —
+		// but reseeding would stomp user edits. Log and bail; next launch
+		// re-runs ReadPersistedTabs which is also lenient, so the net effect
+		// is "tabs don't persist until the user fixes their syntax error".
+		// tabs.go:persistTabs already log.Printf's the return error.
+		return err
 	}
 
-	// Decode existing openTabs, filter out this session's entries, append fresh.
-	var existing []PersistedTab
-	if raw, ok := merged["openTabs"]; ok {
-		json.Unmarshal(raw, &existing)
+	// Decode existing openTabs into typed form, filter out this session's
+	// entries, append fresh. Same filter-merge as before; see docstring.
+	var currentOpenTabs []PersistedTab
+	if err := unmarshalJSONC(existing, &struct {
+		OpenTabs *[]PersistedTab `json:"openTabs"`
+	}{OpenTabs: &currentOpenTabs}); err != nil {
+		// Config exists but openTabs field absent or wrong-typed — treat as empty.
+		currentOpenTabs = nil
 	}
-	kept := existing[:0]
-	for _, pt := range existing {
+	kept := currentOpenTabs[:0]
+	for _, pt := range currentOpenTabs {
 		if pt.Mode == mode && pt.Host == host {
-			continue // this session's old entry; replaced below
+			continue
 		}
 		kept = append(kept, pt)
 	}
@@ -245,6 +305,9 @@ func writePersistedTabs(mode, host string, tabs []PersistedTab) error {
 	if err != nil {
 		return err
 	}
-	merged["openTabs"] = raw
-	return writeConfigLocked(path, merged)
+	out, err := patchConfigKeys(existing, map[string][]byte{"openTabs": raw})
+	if err != nil {
+		return err
+	}
+	return writeConfigBytesLocked(path, out)
 }

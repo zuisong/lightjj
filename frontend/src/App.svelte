@@ -1091,7 +1091,22 @@
     action: { label: 'Clean up', onClick: handleCleanupStaleImmutable },
   } : null)
 
-  let displayMessage = $derived(message ?? (workspaceStale ? staleWCMessage : staleImmutableMessage))
+  // Config file has a JSONC syntax error (backend returned 422). Non-dismissable
+  // until the user fixes their file — reseeding silently would destroy their
+  // comments on the next panel-drag write, so we leave the file alone and
+  // surface a warning with an "Edit config" action that opens the JSONC modal.
+  const configErrorMessage: Message | null = $derived(config.lastError ? {
+    kind: 'warning' as const,
+    text: 'Config has a syntax error — open the editor to fix',
+    details: config.lastError,
+    action: { label: 'Edit config', onClick: () => { configModalOpen = true } },
+  } : null)
+
+  let displayMessage = $derived(
+    message
+      ?? configErrorMessage
+      ?? (workspaceStale ? staleWCMessage : staleImmutableMessage),
+  )
 
   const handleOpUndo = (id: string) =>
     runMutation(() => api.opUndo(id), `Undid operation ${id.slice(0, 8)}`)

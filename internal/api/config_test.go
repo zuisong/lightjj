@@ -82,15 +82,16 @@ func TestHandleConfigSet_RoundTrip(t *testing.T) {
 	srv.Mux.ServeHTTP(w, jsonPost("/api/config", []byte(`{"theme":"light","splitView":true}`)))
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// File exists and is valid JSON
+	// File exists and parses as JSONC (fresh-install path seeds the template
+	// with comments; standardize to plain JSON for the value checks).
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(data, &got))
+	require.NoError(t, unmarshalJSONC(data, &got))
 	assert.Equal(t, "light", got["theme"])
 	assert.Equal(t, true, got["splitView"])
 
-	// GET returns what was written
+	// GET returns the standardized (plain-JSON) payload.
 	w = httptest.NewRecorder()
 	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/config", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -123,10 +124,86 @@ func TestHandleConfigSet_MergePreservesUnknownKeys(t *testing.T) {
 }
 
 func TestHandleConfigSet_AtomicWrite(t *testing.T) {
-	// Corrupt existing file → merge treats it as empty, but write still
-	// succeeds (atomic rename replaces the corrupt file).
+	// Corrupt existing file → write REJECTED with 422. User's bad file is
+	// left untouched so they can fix it in the editor. Silently reseeding
+	// would destroy the user's hand-edits on the next panel-drag write —
+	// one stray typo and a carefully commented config becomes the default
+	// template. The frontend surfaces a warning + "Edit config" action.
 	path := withConfigDir(t)
 	seedConfig(t, path, `{not valid json`)
+
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := NewServer(runner, t.TempDir())
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/config", []byte(`{"theme":"light"}`)))
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), "syntax error")
+
+	// File must be unchanged — byte-identical to what the user wrote.
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, `{not valid json`, string(data))
+
+	// No temp files left behind (atomic-rename never happened, but check
+	// we also didn't leak a .config-*.json).
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+}
+
+func TestHandleConfigGet_CorruptFileReturns422(t *testing.T) {
+	// Corrupt file → 422. Previously returned {} which tricked the frontend
+	// into overwriting its in-memory state with defaults (theme flip to dark,
+	// panel widths reset, etc.). The raw endpoint still serves the bad bytes
+	// so ConfigModal can show + fix the typo.
+	path := withConfigDir(t)
+	seedConfig(t, path, `{not valid json`)
+
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := NewServer(runner, t.TempDir())
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/config", nil))
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), "syntax error")
+}
+
+func TestHandleConfigSet_FreshInstallSeedsTemplate(t *testing.T) {
+	// No file exists → first write should produce a JSONC file with the
+	// teaching comments from configTemplate, then overlay user's keys.
+	path := withConfigDir(t)
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := NewServer(runner, t.TempDir())
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/config", []byte(`{"theme":"gruvbox-dark"}`)))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "// Theme id.",
+		"fresh install should carry the template's theme comment")
+	assert.Contains(t, content, "// Open-in-editor argv",
+		"fresh install should carry the editorArgs comment")
+	assert.Contains(t, content, `"theme": "gruvbox-dark"`,
+		"user's override should be applied over template")
+}
+
+func TestHandleConfigSet_PreservesUserComments(t *testing.T) {
+	// User has hand-added a comment. Next programmatic write (e.g. theme
+	// toggle, panel resize) must NOT nuke it. This is the core value-prop
+	// of the JSONC refactor.
+	path := withConfigDir(t)
+	seedConfig(t, path, `{
+  // my personal note
+  "theme": "dark",
+  "revisionPanelWidth": 420
+}`)
 
 	runner := testutil.NewMockRunner(t)
 	defer runner.Verify()
@@ -138,14 +215,36 @@ func TestHandleConfigSet_AtomicWrite(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var got map[string]any
-	require.NoError(t, json.Unmarshal(data, &got))
-	assert.Equal(t, "light", got["theme"])
+	content := string(data)
+	assert.Contains(t, content, "// my personal note")
+	assert.Contains(t, content, `"theme": "light"`)
+	assert.Contains(t, content, `"revisionPanelWidth": 420`)
+}
 
-	// No temp files left behind
-	entries, err := os.ReadDir(filepath.Dir(path))
+func TestHandleConfigSet_AcceptsJSONCInput(t *testing.T) {
+	// User has already hand-edited their file to include comments. The next
+	// panel-drag POSTs a typed-JSON delta; the existing JSONC file must be
+	// readable (hujson.Parse tolerates comments), not treated as corrupt.
+	path := withConfigDir(t)
+	seedConfig(t, path, `{
+  // note
+  "theme": "dark", // trailing comma ok
+}`)
+
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := NewServer(runner, t.TempDir())
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/config", []byte(`{"splitView":true}`)))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Len(t, entries, 1)
+	var m map[string]any
+	require.NoError(t, unmarshalJSONC(data, &m))
+	assert.Equal(t, "dark", m["theme"])
+	assert.Equal(t, true, m["splitView"])
 }
 
 func TestHandleConfigSet_BadJSON(t *testing.T) {
