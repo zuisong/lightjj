@@ -328,10 +328,14 @@
   }
 
   // Open-in-editor is enabled iff the mode-appropriate editorArgs config field
-  // is set (backend reports this). Default false = hide the menu item until
-  // loadInfo() confirms — a brief info() failure would otherwise enable a
-  // feature that 400s on click. See docs/CONFIG.md for the invariant.
-  let editorConfigured = $state(false)
+  // is set. Derived from reactive config so a ConfigModal save takes effect
+  // immediately (no hard refresh). sshMode comes from api.info() at startup
+  // and never flips for the session. Empty array on fail-safe init matches
+  // "not yet known" — menu item stays hidden until the user configures.
+  let sshMode = $state(false)
+  let editorConfigured = $derived(
+    sshMode ? config.editorArgsRemote.length > 0 : config.editorArgs.length > 0
+  )
 
   let anyModalOpen = $derived(paletteOpen || bookmarkModalOpen || bookmarkInputOpen || gitModalOpen || configModalOpen || !!contextMenu || divergence.active || welcomeOpen || !!fileHistoryPath)
   let inlineMode = $derived(rebase.active || squash.active || split.active)
@@ -696,9 +700,9 @@
   // --- API actions ---
   async function loadInfo() {
     try {
-      const { hostname, repo_path, editor_configured, default_remote, log_revset, jj_version } = await api.info()
+      const { hostname, repo_path, ssh_mode, default_remote, log_revset, jj_version } = await api.info()
       pageTitle = formatTitle(hostname, repo_path)
-      editorConfigured = editor_configured
+      sshMode = ssh_mode
       defaultRemote = default_remote
       repoPath = repo_path
       configuredLogRevset = log_revset
@@ -708,7 +712,7 @@
         setMessage({ kind: 'warning',
           text: `jj ${jj_version.replace(/^jj\s*/, '')} — missing: ${missing.join(', ')}` })
       }
-    } catch { /* static <title> fallback + editorConfigured stays false (fail-safe) */ }
+    } catch { /* static <title> fallback + sshMode stays false (local-mode fail-safe) */ }
   }
 
   // Backend resolves this per-tab from --default-remote flag > jj config

@@ -646,7 +646,6 @@ export interface InfoResponse {
   hostname: string
   repo_path: string
   ssh_mode: boolean
-  editor_configured: boolean
   default_remote: string
   log_revset: string  // user's revsets.log config; empty = jj's built-in default
   jj_version: string  // `jj --version` output, e.g. "jj 0.39.0"; empty on failure
