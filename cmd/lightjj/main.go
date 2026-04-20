@@ -199,6 +199,13 @@ func main() {
 		}
 	}
 
+	// One-shot migration: pre-1.20 plain-JSON configs get reseeded through
+	// the teaching-comment template (values preserved via patchConfigKeys).
+	// Runs before HTTP starts so the first request sees the migrated file;
+	// configMu inside serializes against any concurrent write anyway.
+	// Host-scoped, so called unconditionally in both local and SSH modes.
+	api.MigrateConfigIfNeeded()
+
 	srv := makeServer(cmdRunner, resolvedRepoDir, displayPath, sshRunner != nil)
 	tm := api.NewTabManager(newTab, resolve)
 	if *autoShutdown > 0 {

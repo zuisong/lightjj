@@ -485,6 +485,82 @@ func TestHandleConfigSetRaw_RejectsNonTextPlain(t *testing.T) {
 	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
 }
 
+func TestMigrateConfigIfNeeded_OldFormatGetsSeeded(t *testing.T) {
+	path := withConfigDir(t)
+	// Pre-1.20 style: alphabetical, no comments, mix of known + unknown keys.
+	seedConfig(t, path, `{
+  "editorArgs": ["zed", "{file}:{line}"],
+  "futureKey": 42,
+  "theme": "gruvbox-dark"
+}`)
+
+	MigrateConfigIfNeeded()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// Snapshot the migrated bytes BEFORE any standardize call — hujson.Parse
+	// aliases the input buffer and Standardize mutates those aliases in place,
+	// so unmarshalJSONC(data, ...) below would scribble spaces over the
+	// comments in `data`. Keep the snapshot for the idempotency comparison.
+	firstSnapshot := string(data)
+	content := string(data)
+
+	// Teaching comments are present.
+	assert.Contains(t, content, "// Theme id.")
+	assert.Contains(t, content, "// Open-in-editor argv")
+
+	// User values survived.
+	var m map[string]any
+	require.NoError(t, unmarshalJSONC(data, &m))
+	assert.Equal(t, "gruvbox-dark", m["theme"])
+	assert.Equal(t, float64(42), m["futureKey"])
+	assert.Equal(t, []any{"zed", "{file}:{line}"}, m["editorArgs"])
+
+	// Running again is a no-op (hasJSONCComments now returns true).
+	MigrateConfigIfNeeded()
+	data2, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, firstSnapshot, string(data2),
+		"second migration should be byte-identical — idempotent")
+}
+
+func TestMigrateConfigIfNeeded_AlreadyMigratedSkips(t *testing.T) {
+	path := withConfigDir(t)
+	// Config with user-added comment — should NOT be re-seeded.
+	original := `{
+  // user's own comment
+  "theme": "dark"
+}`
+	seedConfig(t, path, original)
+
+	MigrateConfigIfNeeded()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(data), "file with user comment must not be touched")
+}
+
+func TestMigrateConfigIfNeeded_MissingFileNoOp(t *testing.T) {
+	path := withConfigDir(t)
+	MigrateConfigIfNeeded()
+	// Still missing (template is seeded only on first WRITE, not startup).
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestMigrateConfigIfNeeded_CorruptLeftAlone(t *testing.T) {
+	path := withConfigDir(t)
+	original := `{not valid`
+	seedConfig(t, path, original)
+
+	MigrateConfigIfNeeded()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(data),
+		"corrupt file must be left untouched — the write path's 422 is the right failure mode, not silent clobber")
+}
+
 func TestHandleConfigGetRaw_PermissionErrorReturns500(t *testing.T) {
 	// Create a file then chmod 0 so os.ReadFile returns EACCES. Verify the
 	// handler returns 500 rather than silently serving the template (which

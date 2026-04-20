@@ -50,6 +50,60 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "lightjj", "config.json"), nil
 }
 
+// MigrateConfigIfNeeded reseeds the config file with the teaching-comment
+// template if it exists in pre-1.20 plain-JSON form. Triggered once at
+// startup. Idempotent: after migration, hasJSONCComments returns true on the
+// migrated file and subsequent calls no-op.
+//
+// The user's existing values are preserved via patchConfigKeys — template
+// keys get the user's values, extra keys (openTabs, recentActions, etc.)
+// land as compact JSON after the template block.
+//
+// Failure modes are best-effort and logged: missing file is normal (fresh
+// install → template seeds on first write); parse error is left alone (the
+// write path will surface it via 422 and the user fixes the typo manually);
+// other IO errors are logged and skipped.
+func MigrateConfigIfNeeded() {
+	path, err := configPath()
+	if err != nil {
+		return
+	}
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // ENOENT is normal; other errors will surface via the write path
+	}
+	if hasJSONCComments(data) {
+		return // already migrated or user-annotated
+	}
+	if _, parseErr := hujson.Parse(data); parseErr != nil {
+		return // corrupt — let the normal error path surface it; don't destroy the user's bytes
+	}
+
+	// Decode ALL top-level keys so they get patched over the template.
+	var existingKeys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &existingKeys); err != nil {
+		return // decode failure on a hujson-parseable file shouldn't happen, but be defensive
+	}
+	keys := make(map[string][]byte, len(existingKeys))
+	for k, v := range existingKeys {
+		keys[k] = []byte(v)
+	}
+
+	migrated, err := patchConfigKeys([]byte(configTemplate), keys)
+	if err != nil {
+		log.Printf("warning: failed to migrate config to JSONC template: %v", err)
+		return
+	}
+	if err := writeConfigBytesLocked(path, migrated); err != nil {
+		log.Printf("warning: failed to write migrated config: %v", err)
+		return
+	}
+	log.Printf("migrated config file at %s to JSONC template (comments + preserved values)", path)
+}
+
 // Config handlers are package-level (not Server methods) because config is
 // host-scoped, not repo-scoped. TabManager registers these at /api/config so
 // config.svelte.ts's raw fetch() works without a tab prefix. Server.routes()
