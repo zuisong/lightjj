@@ -6,6 +6,7 @@ export interface TutorialFeature {
 }
 
 export const FEATURES: TutorialFeature[] = [
+  { version: '1.20.0', shortcut: '⌘K → Edit config', title: 'JSONC config with comments', description: 'The config file is now JSONC — add // line comments and trailing commas. Fresh installs get a commented template teaching you how to set theme, editorArgs, fonts. Comments survive programmatic writes (theme toggle, panel drag) because the backend patches the AST instead of re-serialising. Syntax errors surface as a warning bar instead of overwriting your file.' },
   { version: '1.18.0', shortcut: null, title: 'Image preview', description: 'Preview .svg/.png/.jpg/.gif/.webp files inline in the diff panel — same Preview button as markdown. Served via the CSP-hardened file-raw proxy, rendered over a checkered transparency background.' },
   { version: '1.17.0', shortcut: null, title: 'Snapshot pause during mutations', description: 'Background snapshots are suppressed while a jj git push (or any mutation) is in flight, avoiding the "Concurrent checkout" / op-divergence race that long pushes can hit. Tabs on the same working copy share the gate.' },
   { version: '1.17.0', shortcut: 'm', title: 'Markdown preview with multi-select', description: 'Preview .md files when multiple revisions are checked — renders the file as it exists at the newest checked commit.' },

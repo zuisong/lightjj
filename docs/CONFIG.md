@@ -1,6 +1,8 @@
 # Configuration
 
-lightjj stores user config at `$XDG_CONFIG_HOME/lightjj/config.json` (or the platform equivalent via Go's `os.UserConfigDir`). Edit it via **Cmd+K → "Edit config (JSON)"** for an in-app CodeMirror editor with live-apply on save, or edit the file directly.
+lightjj stores user config at `$XDG_CONFIG_HOME/lightjj/config.json` (or the platform equivalent via Go's `os.UserConfigDir`). The file is **JSONC** — JSON with `// line comments`, `/* block comments */`, and trailing commas. Fresh installs receive a commented template on first save; any comments you add survive future programmatic writes (theme toggle, panel resize, tab persistence) because the backend uses an AST-preserving patch instead of re-serialising.
+
+Edit it via **Cmd+K → "Edit config (JSON)"** for an in-app CodeMirror editor with live-apply on save, or edit the file directly. If the file has a syntax error, a warning appears in the message bar and your in-memory settings stay as they are — the file is not silently overwritten.
 
 The config file lives in your local config directory regardless of mode — only jj commands are proxied over SSH, not config reads.
 
@@ -16,6 +18,7 @@ The config file lives in your local config directory regardless of mode — only
 | `fontMono` | `string` | `""` | CSS `font-family` stack for code, diffs, change IDs. Empty = built-in default |
 | `fontMdBody` | `string` | `""` | Markdown preview body text. Empty = `system-ui` |
 | `fontMdHeading` | `string` | `""` | Markdown preview headings. Empty = inherits `fontMdBody` |
+| `fontMdDisplay` | `string` | `""` | Markdown preview h1 only. Empty = inherits `fontMdHeading` (so a serif h1 with sans h2–h6 is one line of config) |
 | `fontMdCode` | `string` | `""` | Markdown preview `code`/`pre`. Empty = inherits `fontMono` |
 | `revisionPanelWidth` | `number` | `420` | Revision panel width in px |
 | `evologPanelHeight` | `number` | `360` | Evolog panel height in px |
@@ -49,6 +52,23 @@ Markdown preview fonts are intentionally separate from `fontUI` — prose reads 
 The font must be installed locally — lightjj does not download webfonts. From the UI: **Cmd+K → "Font size"** for increase/decrease/reset; font families are config-file only.
 
 For larger text than 16px, use browser zoom (⌘/Ctrl +) — it scales the fixed row heights proportionally, which the in-app setting cannot.
+
+## JSONC format
+
+```jsonc
+{
+  // Comments survive programmatic writes — the backend parses the AST via
+  // tailscale/hujson and only replaces the VALUES of keys it's updating.
+  "theme": "dark",
+  "editorArgs": ["zed", "{file}:{line}"]
+}
+```
+
+Fresh installs receive a commented starter template on their first save — panel drag, theme toggle, or any programmatic write all trigger the seed. If you hand-authored a config before upgrading, it stays plain JSON until you add comments yourself — no migration is performed.
+
+Comments attached to **existing** keys are preserved across writes. The backend cannot attach comments to keys it adds for the first time (e.g. `openTabs` written on first tab-open) — add them yourself if you want them.
+
+**Syntax errors are not overwritten.** If your hand-edited file has a typo, the frontend shows a warning ("Config has a syntax error — open the editor to fix") with an "Edit config" action button, and the on-disk file is left alone. Fix it in the editor or directly; the warning clears on the next successful save.
 
 ## Cross-tab sync
 
