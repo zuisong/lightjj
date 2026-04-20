@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -47,12 +48,13 @@ func hasJSONCComments(data []byte) bool {
 // with spaces, preserving byte offsets so error messages still point at the
 // right column. Pure passthrough for plain JSON.
 //
-// Used on every read path that subsequently json.Unmarshals: handleConfigGet,
-// ReadPersistedTabs, readConfigEditor. Centralising avoids drift: if someone
-// adds a fourth reader and forgets to Standardize, the first user-authored
-// comment in their config would panic their open-in-editor feature.
+// hujson.Standardize MUTATES its input (Parse aliases the buffer's Extra
+// slices; Standardize then writes spaces into them). We clone first so callers
+// can safely reuse `data` afterwards — writePersistedTabs decodes openTabs then
+// re-patches the SAME buffer; without the clone every tab open/close would
+// strip every comment from config.json. ~10KB allocation, negligible.
 func standardizeJSONC(data []byte) ([]byte, error) {
-	return hujson.Standardize(data)
+	return hujson.Standardize(bytes.Clone(data))
 }
 
 // unmarshalJSONC is the "Standardize → json.Unmarshal" idiom one call. Callers

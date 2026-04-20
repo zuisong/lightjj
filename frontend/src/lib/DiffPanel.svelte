@@ -819,9 +819,9 @@
   // (~9ms vs Shiki's ~200ms) but still guarantees selection-first paint.
   // Word-diff isn't deferred — LCS is cheaper and has no immediate phase.
   // activeRevisionId is derived from diffTarget (= nav.loadedTarget, set sync
-  // at navigate). It LEADS diffContent during progressive render — this effect
-  // fires with new cacheKey + stale effectiveFiles, but the files.length===0
-  // early-return below catches that (files.reset() → effectiveFiles = []).
+  // at navigate). It LEADS diffContent during progressive render — the
+  // contentMatchesTarget gate below catches that (skip until diffContentKey
+  // catches up to activeRevisionId).
   // Context-expansion handling: expandGap mutates revealedGaps →
   // expandedByPath → effectiveFiles recomputes with one substituted entry →
   // call update() for that file only, preserving all other entries.
@@ -851,6 +851,8 @@
     // the prior rev alive in byFile under the new cacheKey.
     if (!contentMatchesTarget) {
       lastDerivationFiles = undefined
+      // byFile intentionally NOT cleared — isRefresh shows stale content;
+      // stale highlights match it. Clearing would flash plain text for ~200ms.
       return
     }
 

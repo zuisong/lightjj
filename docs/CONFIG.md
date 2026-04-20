@@ -72,6 +72,8 @@ Comments attached to **existing** keys are preserved across writes. The backend 
 
 **Syntax errors are not overwritten.** If your hand-edited file has a typo, the frontend shows a warning ("Config has a syntax error — open the editor to fix") with an "Edit config" action button, and the on-disk file is left alone. Fix it in the editor or directly; the warning clears on the next successful save.
 
+**Downgrading to a pre-1.20 binary.** Older versions don't understand JSONC and treat a commented file as corrupt-then-empty: the first programmatic write (panel resize, theme toggle, tab open) silently drops every value except the one being written. The 1.20 migration writes a one-time `config.json.pre-jsonc.bak` sibling — copy it back over `config.json` before launching the older binary if you need to revert.
+
 ## Cross-tab sync
 
 Config writes propagate to other browser tabs via the `storage` event on the localStorage write-through cache. Theme toggles, panel resizes, etc. apply everywhere without a reload.

@@ -1,4 +1,4 @@
-import type { Bookmark } from './api'
+import type { Bookmark, BookmarkRemote } from './api'
 
 /**
  * Classified sync state of a bookmark vs. its default tracked remote.
@@ -17,6 +17,9 @@ export type SyncState =
   // that remote + user-perspective counts so the label can name it (e.g.
   // `upstream ↑107`) instead of the old "other remote out of sync" sentinel.
   // Less severe than `diverged` — dot renders amber, not red.
+  // Only fires when the default tracked remote is exactly 0/0 — if default has
+  // any delta, ahead/behind/diverged wins and secondaries are not inspected.
+  // remote='?' is the defensive fallback (bm.synced=false but no offender found).
   | { kind: 'secondary'; remote: string; ahead: number; behind: number }
   | { kind: 'local-only' }                              // local ref, no tracked remote
   | { kind: 'remote-only'; tracked: boolean }           // no local (untracked remote OR delete-staged)
@@ -59,19 +62,27 @@ export function classifyBookmark(bm: Bookmark, scopeRemote?: string): SyncState 
   }
   // Synced on the first tracked remote — but jj's all-remotes `synced` bool
   // knows about the others. Don't lie: if any tracked remote is out of sync,
-  // identify WHICH one and carry its counts so the label can name it.
+  // pick the WORST offender so a 3+ remote setup surfaces the most urgent one
+  // (diverged > behind > ahead, ties by total magnitude).
   if (!bm.synced) {
-    const other = (bm.remotes ?? []).find(
-      rr => rr !== r && rr.tracked && (rr.ahead !== 0 || rr.behind !== 0),
-    )
-    if (other) {
-      // Invert like above: other.ahead = remote ahead of us = WE are behind.
-      return { kind: 'secondary', remote: other.remote, ahead: other.behind, behind: other.ahead }
+    let worst: BookmarkRemote | undefined
+    let worstRank = -1, worstMag = -1
+    for (const rr of bm.remotes ?? []) {
+      if (rr === r || !rr.tracked || (rr.ahead === 0 && rr.behind === 0)) continue
+      const rank = rr.ahead > 0 && rr.behind > 0 ? 2 : rr.ahead > 0 ? 1 : 0
+      const mag = rr.ahead + rr.behind
+      if (rank > worstRank || (rank === worstRank && mag > worstMag)) {
+        worst = rr; worstRank = rank; worstMag = mag
+      }
     }
-    // Defensive: bm.synced=false but no offending remote found (shouldn't
-    // happen in practice — either bm.synced is stale or counts are all zero).
-    // Fall back to the old generic sentinel rather than a false green dot.
-    return { kind: 'diverged', ahead: 0, behind: 0 }
+    if (worst) {
+      // Invert like above: worst.ahead = remote ahead of us = WE are behind.
+      return { kind: 'secondary', remote: worst.remote, ahead: worst.behind, behind: worst.ahead }
+    }
+    // Defensive: backend-unreachable per bookmark.go (synced considers only
+    // tracked remotes, so !synced ⇒ some tracked remote has nonzero counts).
+    // Render as secondary anyway so it gets amber/priority-4, not red/priority-1.
+    return { kind: 'secondary', remote: '?', ahead: 0, behind: 0 }
   }
   return { kind: 'synced' }
 }
@@ -108,9 +119,9 @@ export function syncLabel(s: SyncState, remote: string): string {
     case 'ahead':       return `${remote} ↑${fmtCount(s.by)}`
     case 'behind':      return `${remote} ↓${fmtCount(s.by)}`
     case 'diverged':
-      if (s.ahead === 0 && s.behind === 0) return 'other remote out of sync'
       return `${remote} ↑${fmtCount(s.ahead)} ↓${fmtCount(s.behind)}`
     case 'secondary':
+      if (s.remote === '?') return 'other remote out of sync'
       if (s.ahead > 0 && s.behind > 0) return `${s.remote} ↑${fmtCount(s.ahead)} ↓${fmtCount(s.behind)}`
       if (s.ahead > 0) return `${s.remote} ↑${fmtCount(s.ahead)}`
       return `${s.remote} ↓${fmtCount(s.behind)}`

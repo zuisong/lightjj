@@ -241,7 +241,6 @@ Wrap hujson.Standardize + json.Unmarshal + Patch-replace into three
 small helpers shared by every config read and write path. Pure; no
 wiring yet.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -400,7 +399,6 @@ theme, editorArgs, fontSize, and font families. Test asserts it
 round-trips through hujson.Standardize + json.Unmarshal and carries
 every default the frontend expects.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -707,7 +705,6 @@ installs get teaching comments on first save.
 writePersistedTabs retains its filter-merge semantics; only the I/O
 layer changes.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -799,7 +796,6 @@ raw bytes — would trip on the first // comment. Switch to
 unmarshalJSONC (Standardize then Unmarshal) so open-in-editor and
 tab-restore survive a hand-edited config.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1015,7 +1011,6 @@ missing file) so ConfigModal shows comments; POST validates via
 hujson.Parse and atomic-writes the bytes as-is. Registered on both
 TabManager.Mux and Server.Mux like the typed /api/config routes.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1173,7 +1168,6 @@ and the teaching comments the backend seeds on fresh installs. Save
 validates via jsonc-parser (lazy-loaded) and applies known keys to
 reactive state.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1266,7 +1260,6 @@ Explain JSONC support in docs/CONFIG.md, add a tutorial entry so
 existing users see a "what's new" modal on upgrade, and update CLAUDE.md
 with the new helper files and the hujson/jsonc-parser deps.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```

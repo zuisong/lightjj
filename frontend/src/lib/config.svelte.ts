@@ -100,11 +100,19 @@ function saveLocal(c: Config) {
 // Other non-ok statuses + network failures return { null, null } (leave state
 // alone without user-visible noise).
 interface LoadResult { config: Partial<Config> | null; error: string | null }
+
+// writeJSONError emits {"error":"..."} — unwrap for MessageBar.details so the
+// user sees the bare hujson line:column message instead of JSON noise.
+async function readError(res: Response): Promise<string> {
+  try { return (await res.json()).error ?? `HTTP ${res.status}` }
+  catch { return `HTTP ${res.status}` }
+}
+
 async function loadRemote(): Promise<LoadResult> {
   try {
     const res = await fetch('/api/config')
     if (res.status === 204) return { config: null, error: null } // backend can't resolve config dir
-    if (res.status === 422) return { config: null, error: await res.text() }
+    if (res.status === 422) return { config: null, error: await readError(res) }
     if (!res.ok) return { config: null, error: null }
     return { config: await res.json(), error: null }
   } catch {
@@ -125,7 +133,7 @@ async function saveRemote(
       body: JSON.stringify(c),
     })
     if (res.status === 422) {
-      onError(await res.text())
+      onError(await readError(res))
     } else if (res.ok) {
       onError(null)
     }
@@ -161,12 +169,20 @@ function createConfig() {
 
   // Narrow unknown-shape partial to known keys. Backend preserves unknown
   // fields for forward-compat, but we only apply fields we understand.
+  // Clears lastError — ConfigModal calls this after a successful raw POST,
+  // which means the on-disk file just parsed; the syntax-error warning would
+  // otherwise persist until the next debounced typed-endpoint save.
+  // Mutating state here also triggers the debounced save-effect → a redundant
+  // POST /api/config 500ms after the raw POST. Intentional: that flush is
+  // what writes localStorage (cross-tab sync), and the per-key patch is
+  // comment-safe so the disk write is a no-op overlay.
   function applyPartial(partial: Partial<Config>) {
     for (const k of Object.keys(defaults) as (keyof Config)[]) {
       if (k in partial && partial[k] !== undefined) {
         applyKey(k, partial[k] as Config[typeof k])
       }
     }
+    lastError = null
   }
 
   loadRemote().then(({ config: remote, error }) => {
@@ -182,10 +198,15 @@ function createConfig() {
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   let pendingSnap: Config | undefined
+  let saveGen = 0
   const flush = () => {
     if (!pendingSnap) return
     saveLocal(pendingSnap)
-    saveRemote(pendingSnap, msg => { lastError = msg })
+    // Gen-guard: overlapping flushes (panel-drag burst) resolving out-of-order
+    // would let a stale 422 stomp a fresh ok's null-clear, leaving the warning
+    // up after the user fixed their file.
+    const gen = ++saveGen
+    saveRemote(pendingSnap, msg => { if (gen === saveGen) lastError = msg })
     pendingSnap = undefined
   }
   // Flush on unload so a mid-drag close doesn't lose the last 500ms of writes.

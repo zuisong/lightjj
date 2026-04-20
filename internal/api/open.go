@@ -98,13 +98,12 @@ func readConfigEditor() (editorConfig, error) {
 		return editorConfig{}, nil // missing file → zero state
 	}
 	var cfg editorConfig
-	_ = unmarshalJSONC(data, &cfg) // corrupt → zero state (same as handleConfigSet)
+	_ = unmarshalJSONC(data, &cfg) // corrupt → zero state (open-in-editor disabled; the 422 path on /api/config surfaces the warning)
 	return cfg, nil
 }
 
 // editorTemplate picks the config field for this server's mode and computes
-// the substitution values for a given request path. Used by handleOpenFile
-// (to spawn) and handleInfo (to report editor_configured).
+// the substitution values for a given request path. Used by handleOpenFile.
 func (s *Server) editorTemplate(relPath string, line *int) ([]string, editorSubst, error) {
 	cfg, err := readConfigEditor()
 	if err != nil {

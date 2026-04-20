@@ -449,11 +449,54 @@ func TestHandleConfigSetRaw_RejectsInvalidJSONC(t *testing.T) {
 	defer runner.Verify()
 	srv := NewServer(runner, t.TempDir())
 
-	req := httptest.NewRequest("POST", "/api/config/raw", bytes.NewReader([]byte(`{not json`)))
-	req.Header.Set("Content-Type", "text/plain")
-	w := httptest.NewRecorder()
-	srv.Mux.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	for name, body := range map[string]string{
+		"unparseable": `{not json`,
+		// Non-object roots: hujson.Parse accepts these but patchConfigKeys
+		// would later fail with "cannot add to non-object" — reject early.
+		"array root": `[1,2,3]`,
+		"null root":  `null`,
+		"int root":   `42`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/config/raw", bytes.NewReader([]byte(body)))
+			req.Header.Set("Content-Type", "text/plain")
+			w := httptest.NewRecorder()
+			srv.Mux.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
+func TestWritePersistedTabs_PreservesComments(t *testing.T) {
+	// Regression: pre-fix, unmarshalJSONC mutated `existing` in place (hujson
+	// aliasing) so the subsequent patchConfigKeys saw a comment-stripped buffer
+	// and every tab open/close erased all comments.
+	path := withConfigDir(t)
+	seedConfig(t, path, `{
+  // user's theme comment
+  "theme": "dark",
+  "openTabs": []
+}`)
+	require.NoError(t, writePersistedTabs("local", "",
+		[]PersistedTab{{Path: "/repo/a", Mode: "local"}}))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "// user's theme comment",
+		"tab persistence must not strip user comments")
+	assert.Contains(t, string(data), `"/repo/a"`)
+}
+
+func TestReadOrTemplate_ZeroByteFile(t *testing.T) {
+	// `> config.json` shell mishap or non-journaled crash → zero bytes. There's
+	// no user data to preserve so reseed from template (matching ENOENT) instead
+	// of returning ErrConfigUnparseable, which would stick the user in a 422
+	// loop with an empty raw modal that itself fails the object-root check.
+	path := withConfigDir(t)
+	seedConfig(t, path, "")
+	got, err := readOrTemplate(path)
+	require.NoError(t, err)
+	assert.Equal(t, configTemplate, string(got))
 }
 
 func TestHandleConfigSetRaw_CrossOriginRejected(t *testing.T) {
@@ -498,11 +541,6 @@ func TestMigrateConfigIfNeeded_OldFormatGetsSeeded(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	// Snapshot the migrated bytes BEFORE any standardize call — hujson.Parse
-	// aliases the input buffer and Standardize mutates those aliases in place,
-	// so unmarshalJSONC(data, ...) below would scribble spaces over the
-	// comments in `data`. Keep the snapshot for the idempotency comparison.
-	firstSnapshot := string(data)
 	content := string(data)
 
 	// Teaching comments are present.
@@ -520,8 +558,14 @@ func TestMigrateConfigIfNeeded_OldFormatGetsSeeded(t *testing.T) {
 	MigrateConfigIfNeeded()
 	data2, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Equal(t, firstSnapshot, string(data2),
+	assert.Equal(t, content, string(data2),
 		"second migration should be byte-identical — idempotent")
+
+	// Backup written (downgrade-recovery): contains the pre-migration bytes.
+	bak, err := os.ReadFile(path + ".pre-jsonc.bak")
+	require.NoError(t, err)
+	assert.Contains(t, string(bak), `"theme": "gruvbox-dark"`)
+	assert.NotContains(t, string(bak), "//")
 }
 
 func TestMigrateConfigIfNeeded_AlreadyMigratedSkips(t *testing.T) {

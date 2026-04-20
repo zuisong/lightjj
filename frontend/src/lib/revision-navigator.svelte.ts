@@ -38,6 +38,13 @@ export interface RevisionNavigator {
    */
   loadDiffAndFiles(commit: Commit, shouldAbort: () => boolean): Promise<void>
   /**
+   * Multi-check entry — keeps `loadedTarget`/`diffContentKey`/`diff.value`
+   * advancing as a triple. Calling `diff.load()` directly from App leaves
+   * the first two frozen at the prior single key while content holds multi
+   * output, breaking DiffPanel's `contentMatchesTarget` invariant.
+   */
+  loadMulti(target: DiffTarget & { kind: 'multi' }): void
+  /**
    * Synchronous cache-hit application. Bumps revGen so any suspended
    * loadDiffAndFiles bails before firing its `files.load()` — without this,
    * the resumed call's `files.load(stale)` would bump loader.generation PAST
@@ -131,6 +138,12 @@ export function createRevisionNavigator(opts: {
     // the resolve was applied (false if superseded) — only then is value in
     // sync with target and diffContentKey safe to advance.
     diff.load(target).then(applied => {
+      // `applied` alone proves diff.value just became this target's content.
+      // The extra revGen check skips advancing when a navigate* schedule has
+      // already bumped revGen — content IS in sync, but it's about to be
+      // replaced in ≤2 frames, so don't pay for a derivation that gets
+      // discarded. Over-conservative by design (contentMatchesTarget reads
+      // false for ≤50ms on content that's technically in sync).
       if (applied && gen === revGen) diffContentKey = diffTargetKey(target)
     }).finally(() => {
       if (gen === revGen) diffPending = false
@@ -155,6 +168,31 @@ export function createRevisionNavigator(opts: {
     diffContentKey = diffTargetKey(target)
     files.set(hit.files)
     description.set(hit.description)
+  }
+
+  // Multi-check entry point — keeps loadedTarget/diffContentKey/diff.value
+  // advancing as a triple. App's multi-check $effect previously called
+  // diff.load() directly, which left loadedTarget+diffContentKey frozen at
+  // the prior single key while diff.value held multi content: DiffPanel's
+  // contentMatchesTarget either evaluated stale==stale (poisoned memo under
+  // single key) or stale!=current (highlights skip for the whole session).
+  function loadMulti(target: DiffTarget & { kind: 'multi' }): void {
+    const gen = ++revGen
+    loadedTarget = target
+    diffPending = true
+    description.reset()
+    diff.load(target).then(applied => {
+      // `applied` alone proves diff.value just became this target's content.
+      // The extra revGen check skips advancing when a navigate* schedule has
+      // already bumped revGen — content IS in sync, but it's about to be
+      // replaced in ≤2 frames, so don't pay for a derivation that gets
+      // discarded. Over-conservative by design (contentMatchesTarget reads
+      // false for ≤50ms on content that's technically in sync).
+      if (applied && gen === revGen) diffContentKey = diffTargetKey(target)
+    }).finally(() => {
+      if (gen === revGen) diffPending = false
+    })
+    files.load(target.revset)
   }
 
   // Scheduling timers — previously App.svelte instance state (navRafId,
@@ -209,7 +247,7 @@ export function createRevisionNavigator(opts: {
     get loadedTarget() { return loadedTarget },
     get diffPending() { return diffPending },
     get diffContentKey() { return diffContentKey },
-    loadDiffAndFiles, applyCacheHit, cancel,
+    loadDiffAndFiles, loadMulti, applyCacheHit, cancel,
     navigateCached, navigateDeferred,
   }
 }

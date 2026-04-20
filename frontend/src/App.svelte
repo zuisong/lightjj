@@ -331,11 +331,14 @@
   // Open-in-editor is enabled iff the mode-appropriate editorArgs config field
   // is set. Derived from reactive config so a ConfigModal save takes effect
   // immediately (no hard refresh). sshMode comes from api.info() at startup
-  // and never flips for the session. Empty array on fail-safe init matches
-  // "not yet known" — menu item stays hidden until the user configures.
-  let sshMode = $state(false)
+  // and never flips for the session. Tri-state: undefined until loadInfo
+  // resolves so a configured-user with a transient info() failure doesn't see
+  // a menu item that 400s on click (the old fail-safe assumed empty editorArgs).
+  let sshMode = $state<boolean | undefined>(undefined)
   let editorConfigured = $derived(
-    sshMode ? config.editorArgsRemote.length > 0 : config.editorArgs.length > 0
+    sshMode === undefined ? false
+      : sshMode ? config.editorArgsRemote.length > 0
+      : config.editorArgs.length > 0
   )
 
   let anyModalOpen = $derived(paletteOpen || bookmarkModalOpen || bookmarkInputOpen || gitModalOpen || configModalOpen || !!contextMenu || divergence.active || welcomeOpen || !!fileHistoryPath)
@@ -523,7 +526,7 @@
       checkedRevisions.delete(changeId)
       // Unchecking the last one: multi→single transition. The multi-check
       // $effect returns early on kind !== 'multi', so nothing else reloads
-      // the single-rev diff — loadedTarget stays stale on multi content.
+      // the single-rev diff — loadedTarget would stay on the multi target.
       if (checkedRevisions.size === 0 && selectedRevision) {
         nav.loadDiffAndFiles(selectedRevision.commit, hasChecked)
       }
@@ -713,7 +716,7 @@
         setMessage({ kind: 'warning',
           text: `jj ${jj_version.replace(/^jj\s*/, '')} — missing: ${missing.join(', ')}` })
       }
-    } catch { /* static <title> fallback + sshMode stays false (local-mode fail-safe) */ }
+    } catch { /* static <title> fallback + sshMode stays undefined → editorConfigured=false */ }
   }
 
   // Backend resolves this per-tab from --default-remote flag > jj config
@@ -820,7 +823,6 @@
   }
 
   // Thin aliases — preserve existing call-site names across the component.
-  const loadFilesForRevset = files.load
   const loadOplog = oplog.load
   const loadEvolog = evolog.load
 
@@ -1018,11 +1020,12 @@
   )
   // Reload diff/files when checked revisions change.
   // Skip when diffFrozen — diff is intentionally frozen on source revision.
+  // Routed through nav.loadMulti so loadedTarget+diffContentKey advance with
+  // diff.value (the contentMatchesTarget invariant in DiffPanel).
   $effect(() => {
     if (intendedTarget?.kind !== 'multi') return
     if (diffFrozen) return
-    diff.load(intendedTarget)
-    loadFilesForRevset(intendedTarget.revset)
+    nav.loadMulti(intendedTarget)
   })
 
   // Builds the unified Message for a successful mutation. Warnings demote

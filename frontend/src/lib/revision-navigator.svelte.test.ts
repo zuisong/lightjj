@@ -305,6 +305,80 @@ describe('applyCacheHit', () => {
   })
 })
 
+describe('diffContentKey — content-matches-target invariant producer side', () => {
+  // DiffPanel.test.ts mocks diffContentKey as a prop transition (consumer side).
+  // These tests lock the navigator's PRODUCTION of the right sequence under
+  // interleaved nav — the gap that memo-poisoning lived in.
+
+  it('applyCacheHit sets diffContentKey synchronously alongside diff.set', () => {
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.applyCacheHit(mkCommit('X'), { diff: 'X-diff', files: [], description: '' })
+    expect(nav.diffContentKey).toBe('X')
+    expect(nav.diff.value).toBe('X-diff')
+  })
+
+  it('loadDiffAndFiles advances diffContentKey only after diff.load applies', async () => {
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    let resolveDiff!: (v: { diff: string }) => void
+    mockApi.diff.mockImplementation(() => new Promise(r => { resolveDiff = r }))
+
+    nav.loadDiffAndFiles(mkCommit('A'), noAbort)
+    // loadedTarget flips sync; diffContentKey trails.
+    expect(targetCommitId(nav)).toBe('A')
+    expect(nav.diffContentKey).toBe('')
+
+    resolveDiff({ diff: 'A-diff' })
+    await flush()
+    expect(nav.diffContentKey).toBe('A')
+  })
+
+  it('applyCacheHit mid-loadDiffAndFiles → diffContentKey is B, never transiently A', async () => {
+    // The over-conservative double-guard scenario: A's diff resolves with
+    // applied=true (loader.generation check passed at the moment of resolve)
+    // but B's applyCacheHit already bumped revGen. diffContentKey must NOT
+    // advance to A — even though diff.value briefly held A-diff before
+    // diff.set(B) overwrote it.
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    let resolveDiffA!: (v: { diff: string }) => void
+    mockApi.diff.mockImplementation(() => new Promise(r => { resolveDiffA = r }))
+
+    nav.loadDiffAndFiles(mkCommit('A'), noAbort)
+    expect(nav.diffContentKey).toBe('')
+
+    // B arrives via cache hit (bumps revGen + sets diffContentKey=B sync).
+    nav.applyCacheHit(mkCommit('B'), { diff: 'B-diff', files: [], description: '' })
+    expect(nav.diffContentKey).toBe('B')
+
+    // A's fetch resolves late. loader.generation was bumped by diff.set(B)
+    // → applied=false → diffContentKey advance skipped regardless of revGen.
+    resolveDiffA({ diff: 'A-diff' })
+    await flush()
+    expect(nav.diffContentKey).toBe('B')
+    expect(nav.diff.value).toBe('B-diff')
+  })
+
+  it('loadMulti advances loadedTarget + diffContentKey to the multi key', async () => {
+    // The architect refactor: App's multi-check $effect previously called
+    // diff.load() directly, leaving loadedTarget+diffContentKey frozen at the
+    // prior single. Now both advance to diffTargetKey(multi).
+    const nav = createRevisionNavigator({ onError: vi.fn() })
+    nav.applyCacheHit(mkCommit('A'), { diff: 'A-diff', files: [], description: '' })
+    expect(nav.diffContentKey).toBe('A')
+
+    const multi = { kind: 'multi' as const, revset: 'connected(A|B)', commitIds: ['A', 'B'] }
+    nav.loadMulti(multi)
+    // loadedTarget flips sync; diffContentKey trails until diff.load resolves.
+    expect(nav.loadedTarget?.kind).toBe('multi')
+    expect(nav.diffContentKey).toBe('A')
+    expect(nav.diffPending).toBe(true)
+
+    await flush()
+    expect(nav.diffContentKey).toBe('connected(A|B)')
+    expect(nav.diffPending).toBe(false)
+    expect(mockApi.files).toHaveBeenCalledWith('connected(A|B)')
+  })
+})
+
 // Scheduling was previously inline in App.svelte's selectRevision (72 lines,
 // untestable). navigateCached/navigateDeferred own the rAF/debounce timers
 // now; cancel() clears both. These tests pin the TIMING contract — the "rAF

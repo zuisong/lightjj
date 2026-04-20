@@ -82,6 +82,38 @@ describe('classifyBookmark', () => {
     })
     // user-perspective: r.behind (= 107) → weAhead
     expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: 'upstream', ahead: 107, behind: 0 })
+    // Scoped to origin reports ONLY origin's state — `secondary` is a
+    // cross-remote signal, never emitted from the per-remote-group path.
+    expect(classifyBookmark(bm, 'origin')).toEqual({ kind: 'synced' })
+  })
+
+  it('multiple secondaries → picks worst offender (diverged > behind > ahead, ties by magnitude)', () => {
+    // origin synced; upstream behind=5 (we ahead 5, rank 0); fork ahead=2
+    // behind=3 (we ahead 3 + behind 2, diverged, rank 2). fork wins despite
+    // upstream's higher single count because diverged outranks ahead.
+    const bm = mkBm({
+      local: mkRemote({ remote: '.' }),
+      remotes: [
+        mkRemote({ remote: 'origin', tracked: true }),
+        mkRemote({ remote: 'upstream', tracked: true, behind: 5 }),
+        mkRemote({ remote: 'fork', tracked: true, ahead: 2, behind: 3 }),
+      ],
+      synced: false,
+    })
+    expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: 'fork', ahead: 3, behind: 2 })
+  })
+
+  it('multiple secondaries same rank → ties broken by magnitude', () => {
+    const bm = mkBm({
+      local: mkRemote({ remote: '.' }),
+      remotes: [
+        mkRemote({ remote: 'origin', tracked: true }),
+        mkRemote({ remote: 'a', tracked: true, behind: 3 }),
+        mkRemote({ remote: 'b', tracked: true, behind: 10 }),
+      ],
+      synced: false,
+    })
+    expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: 'b', ahead: 10, behind: 0 })
   })
 
   it('secondary diverged (both ahead and behind) reports both', () => {
@@ -96,10 +128,10 @@ describe('classifyBookmark', () => {
     expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: 'upstream', ahead: 5, behind: 3 })
   })
 
-  it('untracked secondary is NOT the offender → fall back to sentinel', () => {
-    // An UNTRACKED remote with 0/0 isn't really "out of sync" — it's outside
-    // the tracking relationship. The `tracked` filter prevents us from naming
-    // it. No offending remote found → defensive sentinel.
+  it('synced=false but no tracked offender → defensive secondary("?") fallback', () => {
+    // Defensive: backend cannot emit synced:false with only untracked
+    // secondaries off (synced ignores untracked per bookmark.go); covers the
+    // inconsistent-data fallback. Amber/priority-4, not red/priority-1.
     const bm = mkBm({
       local: mkRemote({ remote: '.' }),
       remotes: [
@@ -108,7 +140,7 @@ describe('classifyBookmark', () => {
       ],
       synced: false,
     })
-    expect(classifyBookmark(bm)).toEqual({ kind: 'diverged', ahead: 0, behind: 0 })
+    expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: '?', ahead: 0, behind: 0 })
   })
 })
 
@@ -163,7 +195,7 @@ describe('classifyBookmark — scopeRemote', () => {
 
   it('scoped synced skips bm.synced all-remotes check (that is LOCAL-group concern)', () => {
     // Scoped classification reports THIS remote's state only. The unscoped
-    // version downgrades 0/0 to diverged(0,0) when bm.synced=false (some
+    // version downgrades 0/0 to secondary("?") when bm.synced=false (some
     // OTHER remote is out of sync). Scoped does not — an UPSTREAM row showing
     // "upstream: other remote out of sync" would be nonsense.
     const bm = mkBm({
@@ -171,8 +203,8 @@ describe('classifyBookmark — scopeRemote', () => {
       remotes: [mkRemote({ remote: 'origin', tracked: true })],
       synced: false,
     })
-    expect(classifyBookmark(bm)).toEqual({ kind: 'diverged', ahead: 0, behind: 0 })  // unscoped downgrades
-    expect(classifyBookmark(bm, 'origin')).toEqual({ kind: 'synced' })               // scoped reports truth
+    expect(classifyBookmark(bm)).toEqual({ kind: 'secondary', remote: '?', ahead: 0, behind: 0 })  // unscoped downgrades
+    expect(classifyBookmark(bm, 'origin')).toEqual({ kind: 'synced' })                             // scoped reports truth
   })
 
   it('scoped remote absent from bm.remotes → local-only (no r found)', () => {
@@ -247,7 +279,7 @@ describe('syncLabel', () => {
     [{ kind: 'ahead' as const, by: 3 }, 'origin', 'origin ↑3'],
     [{ kind: 'behind' as const, by: 7392 }, 'origin', 'origin ↓7.4k'],
     [{ kind: 'diverged' as const, ahead: 1, behind: 130774 }, 'origin', 'origin ↑1 ↓131k'],
-    [{ kind: 'diverged' as const, ahead: 0, behind: 0 }, 'origin', 'other remote out of sync'],
+    [{ kind: 'secondary' as const, remote: '?', ahead: 0, behind: 0 }, 'origin', 'other remote out of sync'],
     [{ kind: 'secondary' as const, remote: 'upstream', ahead: 107, behind: 0 }, 'origin', 'upstream ↑107'],
     [{ kind: 'secondary' as const, remote: 'upstream', ahead: 0, behind: 7392 }, 'origin', 'upstream ↓7.4k'],
     [{ kind: 'secondary' as const, remote: 'upstream', ahead: 3, behind: 5 }, 'origin', 'upstream ↑3 ↓5'],

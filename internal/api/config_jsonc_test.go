@@ -101,6 +101,11 @@ func TestHasJSONCComments(t *testing.T) {
 		{"// inside string", `{"url":"zed://ssh/host/file"}`, false},
 		{"/* inside string", `{"tricky":"a/*b*/c"}`, false},
 		{"escaped quote before //", `{"k":"value\"","other":1} // real comment`, true},
+		// Escaped-backslash edge: \\ closes the escape state, so the following "
+		// closes the string and the // outside is real. Gates a destructive
+		// rewrite (MigrateConfigIfNeeded) so worth locking.
+		{"escaped backslash before close", `{"k":"a\\"}// c`, true},
+		{"windows path with // inside string", `{"p":"C:\\foo//bar"}`, false},
 		{"slash not followed by slash or star", `{"x": 1/2}`, false}, // nonsense JSON but scan shouldn't false-positive
 	}
 	for _, tt := range tests {
@@ -116,5 +121,23 @@ func TestConfigTemplate_ContainsTeachingComments(t *testing.T) {
 	for _, key := range []string{"theme", "editorArgs", "fontSize"} {
 		assert.Contains(t, configTemplate, `"`+key+`"`, "%s must be in template", key)
 	}
-	assert.Contains(t, configTemplate, "//", "template must contain at least one comment")
+	// Use the actual gate function — Contains("//") would pass on the GitHub
+	// URL inside the template's string literal even if every comment were
+	// removed; hasJSONCComments tracks string state.
+	assert.True(t, hasJSONCComments([]byte(configTemplate)),
+		"template must contain at least one out-of-string comment for migration idempotence")
+}
+
+func TestStandardizeJSONC_DoesNotMutateInput(t *testing.T) {
+	// hujson.Standardize aliases the input buffer's Extra slices and writes
+	// spaces over comment bytes in place. standardizeJSONC clones first so
+	// callers can reuse the input — load-bearing for writePersistedTabs which
+	// decodes openTabs from `existing` then re-patches the SAME buffer.
+	orig := []byte(`{"a":1, // comment
+	"b":2}`)
+	snap := string(orig)
+	out, err := standardizeJSONC(orig)
+	assert.NoError(t, err)
+	assert.Equal(t, snap, string(orig), "input buffer must not be mutated")
+	assert.NotContains(t, string(out), "//", "output should be plain JSON")
 }

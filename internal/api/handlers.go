@@ -512,18 +512,13 @@ func (s *Server) handleFileRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
-	// editor_configured = "the mode-appropriate config field is non-empty".
-	// Drives the frontend's onopenfile gate — empty config means the menu
-	// item stays disabled instead of 400ing on click.
-	tmpl, _, _ := s.editorTemplate("", nil)
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
-		"hostname":          s.Hostname,
-		"repo_path":         s.RepoPath,
-		"ssh_mode":          s.isSSHMode(),
-		"editor_configured": len(tmpl) > 0,
-		"default_remote":    s.DefaultRemote,
-		"log_revset":        s.ConfiguredLogRevset,
-		"jj_version":        s.resolveJJVersion(r.Context()),
+		"hostname":       s.Hostname,
+		"repo_path":      s.RepoPath,
+		"ssh_mode":       s.isSSHMode(),
+		"default_remote": s.DefaultRemote,
+		"log_revset":     s.ConfiguredLogRevset,
+		"jj_version":     s.resolveJJVersion(r.Context()),
 	})
 }
 

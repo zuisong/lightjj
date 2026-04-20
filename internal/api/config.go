@@ -78,14 +78,13 @@ func MigrateConfigIfNeeded() {
 	if hasJSONCComments(data) {
 		return // already migrated or user-annotated
 	}
-	if _, parseErr := hujson.Parse(data); parseErr != nil {
-		return // corrupt — let the normal error path surface it; don't destroy the user's bytes
-	}
 
 	// Decode ALL top-level keys so they get patched over the template.
+	// unmarshalJSONC tolerates trailing commas (which hasJSONCComments doesn't
+	// detect); a corrupt file fails here and is left alone for the 422 path.
 	var existingKeys map[string]json.RawMessage
-	if err := json.Unmarshal(data, &existingKeys); err != nil {
-		return // decode failure on a hujson-parseable file shouldn't happen, but be defensive
+	if err := unmarshalJSONC(data, &existingKeys); err != nil {
+		return // corrupt or non-object — let the normal error path surface it
 	}
 	keys := make(map[string][]byte, len(existingKeys))
 	for k, v := range existingKeys {
@@ -96,6 +95,12 @@ func MigrateConfigIfNeeded() {
 	if err != nil {
 		log.Printf("warning: failed to migrate config to JSONC template: %v", err)
 		return
+	}
+	// One-time backup so a downgrade-then-panel-drag doesn't silently wipe
+	// values (pre-1.20 mergeAndWriteConfig treats a JSONC file as corrupt-→empty).
+	// Best-effort; we don't block migration if the .bak write fails.
+	if err := os.WriteFile(path+".pre-jsonc.bak", data, 0o644); err != nil {
+		log.Printf("warning: failed to write pre-migration backup: %v", err)
 	}
 	if err := writeConfigBytesLocked(path, migrated); err != nil {
 		log.Printf("warning: failed to write migrated config: %v", err)
@@ -242,6 +247,13 @@ func readOrTemplate(path string) ([]byte, error) {
 		}
 		return nil, err
 	}
+	// Zero-byte file (truncated by `> config.json` or a non-journaled crash)
+	// has no user data to preserve — treat as fresh, not unparseable. Otherwise
+	// the user is stuck: 422 on every write, and the raw modal serves an empty
+	// editor that itself fails the object-root check on save.
+	if len(data) == 0 {
+		return []byte(configTemplate), nil
+	}
 	if _, parseErr := hujson.Parse(data); parseErr != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigUnparseable, parseErr)
 	}
@@ -379,17 +391,18 @@ func handleConfigGetRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			data = []byte(configTemplate)
-		} else {
-			// Don't silently reseed: user's real file exists but couldn't be
-			// read (EACCES, EIO). Handing them the template would prime a
-			// save that clobbers their file when the fs recovers.
-			log.Printf("warning: cannot read config for raw view: %v", err)
-			writeJSONError(w, http.StatusInternalServerError, "cannot read config: "+err.Error())
-			return
-		}
+	switch {
+	case errors.Is(err, fs.ErrNotExist), err == nil && len(data) == 0:
+		// Missing or zero-byte → serve the template so the modal opens with
+		// something the user can edit-and-save (mirrors readOrTemplate).
+		data = []byte(configTemplate)
+	case err != nil:
+		// Don't silently reseed: user's real file exists but couldn't be
+		// read (EACCES, EIO). Handing them the template would prime a
+		// save that clobbers their file when the fs recovers.
+		log.Printf("warning: cannot read config for raw view: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "cannot read config: "+err.Error())
+		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -408,10 +421,11 @@ func handleConfigSetRaw(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "cross-origin config write rejected")
 		return
 	}
-	// Require text/plain — forces CORS preflight for cross-origin requests,
-	// same defence-in-depth that decodeBody's application/json check gives
-	// to the typed endpoint. Without it, a cross-origin <form enctype="text/plain">
-	// post would be treated as a "simple" request and skip preflight.
+	// NOTE: text/plain is a CORS-safelisted Content-Type — it does NOT force
+	// preflight (unlike application/json on the typed endpoint). isLocalOrigin
+	// above is the SOLE cross-origin gate for this handler; do not relax it.
+	// The CT check below only normalises the request shape (rejects accidental
+	// application/json POSTs expecting per-key merge semantics).
 	ct := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/plain") {
 		writeJSONError(w, http.StatusUnsupportedMediaType, "Content-Type must be text/plain")
@@ -427,8 +441,17 @@ func handleConfigSetRaw(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, err := hujson.Parse(body); err != nil {
+	v, err := hujson.Parse(body)
+	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSONC: "+err.Error())
+		return
+	}
+	// Object root only — a non-object (`[]`, `42`, `null`) would land on disk
+	// fine but every subsequent patchConfigKeys call fails with "cannot add
+	// to non-object", and the 422 surface tells the user "syntax error" when
+	// the syntax is valid. Mirrors ConfigModal's client-side check.
+	if _, ok := v.Value.(*hujson.Object); !ok {
+		writeJSONError(w, http.StatusBadRequest, "config must be a JSON object")
 		return
 	}
 	configMu.Lock()
