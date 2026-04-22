@@ -137,6 +137,18 @@ function notifyStaleWC(stale: boolean) {
   for (const cb of staleWCCallbacks) cb(stale)
 }
 
+// Poll-failure subscribers. Server's watcher broadcasts `pollfail` with an
+// error payload after ≥ pollFailThreshold consecutive poll/snapshot errors
+// that aren't stale-WC, and `pollok` when polling recovers. Works in both
+// local mode (snapshotLoop) and SSH mode (sshPollLoop). callback arg = error
+// text when failing, null when recovered. App wires to a persistent warning
+// MessageBar, with a "Delete git lockfile" action when the error text
+// mentions index.lock (the common remediation).
+const pollFailCallbacks = new Set<(err: string | null) => void>()
+function notifyPollFail(err: string | null) {
+  for (const cb of pollFailCallbacks) cb(err)
+}
+
 // SSE liveness subscribers. Edge-only (mirrors watcher.go setStale) so the
 // `op` event firing every few seconds doesn't churn document.title writes.
 const sseStateCallbacks = new Set<(connected: boolean) => void>()
@@ -173,6 +185,16 @@ export function onStale(callback: () => void): () => void {
 export function onStaleWC(callback: (stale: boolean) => void): () => void {
   staleWCCallbacks.add(callback)
   return () => { staleWCCallbacks.delete(callback) }
+}
+
+/**
+ * Subscribe to persistent poll/snapshot-failure state (string=failing with
+ * that error text, null=recovered). Surfaces as a MessageBar warning that
+ * auto-clears on recovery — the UI should NOT persist the error after null.
+ */
+export function onPollFail(callback: (err: string | null) => void): () => void {
+  pollFailCallbacks.add(callback)
+  return () => { pollFailCallbacks.delete(callback) }
 }
 
 /**
@@ -334,6 +356,17 @@ export function wireAutoRefresh(): () => void {
     // AND unconditionally on connect (watcher.go:handleEvents).
     es.addEventListener('stale-wc', () => { mark(); notifyStaleWC(true) })
     es.addEventListener('fresh-wc', () => { mark(); notifyStaleWC(false) })
+    // pollfail carries an error string; pollok clears. Server emits pollfail
+    // both on transition AND unconditionally on connect if currently failed,
+    // so reconnect always syncs state.
+    es.addEventListener('pollfail', (ev) => {
+      mark()
+      try {
+        const { error } = JSON.parse(ev.data) as { error: string }
+        notifyPollFail(error || 'auto-refresh failing')
+      } catch { notifyPollFail('auto-refresh failing') }
+    })
+    es.addEventListener('pollok', () => { mark(); notifyPollFail(null) })
 
     // Network drop → readyState CONNECTING (browser retries automatically).
     // Non-200 response (including 204 from handleEventsDisabled — spec is
@@ -1015,6 +1048,8 @@ export const api = {
   snapshot: () => post<MutationResult>('/api/snapshot', {}),
 
   workspaceUpdateStale: () => post<MutationResult>('/api/workspace/update-stale', {}),
+
+  unlockRepo: () => post<{ status: string }>('/api/unlock-repo', {}),
 
   commit: (message: string = '') => post<MutationResult>('/api/commit', { message }),
 

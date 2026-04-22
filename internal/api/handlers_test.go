@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chronologos/lightjj/internal/jj"
 	"github.com/chronologos/lightjj/internal/parser"
@@ -412,6 +413,54 @@ func TestHandleWorkspaceUpdateStale(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Updated working copy")
+}
+
+func TestHandleUnlockRepo(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	// RunRaw routes through the same expectation table as Run.
+	runner.Expect([]string{"rm", "-f", ".git/index.lock"}).SetOutput([]byte(""))
+	defer runner.Verify()
+
+	srv := newTestServer(runner)
+	srv.Watcher = newWatcher(srv)
+	// Seed a failure state — handler must clear it + broadcast pollok.
+	srv.Watcher.setPollFail("stale index.lock blocking poll")
+	ch, unsub := srv.Watcher.subscribe()
+	defer unsub()
+
+	req := jsonPost("/api/unlock-repo", []byte("{}"))
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	failed, _ := srv.Watcher.pollStatus()
+	assert.False(t, failed, "poll-fail flag should be cleared")
+	select {
+	case got := <-ch:
+		assert.Equal(t, evPollOk, got)
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("expected pollok broadcast after unlock")
+	}
+}
+
+func TestHandleUnlockRepo_RunnerError(t *testing.T) {
+	// If rm fails (e.g. permission denied on SSH remote), surface as 500 —
+	// don't falsely clear the poll-fail state.
+	runner := testutil.NewMockRunner(t)
+	runner.Expect([]string{"rm", "-f", ".git/index.lock"}).SetError(errors.New("rm: permission denied"))
+	defer runner.Verify()
+
+	srv := newTestServer(runner)
+	srv.Watcher = newWatcher(srv)
+	srv.Watcher.setPollFail("blocked")
+
+	req := jsonPost("/api/unlock-repo", []byte("{}"))
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	failed, _ := srv.Watcher.pollStatus()
+	assert.True(t, failed, "poll-fail flag must stay set when rm fails")
 }
 
 // handleSnapshot and handleWorkspaceUpdateStale are the two handler-side

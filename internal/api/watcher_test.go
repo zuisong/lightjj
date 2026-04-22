@@ -50,10 +50,10 @@ func TestWatcher_BroadcastDropsOnFullBuffer(t *testing.T) {
 	ch, unsub := w.subscribe()
 	defer unsub()
 
-	// Fill the buffer (cap 4), then broadcast again — fifth should be dropped
-	// without blocking. Buffer is 4 (not 1) so sentinel events aren't dropped
+	// Fill the buffer (cap 6), then broadcast again — seventh should be dropped
+	// without blocking. Buffer is 6 (not 1) so sentinel events aren't dropped
 	// by a single buffered op-id.
-	for i := range 4 {
+	for i := range 6 {
 		w.broadcast(string(rune('a' + i)))
 	}
 	done := make(chan struct{})
@@ -72,6 +72,8 @@ func TestWatcher_BroadcastDropsOnFullBuffer(t *testing.T) {
 	assert.Equal(t, "b", <-ch)
 	assert.Equal(t, "c", <-ch)
 	assert.Equal(t, "d", <-ch)
+	assert.Equal(t, "e", <-ch)
+	assert.Equal(t, "f", <-ch)
 	// Channel should now be empty; "dropped" was dropped.
 	select {
 	case v := <-ch:
@@ -622,9 +624,10 @@ func TestSSHPollLoop_StopsCleanly(t *testing.T) {
 	}
 }
 
-func TestSSHPollLoop_ErrorsDoNotBroadcastOrExit(t *testing.T) {
-	// Poll failure → no broadcast, loop keeps running. Error-threshold
-	// logging (3x, then every 12) is shared with snapshotLoop — trusted.
+func TestSSHPollLoop_ErrorsDoNotBroadcastBelowThreshold(t *testing.T) {
+	// Below pollFailThreshold, failures are absorbed silently: no broadcast,
+	// loop keeps running. Transient contention (repo lock, SSH blip) should
+	// not surface a UI warning.
 	r := testutil.NewMockRunner(t)
 	r.Allow(jj.PollOpId()).SetError(errors.New("ssh timeout"))
 	w := newWatcher(NewServer(r, ""))
@@ -639,11 +642,51 @@ func TestSSHPollLoop_ErrorsDoNotBroadcastOrExit(t *testing.T) {
 	done := make(chan struct{})
 	go func() { w.sshPollLoop(5 * time.Millisecond); close(done) }()
 
-	// Several failing polls — no broadcasts, loop stays alive.
+	// ~3 ticks in 15ms — below pollFailThreshold (5).
 	select {
 	case v := <-ch:
 		t.Fatalf("unexpected broadcast on error: %q", v)
-	case <-time.After(30 * time.Millisecond):
+	case <-time.After(15 * time.Millisecond):
+	}
+
+	close(w.stop)
+	<-done
+}
+
+func TestSSHPollLoop_BroadcastsPollFailAtThreshold(t *testing.T) {
+	// At pollFailThreshold consecutive errors, broadcast !pollfail and carry
+	// the error text. Edge-triggered: subsequent errors keep updating the
+	// error text but don't re-broadcast until recovery → re-failure.
+	r := testutil.NewMockRunner(t)
+	r.Allow(jj.PollOpId()).SetError(errors.New("index.lock could not be acquired"))
+	w := newWatcher(NewServer(r, ""))
+	ch, unsub := w.subscribe()
+	defer unsub()
+
+	var logBuf bytes.Buffer
+	oldOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(oldOut)
+
+	done := make(chan struct{})
+	go func() { w.sshPollLoop(3 * time.Millisecond); close(done) }()
+
+	// Wait for pollFailThreshold (5) ticks: ~15ms + headroom. First event
+	// should be !pollfail.
+	select {
+	case v := <-ch:
+		if v != evPollFail {
+			t.Fatalf("expected !pollfail, got %q", v)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("did not broadcast pollfail at threshold")
+	}
+	failed, errStr := w.pollStatus()
+	if !failed {
+		t.Fatal("expected pollFailed=true")
+	}
+	if errStr == "" {
+		t.Fatal("expected non-empty pollErr")
 	}
 
 	close(w.stop)
@@ -662,6 +705,123 @@ func TestNewSSHWatcher_IntervalZero(t *testing.T) {
 	defer unsub()
 	time.Sleep(20 * time.Millisecond)
 	close(w.stop)
+}
+
+// scriptedRunner returns a scripted sequence of (output, error) pairs. Unlike
+// seqRunner (success-only), this lets a test drive a loop through
+// failure→stale→recovery state transitions in order.
+type scriptedRunner struct {
+	testutil.MockRunner
+	steps []struct {
+		out string
+		err error
+	}
+	calls atomic.Int32
+}
+
+func (r *scriptedRunner) Run(_ context.Context, args []string) ([]byte, error) {
+	n := int(r.calls.Add(1)) - 1
+	if n >= len(r.steps) {
+		n = len(r.steps) - 1
+	}
+	return []byte(r.steps[n].out), r.steps[n].err
+}
+
+func TestSSHPollLoop_StaleInterludeDoesNotLeavePollFailedStuck(t *testing.T) {
+	// Regression: stale-WC after a pollfail streak was leaving pollFailed
+	// stuck forever. Counter-gated success-branch clear (`consecutiveErrors
+	// >= pollFailThreshold`) never fired because stale-WC branch reset the
+	// counter to 0 → next success checked `0 >= 5` = false → no clear.
+	// Sequence: 5 generic errors (→ pollfail broadcast) → 1 stale-WC
+	// (counter zeroed) → successful poll (must clear pollFailed).
+	r := &scriptedRunner{steps: []struct {
+		out string
+		err error
+	}{
+		{"", errors.New("ssh timeout")},
+		{"", errors.New("ssh timeout")},
+		{"", errors.New("ssh timeout")},
+		{"", errors.New("ssh timeout")},
+		{"", errors.New("ssh timeout")},
+		{"", errors.New("Error: The working copy is stale (not updated since operation abc).")},
+		{"op-fresh", nil},
+	}}
+	w := newWatcher(NewServer(r, ""))
+	ch, unsub := w.subscribe()
+	defer unsub()
+
+	done := make(chan struct{})
+	go func() { w.sshPollLoop(3 * time.Millisecond); close(done) }()
+
+	// Collect events with a timeout — we expect: pollfail → stale-wc →
+	// pollok → op. (pollok may arrive via the stale branch's setPollFail("")
+	// OR via the success branch — both are correct per the fix.)
+	seen := make(map[string]bool)
+	deadline := time.After(200 * time.Millisecond)
+gather:
+	for {
+		select {
+		case v := <-ch:
+			seen[v] = true
+			// Stop once we've seen pollfail AND pollok — the key invariant.
+			if seen[evPollFail] && seen[evPollOk] {
+				break gather
+			}
+		case <-deadline:
+			break gather
+		}
+	}
+	close(w.stop)
+	<-done
+
+	assert.True(t, seen[evPollFail], "expected pollfail broadcast during failure streak")
+	assert.True(t, seen[evPollOk], "expected pollok broadcast after stale-interlude + success")
+	failed, _ := w.pollStatus()
+	assert.False(t, failed, "pollFailed must not remain stuck after stale interlude")
+}
+
+func TestHandleEvents_EmitsPollOkOnConnectWhenHealthy(t *testing.T) {
+	// Regression: reconnect-resync was asymmetric — only emitted pollfail,
+	// never pollok. If polling recovered while SSE was disconnected, the
+	// reconnecting client's pollFailError stayed stuck forever. Both branches
+	// must emit so reconnect always syncs state.
+	for _, tc := range []struct {
+		failed  bool
+		wantEv  string
+		wantErr string // substring for pollfail, empty for pollok
+	}{
+		{true, "event: pollfail\n", `"error":"blocked"`},
+		{false, "event: pollok\ndata: {}", ""},
+	} {
+		srv := &Server{cachedOp: "some-op"}
+		watcher := &Watcher{
+			srv:  srv,
+			subs: make(map[chan string]struct{}),
+			stop: make(chan struct{}),
+		}
+		if tc.failed {
+			watcher.setPollFail("blocked")
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
+		rec := newSafeRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			watcher.handleEvents(rec, req)
+			close(done)
+		}()
+
+		assert.Eventually(t, func() bool {
+			return strings.Contains(rec.String(), tc.wantEv)
+		}, time.Second, 10*time.Millisecond, "failed=%v", tc.failed)
+		if tc.wantErr != "" {
+			assert.Contains(t, rec.String(), tc.wantErr, "failed=%v", tc.failed)
+		}
+		cancel()
+		<-done
+	}
 }
 
 func TestSSHPollLoop_StaleWCSentinel(t *testing.T) {

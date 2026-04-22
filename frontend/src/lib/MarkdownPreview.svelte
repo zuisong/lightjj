@@ -248,11 +248,10 @@
     gap: 4px;
   }
   .md-strip-add {
-    width: 3px;
+    width: 2px;
     height: 100%;
-    background: var(--green);
-    border-radius: 2px;
-    opacity: 0.7;
+    background: color-mix(in srgb, var(--green) 45%, transparent);
+    border-radius: 1px;
   }
   .md-gutter :global(.annotation-badge) {
     position: static;  /* override theme.css absolute */

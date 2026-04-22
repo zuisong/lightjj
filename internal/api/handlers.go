@@ -1011,6 +1011,35 @@ func (s *Server) clearStale() {
 	}
 }
 
+// handleUnlockRepo removes a stale .git/index.lock from the colocated git repo.
+// This is the common cause of persistent poll/snapshot failures when jj runs
+// against a colocated backend and a git/jj process was killed mid-operation.
+//
+// Path is hardcoded (.git/index.lock under the repo root) — no user input, no
+// traversal surface. `rm -f` is idempotent: missing file = 0 exit. Works in
+// both local mode (LocalRunner.RunRaw runs with cwd = RepoDir) and SSH mode
+// (SSHRunner.RunRaw does `cd <RepoPath> && ...`).
+//
+// If the native jj backend is in use (no .git), rm -f is a silent no-op — we
+// don't try to distinguish because the surface is harmless either way.
+func (s *Server) handleUnlockRepo(w http.ResponseWriter, r *http.Request) {
+	if err := decodeBody(w, r, &struct{}{}); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, err := s.Runner.RunRaw(r.Context(), []string{"rm", "-f", ".git/index.lock"}); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Clear the failure state immediately so the UI unsticks. If the real
+	// problem wasn't this lockfile, the next poll will re-trigger setPollFail
+	// within one tick (same self-heal logic as clearStale).
+	if s.Watcher != nil {
+		s.Watcher.setPollFail("")
+	}
+	s.writeJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Message string `json:"message"`

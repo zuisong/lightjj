@@ -49,6 +49,15 @@ type Watcher struct {
 	stale   atomic.Bool
 	staleMu sync.Mutex
 
+	// Tracks whether poll/snapshot loops are persistently failing (≥ threshold
+	// consecutive errors that are not stale-WC — stale routes through setStale).
+	// Same edge-triggered broadcast discipline as setStale; pollErr carries the
+	// last error text for the UI. Single mutex (cold path — fires once per
+	// transition; handleEvents reads on connect).
+	pollMu     sync.Mutex
+	pollFailed bool
+	pollErr    string
+
 	// snapshotPaused suppresses background snapshots while a foreground jj
 	// mutation is running. The race: `jj git push` releases the WC lock between
 	// network I/O and post-push checkout; a snapshot landing in that window
@@ -68,9 +77,17 @@ type Watcher struct {
 // hashes; the "!" prefix is unambiguous. Using the existing channel avoids a
 // second broadcast map + select arm for rare events.
 const (
-	evStaleWC = "!stale-wc"
-	evFreshWC = "!fresh-wc"
+	evStaleWC  = "!stale-wc"
+	evFreshWC  = "!fresh-wc"
+	evPollFail = "!pollfail"
+	evPollOk   = "!pollok"
 )
+
+// Consecutive poll/snapshot failures tolerated before surfacing to UI. Three
+// was enough for the log-line ("degraded"); five buffers against transient
+// repo-lock contention while still noticing a wedged .git/index.lock within
+// ~25s at the default 5s interval.
+const pollFailThreshold = 5
 
 // isStaleWCError matches jj's stale-working-copy errors — both cases whose
 // hint is `jj workspace update-stale`:
@@ -114,6 +131,39 @@ func (w *Watcher) setStale(v bool) {
 	} else {
 		w.broadcast(evFreshWC)
 	}
+}
+
+// setPollFail records persistent poll failure / recovery. Same edge-triggered
+// broadcast discipline as setStale. err == "" means "healthy"; non-empty means
+// "failing, here's the last error text for the UI". Updates pollErr on every
+// call while failed (error detail can change between ticks) but only broadcasts
+// on true↔false transitions — the client doesn't need to re-render on each tick.
+func (w *Watcher) setPollFail(err string) {
+	w.pollMu.Lock()
+	defer w.pollMu.Unlock()
+	failed := err != ""
+	if w.pollFailed == failed {
+		if failed {
+			w.pollErr = err
+		}
+		return
+	}
+	w.pollFailed = failed
+	w.pollErr = err
+	if failed {
+		w.broadcast(evPollFail)
+	} else {
+		w.broadcast(evPollOk)
+	}
+}
+
+// pollStatus returns the current failure state + last error text. Used by
+// handleEvents on connect (new client needs current state) and on sentinel
+// dispatch (to serialize the error payload).
+func (w *Watcher) pollStatus() (failed bool, err string) {
+	w.pollMu.Lock()
+	defer w.pollMu.Unlock()
+	return w.pollFailed, w.pollErr
 }
 
 // NewWatcher constructs a watcher for the given server. Returns nil if the
@@ -272,6 +322,13 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 				// sentinel routing is shared.
 				if isStaleWCError(err) {
 					w.setStale(true)
+					// A stale-WC response is still a HEALTHY round trip to jj
+					// — poll-fail (transient IO/lock errors) is categorically
+					// different. Clear on entry so a prior pollfail streak
+					// doesn't survive a stale-WC interlude: without this, the
+					// subsequent success branch's counter-gated clear would
+					// never fire (counter was just reset to 0).
+					w.setPollFail("")
 					consecutiveErrors = 0
 					continue
 				}
@@ -279,11 +336,19 @@ func (w *Watcher) sshPollLoop(interval time.Duration) {
 				if consecutiveErrors == 3 || (consecutiveErrors > 3 && consecutiveErrors%12 == 0) {
 					log.Printf("watcher: op-id poll failed %dx (%v); auto-refresh degraded", consecutiveErrors, err)
 				}
+				if consecutiveErrors >= pollFailThreshold {
+					w.setPollFail(err.Error())
+				}
 				continue
 			}
 			if !paused {
 				w.setStale(false)
 			}
+			// Unconditional clear: setPollFail early-returns when state
+			// unchanged, so the former `>= pollFailThreshold` gate was a
+			// non-optimization that introduced a stuck-forever bug after a
+			// stale-WC interlude zeroed the counter. Symmetric with setStale.
+			w.setPollFail("")
 			consecutiveErrors = 0
 			opId := strings.TrimSpace(string(out))
 			if opId == "" || opId == lastBroadcast {
@@ -347,6 +412,12 @@ func (w *Watcher) snapshotLoop(interval time.Duration) {
 					// errors. Leaving the counter frozen would inflate the
 					// next non-stale error's log threshold (3rd-failure log
 					// fires on first post-stale error if pre-stale count was 2).
+					// Also clear pollFailed: a stale-WC response is a healthy
+					// round trip to jj. Without this clear, a prior pollfail
+					// streak survives the stale-WC interlude and the counter-
+					// gated success-branch clear below would never fire
+					// (counter just reset to 0).
+					w.setPollFail("")
 					consecutiveErrors = 0
 					continue
 				}
@@ -357,8 +428,16 @@ func (w *Watcher) snapshotLoop(interval time.Duration) {
 				if consecutiveErrors == 3 || (consecutiveErrors > 3 && consecutiveErrors%12 == 0) {
 					log.Printf("watcher: snapshot failed %dx (%v); repo may be locked, auto-refresh degraded", consecutiveErrors, err)
 				}
+				if consecutiveErrors >= pollFailThreshold {
+					w.setPollFail(err.Error())
+				}
 			} else {
 				w.setStale(false)
+				// Unconditional: setPollFail early-returns when unchanged, so
+				// the former `>= pollFailThreshold` gate was a non-optimization
+				// that introduced a stuck-forever bug after a stale-WC
+				// interlude zeroed the counter.
+				w.setPollFail("")
 				consecutiveErrors = 0
 			}
 		}
@@ -374,13 +453,13 @@ func (w *Watcher) hasSubscribers() bool {
 // subscribe registers a channel to receive op-id broadcasts. Call the returned
 // unsubscribe func when the client disconnects.
 func (w *Watcher) subscribe() (ch chan string, unsubscribe func()) {
-	// Buffer 4: op-id + stale-wc + fresh-wc + headroom. With buffer 1, a
-	// buffered op-id would cause broadcast(evStaleWC) to hit select-default
-	// and drop the sentinel. Since the stale.Swap edge fires exactly once,
-	// a dropped sentinel is never re-sent — the warning would be silently
-	// lost until SSE reconnect. Op-ids remain droppable (client coalesces
-	// to one loadLog anyway); losing a sentinel is not.
-	ch = make(chan string, 4)
+	// Buffer 6: op-id + 2× stale-sentinels + 2× pollfail-sentinels + headroom.
+	// With buffer 1, a buffered op-id would cause broadcast(evStaleWC) to hit
+	// select-default and drop the sentinel. Since setStale/setPollFail edges
+	// fire exactly once, a dropped sentinel is never re-sent — the warning
+	// would be silently lost until SSE reconnect. Op-ids remain droppable
+	// (client coalesces to one loadLog anyway); losing a sentinel is not.
+	ch = make(chan string, 6)
 	w.subsMu.Lock()
 	w.subs[ch] = struct{}{}
 	w.subsMu.Unlock()
@@ -490,6 +569,22 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Poll-failure state — same reconnect-resync reasoning as stale-wc: BOTH
+	// branches are load-bearing. If polling recovered while the client was
+	// disconnected, the pollok broadcast was sent to zero subscribers; the
+	// reconnect must re-emit pollok so the client's pollFailError clears.
+	// Without the else branch, pollFailError stays stuck until browser reload
+	// or a new server-side failure→recovery cycle.
+	if failed, pollErr := w.pollStatus(); failed {
+		js, _ := json.Marshal(map[string]string{"error": pollErr})
+		if err := write("event: pollfail\ndata: " + string(js) + "\n\n"); err != nil {
+			return
+		}
+	} else {
+		if err := write("event: pollok\ndata: {}\n\n"); err != nil {
+			return
+		}
+	}
 
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()
@@ -508,6 +603,17 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 			// `event: <name>\ndata: {}\n\n` — the frontend adds a dedicated
 			// listener per event type, so no payload parsing needed.
 			if strings.HasPrefix(msg, "!") {
+				// pollfail carries the error text; read from Watcher state
+				// (single source of truth — can't get out of sync with a poll
+				// that updated the error between channel send and receive).
+				if msg == evPollFail {
+					_, pollErr := w.pollStatus()
+					js, _ := json.Marshal(map[string]string{"error": pollErr})
+					if err := write("event: pollfail\ndata: " + string(js) + "\n\n"); err != nil {
+						return
+					}
+					continue
+				}
 				if err := write("event: " + msg[1:] + "\ndata: {}\n\n"); err != nil {
 					return
 				}

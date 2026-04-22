@@ -33,7 +33,7 @@
   // state_referenced_locally warning; we DO want the mount-time snapshot.
   const init = untrack(() => initialState)
 
-  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, onSSEState, wireAutoRefresh, clearAllCaches, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
+  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, onPollFail, onSSEState, wireAutoRefresh, clearAllCaches, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
   import { setDetectedJJVersion, missingJJFeatures } from './lib/jj-features.svelte'
   import MessageBar, { errorMessage, type Message } from './lib/MessageBar.svelte'
   import { clearDiffCaches, parseDiffCached } from './lib/diff-cache'
@@ -86,6 +86,13 @@
   // the bar is a fixed overlay (doesn't block the graph), and the condition
   // persists until fixed. "Update stale" button or CLI recovery clears it.
   let workspaceStale = $state(false)
+
+  // Persistent poll/snapshot-failure state. String = failing with that error
+  // text; null = healthy. Set via onPollFail (server broadcasts after ≥ 5
+  // consecutive errors in either snapshotLoop or sshPollLoop). Surfaced as a
+  // MessageBar warning; when the error text mentions index.lock, the warning
+  // includes a "Delete git lockfile" action. Auto-clears on recovery.
+  let pollFailError = $state<string | null>(null)
 
   // Stale immutable detection — force-push leftovers. Set after git fetch/push,
   // cleared after cleanup or if resolved externally.
@@ -1110,8 +1117,46 @@
     action: { label: 'Edit config', onClick: () => { configModalOpen = true } },
   } : null)
 
+  // Persistent auto-refresh failure — poll loop hit ≥ 5 consecutive errors.
+  // Ranked ABOVE staleWC: when polling itself is broken, stale-WC detection
+  // is also impaired (no snapshot → no transition → no fresh-wc either way),
+  // so pollfail is the more truthful condition to surface.
+  // Remediation button gated on error text matching index.lock (the common
+  // "colocated git left a lockfile after crashed process" case); otherwise
+  // offer "Retry snapshot" — success clears pollfail via server recovery,
+  // failure surfaces the real error through runMutation's toast. Both
+  // branches MUST set `action`: MessageBar renders ✕ dismiss when absent,
+  // but dismissMessage→setMessage(null) is a no-op while displayMessage
+  // falls through to pollFailMessage, leaving a dead button.
+  const handleUnlockRepo = () =>
+    runMutation(
+      () => api.unlockRepo(),
+      'Deleted .git/index.lock',
+      { after: () => { pollFailError = null } },
+    )
+  const handleRetrySnapshot = () =>
+    runMutation(
+      () => api.snapshot(),
+      'Snapshot succeeded — auto-refresh restored',
+      { after: () => { pollFailError = null } },
+    )
+  const pollFailMessage: Message | null = $derived(pollFailError ? (
+    pollFailError.includes('index.lock') ? {
+      kind: 'warning' as const,
+      text: 'Auto-refresh failing — stale .git/index.lock detected',
+      details: pollFailError,
+      action: { label: 'Delete git lockfile', onClick: handleUnlockRepo },
+    } : {
+      kind: 'warning' as const,
+      text: 'Auto-refresh failing — repo may be locked',
+      details: pollFailError,
+      action: { label: 'Retry snapshot', onClick: handleRetrySnapshot },
+    }
+  ) : null)
+
   let displayMessage = $derived(
     message
+      ?? pollFailMessage
       ?? configErrorMessage
       ?? (workspaceStale ? staleWCMessage : staleImmutableMessage),
   )
@@ -2083,6 +2128,7 @@
   // body reads no reactive state → runs once on mount, cleanup on unmount.
   $effect(() => wireAutoRefresh())
   $effect(() => onStaleWC((s) => { workspaceStale = s }))
+  $effect(() => onPollFail((err) => { pollFailError = err }))
 
   let sseConnected = $state(true)
   let pageTitle = $state('lightjj')
