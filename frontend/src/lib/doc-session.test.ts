@@ -9,6 +9,7 @@ vi.mock('./api', () => {
   return {
     api: {
       fileShow: vi.fn(async () => ({ content })),
+      fileWrite: vi.fn(async () => ({ ok: true })),
       docComments: {
         list: vi.fn(async () => [...stored]),
         upsert: vi.fn(async (c: DocComment) => {
@@ -29,6 +30,8 @@ vi.mock('./api', () => {
 
 import { createDocSession } from './doc-session.svelte'
 import { api } from './api'
+import { EditorState, type Transaction } from 'prosemirror-state'
+import { docSchema } from './pm-schema'
 
 const mockApi = api as typeof api & { __setContent: (s: string) => void; __reset: () => void }
 
@@ -40,15 +43,18 @@ This is the first paragraph with a distinctive phrase here.
 
 Another paragraph follows.`
 
-beforeEach(() => mockApi.__reset())
+beforeEach(() => {
+  mockApi.__reset()
+  vi.clearAllMocks()
+})
 
 describe('createDocSession', () => {
   it('import_ populates state from fileShow', async () => {
     mockApi.__setContent(MD)
     const s = createDocSession('docs/DESIGN.md', () => 'abc123')
     await s.import_()
-    expect(s.state).not.toBeNull()
-    expect(s.state!.doc.textContent).toContain('distinctive phrase')
+    expect(s.doc).not.toBeNull()
+    expect(s.doc!.textContent).toContain('distinctive phrase')
     expect(s.error).toBe('')
     expect(s.baseCommitId).toBe('abc123')
   })
@@ -56,7 +62,7 @@ describe('createDocSession', () => {
   it('import_ surfaces error when working copy unavailable', async () => {
     const s = createDocSession('x.md', () => undefined)
     await s.import_()
-    expect(s.state).toBeNull()
+    expect(s.doc).toBeNull()
     expect(s.error).toContain('working copy')
   })
 
@@ -65,13 +71,13 @@ describe('createDocSession', () => {
     const s = createDocSession('docs/DESIGN.md', () => 'abc123')
     await s.import_()
     // Find PM positions for "distinctive phrase" by scanning textContent.
-    const flat = s.state!.doc.textContent
+    const flat = s.doc!.textContent
     const tFrom = flat.indexOf('distinctive')
     expect(tFrom).toBeGreaterThan(0)
     // textContent offsets ≠ PM positions, so we use the public API: select by
     // searching the doc. For the test, walk to find the text node.
     let pmFrom = -1
-    s.state!.doc.descendants((node, pos) => {
+    s.doc!.descendants((node, pos) => {
       if (node.isText && node.text?.includes('distinctive')) {
         pmFrom = pos + node.text.indexOf('distinctive')
         return false
@@ -95,7 +101,7 @@ describe('createDocSession', () => {
     const s = createDocSession('docs/DESIGN.md', () => 'abc123')
     await s.import_()
     let pmFrom = -1
-    s.state!.doc.descendants((node, pos) => {
+    s.doc!.descendants((node, pos) => {
       if (node.isText && node.text?.includes('distinctive')) {
         pmFrom = pos + node.text.indexOf('distinctive')
         return false
@@ -118,7 +124,7 @@ describe('createDocSession', () => {
     const s = createDocSession('docs/DESIGN.md', () => 'abc123')
     await s.import_()
     let pmFrom = -1
-    s.state!.doc.descendants((node, pos) => {
+    s.doc!.descendants((node, pos) => {
       if (node.isText && node.text?.includes('distinctive')) {
         pmFrom = pos + node.text.indexOf('distinctive')
         return false
@@ -135,12 +141,80 @@ describe('createDocSession', () => {
     expect(s2.comments[0].from).toBeUndefined()
   })
 
+  it('normalizationDiff: null when round-trip identical, populated otherwise', async () => {
+    mockApi.__setContent('# H\n\npara\n')
+    const s = createDocSession('a.md', () => 'cid')
+    await s.import_()
+    expect(s.normalizationDiff).toBeNull()
+
+    mockApi.__setContent('* star bullet\n')
+    const s2 = createDocSession('a.md', () => 'cid')
+    await s2.import_()
+    expect(s2.normalizationDiff).toBe('- star bullet\n')
+  })
+
+  it('commitBack: noop when not dirty', async () => {
+    mockApi.__setContent('# H\n')
+    const s = createDocSession('a.md', () => 'cid')
+    await s.import_()
+    expect(s.dirty).toBe(false)
+    expect(await s.commitBack()).toBe('noop')
+    expect(api.fileWrite).not.toHaveBeenCalled()
+  })
+
+  // Helper: simulate DocView's dispatchTransaction for commitBack tests.
+  // Session no longer owns EditorState (DocView does), so tests create one.
+  function applyEdit(s: ReturnType<typeof createDocSession>, fn: (tr: Transaction) => Transaction) {
+    const st = EditorState.create({ schema: docSchema, doc: s.doc! })
+    const tr = fn(st.tr)
+    const ns = st.apply(tr)
+    s.onTransaction(tr, ns.doc)
+  }
+
+  it('commitBack: ok writes serialized doc and clears dirty', async () => {
+    mockApi.__setContent('# H\n\npara\n')
+    const s = createDocSession('a.md', () => 'cid')
+    await s.import_()
+    applyEdit(s, tr => tr.insertText('X', 1, 1))
+    expect(s.dirty).toBe(true)
+    expect(await s.commitBack()).toBe('ok')
+    expect(api.fileWrite).toHaveBeenCalledWith('a.md', s.serialize())
+    expect(s.dirty).toBe(false)
+    expect(s.normalizationDiff).toBeNull()
+  })
+
+  it('commitBack: stale when file changed externally; overwrite forces write', async () => {
+    mockApi.__setContent('# H\n\npara\n')
+    const s = createDocSession('a.md', () => 'cid')
+    await s.import_()
+    applyEdit(s, tr => tr.insertText('X', 1, 1))
+    mockApi.__setContent('# H\n\nchanged on disk\n')
+    expect(await s.commitBack()).toBe('stale')
+    expect(api.fileWrite).not.toHaveBeenCalled()
+    expect(s.dirty).toBe(true)
+    await s.overwrite()
+    expect(api.fileWrite).toHaveBeenCalledWith('a.md', s.serialize())
+    expect(s.dirty).toBe(false)
+  })
+
+  it('reload re-imports and resets dirty', async () => {
+    mockApi.__setContent('# H\n')
+    const s = createDocSession('a.md', () => 'cid')
+    await s.import_()
+    applyEdit(s, tr => tr.insertText('X', 1, 1))
+    expect(s.dirty).toBe(true)
+    mockApi.__setContent('# Different\n')
+    await s.reload()
+    expect(s.dirty).toBe(false)
+    expect(s.doc!.textContent).toBe('Different')
+  })
+
   it('resolveComment + removeComment', async () => {
     mockApi.__setContent(MD)
     const s = createDocSession('docs/DESIGN.md', () => 'abc123')
     await s.import_()
     let pmFrom = -1
-    s.state!.doc.descendants((node, pos) => {
+    s.doc!.descendants((node, pos) => {
       if (node.isText && node.text?.includes('Another')) {
         pmFrom = pos
         return false

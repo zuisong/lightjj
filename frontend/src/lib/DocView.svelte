@@ -1,25 +1,53 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import { EditorState } from 'prosemirror-state'
   import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
+  import { keymap } from 'prosemirror-keymap'
+  import { history, undo, redo } from 'prosemirror-history'
+  import { baseKeymap } from 'prosemirror-commands'
+  import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
+  import { docSchema } from './pm-schema'
   import type { DocSession } from './doc-session.svelte'
 
   let {
     session,
+    editable = false,
     onaddcomment,
+    onsave,
   }: {
     session: DocSession
+    editable?: boolean
     onaddcomment?: (from: number, to: number) => void
+    onsave?: () => void
   } = $props()
+
+  // Editing plugins only matter when editable; created once. baseKeymap covers
+  // Enter/Backspace/Delete; the chained map adds undo/redo + list structure.
+  // Cmd+S returns true synchronously so the browser's save dialog is suppressed
+  // even though onsave is async.
+  const editPlugins = [
+    history(),
+    keymap({
+      'Mod-z': undo,
+      'Mod-y': redo,
+      'Mod-Shift-z': redo,
+      'Mod-s': () => { onsave?.(); return true },
+      'Enter': splitListItem(docSchema.nodes.list_item),
+      'Tab': sinkListItem(docSchema.nodes.list_item),
+      'Shift-Tab': liftListItem(docSchema.nodes.list_item),
+    }),
+    keymap(baseKeymap),
+  ]
 
   let mount: HTMLDivElement
   let view: EditorView | undefined
   let affordance = $state<{ x: number; y: number; from: number; to: number } | null>(null)
 
-  // Comment highlights. Pure f(session.comments, session.state.doc) — pushed to
+  // Comment highlights. Pure f(session.comments, session.doc) — pushed to
   // the view via setProps rather than plugin state.
   const decoSet = $derived.by(() => {
-    const st = session.state
-    if (!st) return DecorationSet.empty
+    const d = session.doc
+    if (!d) return DecorationSet.empty
     const decos = session.comments
       .filter((c) => !c.parentId && !c.orphaned && c.from !== undefined && c.to !== undefined && c.from < c.to)
       .map((c) =>
@@ -28,26 +56,42 @@
           'data-comment-id': c.id,
         }),
       )
-    return DecorationSet.create(st.doc, decos)
+    return DecorationSet.create(d, decos)
   })
 
   // Create view once (first non-null state), then sync via updateState. No
   // cleanup-return — destroy+recreate per transaction would thrash; onDestroy
   // handles unmount. {#key docFilePath} in the parent gives a fresh mount per
   // file, so view is always 1:1 with session.
+  // session.doc is a Node, not an EditorState — DocView owns the state (plugins
+  // + history are view-local). dispatchTransaction applies tr here AND notifies
+  // the session for comment-mapping. session.doc only changes externally on
+  // import/reload, so the else-if branch fires once per file, not per keystroke.
+  let importedDoc: typeof session.doc = null
   $effect(() => {
-    const st = session.state
-    if (!st || !mount) return
+    const d = session.doc
+    if (!d || !mount) return
     if (!view) {
+      importedDoc = d
       view = new EditorView(mount, {
-        state: st,
-        editable: () => false,
+        state: EditorState.create({ schema: docSchema, doc: d, plugins: editPlugins }),
+        editable: () => editable,
         decorations: () => decoSet,
-        dispatchTransaction: (tr) => session.onTransaction(tr),
+        dispatchTransaction: (tr) => {
+          if (!view) return
+          const ns = view.state.apply(tr)
+          view.updateState(ns)
+          session.onTransaction(tr, ns.doc)
+        },
       })
-    } else if (view.state !== st) {
-      view.updateState(st)
+    } else if (d !== importedDoc && d !== view.state.doc) {
+      importedDoc = d
+      view.updateState(EditorState.create({ schema: docSchema, doc: d, plugins: editPlugins }))
     }
+  })
+
+  $effect(() => {
+    view?.setProps({ editable: () => editable })
   })
 
   $effect(() => {

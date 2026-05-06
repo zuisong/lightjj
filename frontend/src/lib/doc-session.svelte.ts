@@ -7,9 +7,9 @@
 // EditorView and dispatches transactions, calling onTransaction here so comment
 // positions track edits.
 
-import { EditorState, type Transaction } from 'prosemirror-state'
+import type { Transaction } from 'prosemirror-state'
 import type { Node } from 'prosemirror-model'
-import { docSchema, parseMarkdown, serializeMarkdown } from './pm-schema'
+import { parseMarkdown, serializeMarkdown } from './pm-schema'
 import { captureAnchor, refind } from './reanchor'
 import { createLoader } from './loader.svelte'
 import { api, type DocComment } from './api'
@@ -62,17 +62,42 @@ export function createDocSession(
   filePath: string,
   getWorkingCopyCommitId: () => string | undefined,
 ) {
-  let state = $state<EditorState | null>(null)
+  // The PM Node, not EditorState — DocView owns EditorState (plugins, history)
+  // and notifies us via onTransaction. Keeping state here would mean two
+  // EditorState instances applying the same tr → reconfigure-on-every-keystroke
+  // when DocView tries to sync (different doc instances, same content).
+  let doc = $state<Node | null>(null)
   let comments = $state<PlacedComment[]>([])
   let baseCommitId = $state('')
   let baseContentHash = $state('')
   let version = $state(0)
   let committedVersion = $state(0)
+  let saving = $state(false)
+  // serialize(parse(md)) when it differs from md — caller can diff against the
+  // file to show what the first commitBack will rewrite. Null = byte-identical.
+  let normalizationDiff = $state<string | null>(null)
 
   // Guards add/resolve/remove against a concurrent import_ overwriting comments[].
   // Symmetric: bump BEFORE await, check AFTER (CLAUDE.md gen-counter rule).
   let gen = 0
   const bumpGen = () => ++gen
+
+  // Optimistic-write helper: snapshot, apply, await, rollback+surface on error.
+  // Mutations apply locally first so the UI is instant; if the server write
+  // fails (SSH drop, 500) the local state must not silently diverge.
+  let mutationError = $state('')
+  async function optimistic(apply: () => void, persist: () => Promise<unknown>): Promise<void> {
+    bumpGen()
+    const snapshot = comments
+    apply()
+    mutationError = ''
+    try {
+      await persist()
+    } catch (e) {
+      comments = snapshot
+      mutationError = e instanceof Error ? e.message : String(e)
+    }
+  }
 
   const importLoader = createLoader(async () => {
     const commitId = getWorkingCopyCommitId()
@@ -94,18 +119,19 @@ export function createDocSession(
     const g = bumpGen()
     const ok = await importLoader.load()
     if (!ok || g !== gen || !importLoader.value) return
-    const { commitId, content, doc, placed } = importLoader.value
-    state = EditorState.create({ schema: docSchema, doc })
+    const { commitId, content, doc: parsed, placed } = importLoader.value
+    doc = parsed
     comments = placed
     baseCommitId = commitId
     baseContentHash = await sha256Hex(content)
     version = 0
     committedVersion = 0
+    const rt = serializeMarkdown(doc)
+    normalizationDiff = rt === content ? null : rt
   }
 
-  function onTransaction(tr: Transaction): void {
-    if (!state) return
-    state = state.apply(tr)
+  function onTransaction(tr: Transaction, newDoc: Node): void {
+    doc = newDoc
     if (tr.docChanged) {
       version++
       comments = comments.map((c) =>
@@ -116,19 +142,53 @@ export function createDocSession(
     }
   }
 
-  // Phase 1 is read-only — nothing calls this yet. Signature is final; the
-  // serialize+fileWrite happens in App's withMutation wrapper (Phase 2).
-  async function commitBack(): Promise<'ok' | 'stale'> {
-    if (!state) return 'ok'
+  function serialize(): string {
+    return doc ? serializeMarkdown(doc) : ''
+  }
+
+  async function writeAndAdvance(md: string, commitId: string): Promise<void> {
+    await api.fileWrite(filePath, md)
+    committedVersion = version
+    baseContentHash = await sha256Hex(md)
+    // Best-effort: the watcher will snapshot post-write and bump @'s commit_id;
+    // we record the pre-write id since we can't observe the new one synchronously.
+    // The hash is the real OCC token — baseCommitId is only for fileShow(base)
+    // in a future merge-style display, which Phase 2 doesn't have.
+    baseCommitId = commitId
+    normalizationDiff = null
+  }
+
+  // Best-effort staleness check (not CAS — there's a window between read and
+  // write). Caller wraps in withMutation; on 'stale' shows [Reload | Overwrite].
+  async function commitBack(): Promise<'ok' | 'stale' | 'noop'> {
+    if (!doc || version === committedVersion) return 'noop'
     const commitId = getWorkingCopyCommitId()
     if (!commitId) throw new Error('working copy unavailable')
-    const { content } = await api.fileShow(commitId, filePath)
-    const currentHash = await sha256Hex(content)
-    if (currentHash !== baseContentHash) return 'stale'
-    // TODO Phase 2: api.fileWrite(filePath, serializeMarkdown(state.doc));
-    //   committedVersion = version; baseContentHash = sha256Hex(serialized)
-    void serializeMarkdown // referenced for Phase 2; keeps the import live
-    return 'ok'
+    saving = true
+    try {
+      const { content } = await api.fileShow(commitId, filePath)
+      if ((await sha256Hex(content)) !== baseContentHash) return 'stale'
+      await writeAndAdvance(serialize(), commitId)
+      return 'ok'
+    } finally {
+      saving = false
+    }
+  }
+
+  async function overwrite(): Promise<void> {
+    if (!doc) return
+    const commitId = getWorkingCopyCommitId()
+    if (!commitId) throw new Error('working copy unavailable')
+    saving = true
+    try {
+      await writeAndAdvance(serialize(), commitId)
+    } finally {
+      saving = false
+    }
+  }
+
+  async function reload(): Promise<void> {
+    await import_()
   }
 
   async function addComment(
@@ -137,8 +197,8 @@ export function createDocSession(
     body: string,
     parentId?: string,
   ): Promise<void> {
-    if (!state) return
-    const tm = buildTextMap(state.doc)
+    if (!doc) return
+    const tm = buildTextMap(doc)
     const anchor = captureAnchor(tm.text, tm.toText(from), tm.toText(to))
     const c: DocComment = {
       id: crypto.randomUUID(),
@@ -150,28 +210,27 @@ export function createDocSession(
       author: 'user',
       createdAt: Date.now(),
     }
-    // Optimistic-write: bump gen so an in-flight import_() is invalidated, then
-    // apply the local update unconditionally. A post-await gen check here would
-    // make sibling mutations (add then resolve in quick succession) drop each
-    // other's local update — independent writes don't conflict.
-    bumpGen()
-    comments = [...comments, { ...c, from, to, orphaned: false }]
-    await api.docComments.upsert(c)
+    await optimistic(
+      () => { comments = [...comments, { ...c, from, to, orphaned: false }] },
+      () => api.docComments.upsert(c),
+    )
   }
 
   async function resolveComment(id: string, resolution: 'addressed' | 'wontfix'): Promise<void> {
     const c = comments.find((x) => x.id === id)
     if (!c) return
     const updated: DocComment = { ...stripLocal(c), resolution, resolvedAt: Date.now() }
-    bumpGen()
-    comments = comments.map((x) => (x.id === id ? { ...x, resolution, resolvedAt: updated.resolvedAt } : x))
-    await api.docComments.upsert(updated)
+    await optimistic(
+      () => { comments = comments.map((x) => (x.id === id ? { ...x, resolution, resolvedAt: updated.resolvedAt } : x)) },
+      () => api.docComments.upsert(updated),
+    )
   }
 
   async function removeComment(id: string): Promise<void> {
-    bumpGen()
-    comments = comments.filter((x) => x.id !== id && x.parentId !== id)
-    await api.docComments.remove(filePath, id)
+    await optimistic(
+      () => { comments = comments.filter((x) => x.id !== id && x.parentId !== id) },
+      () => api.docComments.remove(filePath, id),
+    )
   }
 
   const orphanedComments = $derived(comments.filter((c) => c.orphaned && !c.parentId))
@@ -179,16 +238,22 @@ export function createDocSession(
 
   return {
     filePath,
-    get state() { return state },
+    get doc() { return doc },
     get comments() { return comments },
     get orphanedComments() { return orphanedComments },
     get dirty() { return dirty },
-    get error() { return importLoader.error },
+    get saving() { return saving },
+    get error() { return importLoader.error || mutationError },
     get busy() { return importLoader.loading },
     get baseCommitId() { return baseCommitId },
+    get baseContentHash() { return baseContentHash },
+    get normalizationDiff() { return normalizationDiff },
     import_,
     onTransaction,
+    serialize,
     commitBack,
+    overwrite,
+    reload,
     addComment,
     resolveComment,
     removeComment,

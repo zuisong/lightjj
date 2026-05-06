@@ -336,15 +336,40 @@
   let docFilePath: string | null = $state(null)
   let docSession: DocSession | null = $state(null)
   let docViewRef: { scrollTo: (pos: number) => void } | undefined = $state()
+  let docEditable = $state(false)
+  let docStale = $state(false)
+
+  async function handleDocCommit() {
+    if (!docSession) return
+    const result = await withMutation(() => docSession!.commitBack())
+    if (result === 'stale') docStale = true
+    else if (result === 'ok') setMessage({ kind: 'success', text: `Saved ${docFilePath}` })
+  }
+
+  async function handleDocOverwrite() {
+    if (!docSession) return
+    await withMutation(() => docSession!.overwrite())
+    docStale = false
+    setMessage({ kind: 'success', text: `Saved ${docFilePath} (overwrote external change)` })
+  }
+
+  async function handleDocReload() {
+    if (!docSession) return
+    await docSession.reload()
+    docStale = false
+  }
 
   async function switchToDocView(path: string) {
     descriptionEditing = false
+    cancelInlineModes()
     docFilePath = path
     activeView = 'doc'
     // Lazy import keeps prosemirror (~31KB gzip) out of the main bundle —
     // doc-session pulls pm-schema → prosemirror-{model,state}.
     const { createDocSession } = await import('./lib/doc-session.svelte')
     if (activeView !== 'doc' || docFilePath !== path) return
+    docEditable = false
+    docStale = false
     docSession = createDocSession(path, () => workingCopyEntry?.commit.commit_id)
     void docSession.import_().catch(e => setMessage(errorMessage(e)))
   }
@@ -352,7 +377,8 @@
   function closeDocView() {
     docFilePath = null
     docSession = null
-    activeView = 'log'
+    docStale = false
+    switchToLogView()
   }
 
   let currentWorkspace: string = $state('')
@@ -2665,18 +2691,40 @@
         {:else if activeView === 'doc' && docSession && docFilePath}
           <div class="doc-mode-layout">
             <div class="doc-mode-header panel-header">
-              <span class="panel-title">{docFilePath}</span>
+              <span class="panel-title">{docFilePath}{#if docSession.dirty}<span class="doc-dirty"> ●</span>{/if}</span>
+              <div class="seg">
+                <button class="seg-btn" class:active={!docEditable} onclick={() => docEditable = false}>Preview</button>
+                <button class="seg-btn" class:active={docEditable} onclick={() => docEditable = true}>Edit</button>
+              </div>
               <span class="doc-mode-spacer"></span>
               {#if docSession.busy}<span class="placeholder-text">Loading…</span>{/if}
               {#if docSession.error}<span class="doc-mode-error">{docSession.error}</span>{/if}
+              <button class="btn btn-sm" disabled={!docSession.dirty || docSession.saving} onclick={handleDocCommit} title="Save to working copy (⌘S)">
+                {docSession.saving ? 'Saving…' : 'Save'}
+              </button>
               <button class="close-btn" onclick={closeDocView} title="Close (Esc)">×</button>
             </div>
+            {#if docStale}
+              <div class="doc-banner">
+                File changed on disk since you opened it.
+                <button class="btn btn-sm" onclick={handleDocReload}>Reload from disk</button>
+                <button class="btn btn-sm btn-danger" onclick={handleDocOverwrite}>Overwrite anyway</button>
+                <span class="placeholder-text">Overwriting is recoverable via <code>jj evolog</code>.</span>
+              </div>
+            {:else if docSession.normalizationDiff && !docSession.dirty}
+              <div class="doc-banner">
+                Opening normalized formatting (list markers, escaping). First save will rewrite {docFilePath}.
+                <button class="btn btn-sm" onclick={() => { docEditable = true }}>Edit</button>
+              </div>
+            {/if}
             {#key docFilePath}
               {#await Promise.all([import('./lib/DocView.svelte'), import('./lib/DocCommentRail.svelte')]) then [{ default: DocView }, { default: DocCommentRail }]}
                 <div class="doc-mode-body">
                   <DocView
                     bind:this={docViewRef}
                     session={docSession}
+                    editable={docEditable}
+                    onsave={handleDocCommit}
                     onaddcomment={(from, to) => {
                       const body = window.prompt('Comment:')
                       if (body) void docSession?.addComment(from, to, body)
@@ -3344,6 +3392,18 @@
   .doc-mode-error {
     color: var(--red);
     font-size: var(--fs-xs);
+  }
+  .doc-dirty {
+    color: var(--amber);
+  }
+  .doc-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-warning);
+    border-bottom: 1px solid var(--surface1);
+    font-size: var(--fs-sm);
   }
   .merge-mode-layout > :global(.merge-panel) {
     flex: 1;

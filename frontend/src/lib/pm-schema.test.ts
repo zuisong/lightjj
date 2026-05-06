@@ -40,6 +40,75 @@ describe('pm-schema XSS guards', () => {
     expect(frag.querySelector('script')).toBeNull()
     expect(frag.querySelector('.pm-passthrough')?.textContent).toContain('<script>')
   })
+
+  it.each([
+    ['javascript:alert(1)', ''],
+    ['data:text/html,x', ''],
+    ['https://example.com/x.png', 'https://example.com/x.png'],
+    ['./local.png', './local.png'],
+  ])('image src scheme gate: %s → %s', (src, expected) => {
+    const frag = renderToDOM(`![alt](${src})`)
+    expect(frag.querySelector('img')?.getAttribute('src')).toBe(expected)
+  })
+})
+
+describe('pm-schema GFM extensions', () => {
+  it('table round-trips', () => {
+    const md = '| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n'
+    expect(rt(md)).toBe(md)
+  })
+
+  it('table with alignment', () => {
+    const md = '| l | c | r |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |\n'
+    expect(rt(md)).toBe(md)
+  })
+
+  it('table cell with pipe escaped', () => {
+    const md = '| a |\n| --- |\n| x\\|y |\n'
+    expect(rt(md)).toBe(md)
+  })
+
+  it('strikethrough', () => {
+    expect(rt('text ~~gone~~ here\n')).toBe('text ~~gone~~ here\n')
+  })
+
+  it('image', () => {
+    expect(rt('![alt](src.png)\n')).toBe('![alt](src.png)\n')
+    expect(rt('![alt](src.png "Title")\n')).toBe('![alt](src.png "Title")\n')
+  })
+
+  it('image inside link', () => {
+    const md = '[![alt](img.png)](https://example.com)\n'
+    expect(rt(md)).toBe(md)
+  })
+})
+
+describe('pm-schema escapeInline', () => {
+  it.each([
+    ['change_id stays unescaped', 'the change_id field\n', 'the change_id field\n'],
+    ['intraword underscore safe', 'foo_bar_baz\n', 'foo_bar_baz\n'],
+    ['__dunder__ escapes outer', '\\_\\_init\\_\\_\n', '\\_\\_init\\_\\_\n'],
+    ['leading _word escaped', '\\_foo bar\n', '\\_foo bar\n'],
+    ['a*b escapes star', 'a\\*b\n', 'a\\*b\n'],
+    ['] not escaped, [ escaped', 'see \\[ref] here\n', 'see \\[ref] here\n'],
+    ['~~ escaped, single ~ not', 'a~b \\~~c\n', 'a~b \\~~c\n'],
+  ])('%s', (_label, md, expected) => {
+    expect(rt(md)).toBe(expected)
+  })
+
+  it('the headline case: change_id round-trips clean', () => {
+    const md = 'Use `change_id` not commit_id for identity.\n'
+    expect(rt(md)).toBe(md)
+  })
+
+  it('literal ! before a link does not become an image', () => {
+    // Input: escaped-! then link. Output must keep the escape so re-parse
+    // doesn't see ![...](...).
+    const md = '\\![text](url)\n'
+    const out = rt(md)
+    expect(out).toBe(md)
+    expect(rt(out)).toBe(out)
+  })
 })
 
 describe('pm-schema unit', () => {
@@ -61,6 +130,11 @@ describe('pm-schema unit', () => {
   it('fenced code block with lang', () => {
     const md = '```js\nconst s = `x`\n```\n'
     expect(rt(md)).toBe(md)
+  })
+
+  it('code span with internal backtick uses symmetric N+1 delimiters', () => {
+    expect(rt('``foo`bar`` here\n')).toBe('``foo`bar`` here\n')
+    expect(rt('``` `` ``` more\n')).toBe('``` `` ``` more\n')
   })
 
   it('code fence grows when content has line-start backticks', () => {
@@ -89,11 +163,6 @@ describe('pm-schema unit', () => {
 
   it('hard break', () => {
     expect(rt('a\\\nb\n')).toBe('a\\\nb\n')
-  })
-
-  it('table → passthrough round-trips raw', () => {
-    const md = '| a | b |\n|---|---|\n| 1 | 2 |\n'
-    expect(rt(md)).toBe(md)
   })
 
   it('idempotent: rt(rt(x)) === rt(x)', () => {
@@ -132,7 +201,12 @@ describe('pm-schema round-trip on real docs', () => {
     let same = 0
     const max = Math.max(al.length, bl.length)
     for (let i = 0; i < max; i++) if (al[i] === bl[i]) same++
-    return { total: max, same, diff: max - same }
+    // Content metric: source lines that don't appear ANYWHERE in output —
+    // ignores position shifts from blank-line normalization, surfaces real
+    // content changes (escaping, table reflow).
+    const bset = new Set(bl)
+    const lost = al.filter((ln) => !bset.has(ln)).length
+    return { total: max, same, diff: max - same, lost }
   }
 
   for (const path of docs) {
@@ -144,8 +218,9 @@ describe('pm-schema round-trip on real docs', () => {
       // Report-only: log stats; assert idempotence + non-empty
       // eslint-disable-next-line no-console
       console.log(
-        `[round-trip] ${path}: ${d.total} lines, ${d.diff} differ ` +
-          `(${((100 * d.diff) / d.total).toFixed(1)}%), idempotent=${once === twice}`
+        `[round-trip] ${path}: ${d.total} lines, ${d.diff} pos-differ ` +
+          `(${((100 * d.diff) / d.total).toFixed(1)}%), ${d.lost} content-changed ` +
+          `(${((100 * d.lost) / d.total).toFixed(1)}%), idempotent=${once === twice}`
       )
       expect(once.length).toBeGreaterThan(0)
       expect(twice).toBe(once) // idempotence is the hard requirement

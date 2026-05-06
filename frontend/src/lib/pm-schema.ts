@@ -106,6 +106,55 @@ const nodes: Record<string, NodeSpec> = {
     toDOM: () => ['br'],
   },
 
+  image: {
+    group: 'inline',
+    inline: true,
+    attrs: { src: { default: '' }, alt: { default: '' }, title: { default: null } },
+    draggable: true,
+    parseDOM: [
+      {
+        tag: 'img[src]',
+        getAttrs: (dom) => ({
+          src: (dom as HTMLElement).getAttribute('src'),
+          alt: (dom as HTMLElement).getAttribute('alt') ?? '',
+          title: (dom as HTMLElement).getAttribute('title'),
+        }),
+      },
+    ],
+    toDOM: (n) => {
+      const src = String(n.attrs.src ?? '')
+      const safe = SAFE_LINK_SCHEME.test(src) ? src : ''
+      return ['img', { src: safe, alt: n.attrs.alt, title: n.attrs.title }]
+    },
+  },
+
+  table: {
+    group: 'block',
+    content: 'table_row+',
+    isolating: true,
+    parseDOM: [{ tag: 'table' }],
+    toDOM: () => ['table', ['tbody', 0]],
+  },
+  table_row: {
+    content: 'table_cell+',
+    parseDOM: [{ tag: 'tr' }],
+    toDOM: () => ['tr', 0],
+  },
+  table_cell: {
+    content: 'inline*',
+    attrs: { header: { default: false }, align: { default: null } },
+    isolating: true,
+    parseDOM: [
+      { tag: 'th', getAttrs: () => ({ header: true }) },
+      { tag: 'td', getAttrs: () => ({ header: false }) },
+    ],
+    toDOM: (n) => [
+      n.attrs.header ? 'th' : 'td',
+      n.attrs.align ? { style: `text-align:${n.attrs.align}` } : {},
+      0,
+    ],
+  },
+
   text: { group: 'inline' },
 }
 
@@ -122,6 +171,10 @@ const marks: Record<string, MarkSpec> = {
     excludes: '_',
     parseDOM: [{ tag: 'code' }],
     toDOM: () => ['code', 0],
+  },
+  del: {
+    parseDOM: [{ tag: 'del' }, { tag: 's' }],
+    toDOM: () => ['del', 0],
   },
   link: {
     attrs: { href: { default: '' }, title: { default: null } },
@@ -178,6 +231,9 @@ function inlineNodes(tokens: Token[] | undefined, activeMarks: readonly Mark[] =
       case 'em':
         out.push(...inlineNodes((tok as Tokens.Em).tokens, [...activeMarks, s.mark('em')]))
         break
+      case 'del':
+        out.push(...inlineNodes((tok as Tokens.Del).tokens, [...activeMarks, s.mark('del')]))
+        break
       case 'codespan': {
         const t = tok as Tokens.Codespan
         if (t.text) out.push(s.text(t.text, [...activeMarks, s.mark('code')]))
@@ -192,12 +248,17 @@ function inlineNodes(tokens: Token[] | undefined, activeMarks: readonly Mark[] =
       case 'br':
         out.push(s.node('hard_break'))
         break
+      case 'image': {
+        const t = tok as Tokens.Image
+        out.push(s.node('image', { src: t.href, alt: t.text ?? '', title: t.title ?? null }, [], activeMarks))
+        break
+      }
       case 'checkbox':
         // GFM task checkbox — captured as list_item attrs at the block level;
         // marked nests it inside the paragraph's inline tokens for loose lists.
         break
       default:
-        // image, del, html, unknown inline: keep raw source so it round-trips
+        // html, unknown inline: keep raw source so it round-trips
         if (tok.raw) out.push(s.text(tok.raw, activeMarks))
     }
   }
@@ -230,6 +291,17 @@ function blockNodes(tokens: Token[]): Node[] {
       case 'hr':
         out.push(s.node('horizontal_rule'))
         break
+      case 'table': {
+        const t = tok as Tokens.Table
+        const cell = (c: Tokens.TableCell, i: number, header: boolean) =>
+          s.node('table_cell', { header, align: t.align[i] ?? null }, inlineNodes(c.tokens))
+        const rows = [
+          s.node('table_row', null, t.header.map((c, i) => cell(c, i, true))),
+          ...t.rows.map((r) => s.node('table_row', null, r.map((c, i) => cell(c, i, false)))),
+        ]
+        out.push(s.node('table', null, rows))
+        break
+      }
       case 'list': {
         const t = tok as Tokens.List
         const items = t.items.map((it) => {
@@ -257,7 +329,7 @@ function blockNodes(tokens: Token[]): Node[] {
         break
       }
       default:
-        // table, html, def, unknown: opaque round-trip
+        // html, def, unknown: opaque round-trip
         out.push(s.node('passthrough', { raw: tok.raw }))
     }
   }
@@ -278,21 +350,42 @@ export function parseMarkdown(md: string): Node {
 const MARK_DELIM: Record<string, (m: Mark, open: boolean, text: string) => string> = {
   strong: () => '**',
   em: () => '*',
-  code: (_m, _open, text) => {
-    // Use enough backticks to not collide with content
+  del: () => '~~',
+  code: (_m, open, text) => {
+    // Use enough backticks to not collide with content; pad with one space when
+    // content starts/ends with a backtick (CommonMark would otherwise merge
+    // delimiter+content into one run).
     let n = 1
     const re = /`+/g
     let mt: RegExpExecArray | null
     while ((mt = re.exec(text))) if (mt[0].length >= n) n = mt[0].length + 1
-    return '`'.repeat(n)
+    const ticks = '`'.repeat(n)
+    const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : ''
+    return open ? ticks + pad : pad + ticks
   },
   link: (m, open) => (open ? '[' : `](${m.attrs.href}${m.attrs.title ? ` "${m.attrs.title}"` : ''})`),
 }
 
-// Punctuation that would otherwise be parsed as markdown syntax at the start
-// of a line or inline. Conservative — only escape what marked actually parses.
+// Escape only what would actually change parse meaning. CommonMark: `*` can
+// flank anywhere; `_` only flanks at word boundaries (intraword `change_id` is
+// safe, `_word_` and `__dunder__` are not). `[` starts a link, `]` alone is
+// inert. `~~` (GFM strike) only when doubled.
+const WORD = /[A-Za-z0-9]/
 function escapeInline(text: string, atLineStart: boolean): string {
-  let t = text.replace(/([\\`*_\[\]])/g, '\\$1')
+  let t = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '\\' || c === '`' || c === '*' || c === '[') {
+      t += '\\' + c
+    } else if (c === '_') {
+      const intraword = WORD.test(text[i - 1] ?? '') && WORD.test(text[i + 1] ?? '')
+      t += intraword ? '_' : '\\_'
+    } else if (c === '~' && text[i + 1] === '~') {
+      t += '\\~'
+    } else {
+      t += c
+    }
+  }
   if (atLineStart) t = t.replace(/^([#>+-]|\d+\.)(\s)/, '\\$1$2')
   return t
 }
@@ -300,12 +393,18 @@ function escapeInline(text: string, atLineStart: boolean): string {
 function serializeInline(parent: Node): string {
   let out = ''
   let active: readonly Mark[] = []
+  // close-side delimiter per active mark — computed at open time so the code
+  // mark's backtick count (which depends on content) matches on both sides.
+  let closeDelim: string[] = []
   const close = (upto: number) => {
-    for (let i = active.length - 1; i >= upto; i--) {
-      const m = active[i]
-      out += MARK_DELIM[m.type.name](m, false, '')
-    }
+    for (let i = active.length - 1; i >= upto; i--) out += closeDelim[i]
     active = active.slice(0, upto)
+    closeDelim = closeDelim.slice(0, upto)
+  }
+  // A literal `!` immediately before a `[` that we emit (link open or image)
+  // would re-parse as an image; retroactively escape it.
+  const guardBang = () => {
+    if (out.endsWith('!') && !out.endsWith('\\!')) out = out.slice(0, -1) + '\\!'
   }
   parent.forEach((child, _offset, index) => {
     if (child.type.name === 'hard_break') {
@@ -320,8 +419,16 @@ function serializeInline(parent: Node): string {
     close(keep)
     for (let i = keep; i < marks.length; i++) {
       const m = marks[i]
+      if (m.type.name === 'link') guardBang()
       out += MARK_DELIM[m.type.name](m, true, child.text ?? '')
+      closeDelim.push(MARK_DELIM[m.type.name](m, false, child.text ?? ''))
       active = [...active, m]
+    }
+    if (child.type.name === 'image') {
+      const a = child.attrs
+      guardBang()
+      out += `![${escapeInline(a.alt ?? '', false)}](${a.src}${a.title ? ` "${a.title}"` : ''})`
+      return
     }
     const isCode = marks.some((m) => m.type.name === 'code')
     const text = child.text ?? ''
@@ -356,6 +463,25 @@ function serializeBlock(node: Node): string {
     }
     case 'horizontal_rule':
       return '---'
+    case 'table': {
+      const rows: string[][] = []
+      const align: (string | null)[] = []
+      node.forEach((row, _o, ri) => {
+        const cells: string[] = []
+        row.forEach((cell, _co, ci) => {
+          // GFM cells can't contain `|` unescaped; serializeInline doesn't
+          // know it's in a table, so post-escape.
+          cells.push(serializeInline(cell).replace(/\|/g, '\\|'))
+          if (ri === 0) align.push(cell.attrs.align)
+        })
+        rows.push(cells)
+      })
+      const sep = align.map((a) =>
+        a === 'left' ? ':---' : a === 'right' ? '---:' : a === 'center' ? ':---:' : '---',
+      )
+      const fmt = (r: string[]) => '| ' + r.join(' | ') + ' |'
+      return [fmt(rows[0]), fmt(sep), ...rows.slice(1).map(fmt)].join('\n')
+    }
     case 'bullet_list':
     case 'ordered_list': {
       const ordered = node.type.name === 'ordered_list'
