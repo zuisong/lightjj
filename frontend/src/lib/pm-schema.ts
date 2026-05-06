@@ -363,7 +363,18 @@ const MARK_DELIM: Record<string, (m: Mark, open: boolean, text: string) => strin
     const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : ''
     return open ? ticks + pad : pad + ticks
   },
-  link: (m, open) => (open ? '[' : `](${m.attrs.href}${m.attrs.title ? ` "${m.attrs.title}"` : ''})`),
+  link: (m, open) => (open ? '[' : `](${fmtHref(m.attrs.href)}${fmtTitle(m.attrs.title)})`),
+}
+
+// Wrap href in <...> if it contains chars that would terminate a bare
+// destination (space, control, unbalanced parens). Escape `"` in titles.
+function fmtHref(href: unknown): string {
+  const s = String(href ?? '')
+  return /[\s<>]/.test(s) ? `<${s.replace(/[<>]/g, c => '\\' + c)}>` : s
+}
+function fmtTitle(title: unknown): string {
+  if (title == null || title === '') return ''
+  return ` "${String(title).replace(/"/g, '\\"')}"`
 }
 
 // Escape only what would actually change parse meaning. CommonMark: `*` can
@@ -386,7 +397,7 @@ function escapeInline(text: string, atLineStart: boolean): string {
       t += c
     }
   }
-  if (atLineStart) t = t.replace(/^([#>+-]|\d+\.)(\s)/, '\\$1$2')
+  if (atLineStart) t = t.replace(/^([#>+-]|\d+[.)])(\s)/, '\\$1$2')
   return t
 }
 
@@ -427,7 +438,7 @@ function serializeInline(parent: Node): string {
     if (child.type.name === 'image') {
       const a = child.attrs
       guardBang()
-      out += `![${escapeInline(a.alt ?? '', false)}](${a.src}${a.title ? ` "${a.title}"` : ''})`
+      out += `![${escapeInline(a.alt ?? '', false)}](${fmtHref(a.src)}${fmtTitle(a.title)})`
       return
     }
     const isCode = marks.some((m) => m.type.name === 'code')

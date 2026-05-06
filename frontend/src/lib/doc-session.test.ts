@@ -23,6 +23,7 @@ vi.mock('./api', () => {
         }),
       },
       __setContent: (s: string) => { content = s },
+      __setStored: (cs: DocComment[]) => { stored = cs },
       __reset: () => { stored = []; content = '' },
     },
   }
@@ -33,7 +34,11 @@ import { api } from './api'
 import { EditorState, type Transaction } from 'prosemirror-state'
 import { docSchema } from './pm-schema'
 
-const mockApi = api as typeof api & { __setContent: (s: string) => void; __reset: () => void }
+const mockApi = api as typeof api & {
+  __setContent: (s: string) => void
+  __setStored: (cs: DocComment[]) => void
+  __reset: () => void
+}
 
 const MD = `# Design
 
@@ -226,5 +231,51 @@ describe('createDocSession', () => {
     expect(s.comments[0].resolution).toBe('addressed')
     await s.removeComment(id)
     expect(s.comments).toHaveLength(0)
+  })
+
+  it('acceptSuggestion: returns edit spec for placed suggestion, null otherwise', async () => {
+    mockApi.__setContent(MD)
+    mockApi.__setStored([
+      {
+        id: 'sg1',
+        filePath: 'docs/DESIGN.md',
+        anchor: { selection: 'distinctive phrase', contextBefore: 'with a ', contextAfter: ' here' },
+        kind: 'suggestion',
+        body: 'rephrase',
+        suggestion: { replacement: 'memorable wording', baseVersion: 0 },
+        author: 'agent',
+        createdAt: 1,
+      },
+      {
+        id: 'sg2',
+        filePath: 'docs/DESIGN.md',
+        anchor: { selection: 'NOWHERE_IN_DOC', contextBefore: '', contextAfter: '' },
+        kind: 'suggestion',
+        body: 'x',
+        suggestion: { replacement: 'y', baseVersion: 0 },
+        author: 'agent',
+        createdAt: 2,
+      },
+      {
+        id: 'cm1',
+        filePath: 'docs/DESIGN.md',
+        anchor: { selection: 'distinctive phrase', contextBefore: 'with a ', contextAfter: ' here' },
+        kind: 'comment',
+        body: 'just a comment',
+        author: 'user',
+        createdAt: 3,
+      },
+    ])
+    const s = createDocSession('docs/DESIGN.md', () => 'abc123')
+    await s.import_()
+
+    const spec = s.acceptSuggestion('sg1')
+    expect(spec).not.toBeNull()
+    expect(spec!.replacement).toBe('memorable wording')
+    expect(s.doc!.textBetween(spec!.from, spec!.to)).toBe('distinctive phrase')
+
+    expect(s.acceptSuggestion('sg2')).toBeNull() // orphaned
+    expect(s.acceptSuggestion('cm1')).toBeNull() // not a suggestion
+    expect(s.acceptSuggestion('nope')).toBeNull() // unknown id
   })
 })

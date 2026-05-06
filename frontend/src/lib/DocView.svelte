@@ -17,7 +17,7 @@
   }: {
     session: DocSession
     editable?: boolean
-    onaddcomment?: (from: number, to: number) => void
+    onaddcomment?: (from: number, to: number, x: number, y: number) => void
     onsave?: () => void
   } = $props()
 
@@ -101,6 +101,13 @@
 
   onDestroy(() => view?.destroy())
 
+  // Exported so the rail's Accept button can apply a suggestion. session
+  // returns the edit spec (pure); the view builds the tr (it owns state).
+  export function applyReplace(from: number, to: number, text: string) {
+    if (!view) return
+    view.dispatch(view.state.tr.insertText(text, from, to))
+  }
+
   // Exported for parent (DocCommentRail click → scroll). BookmarksPanel pattern.
   export function scrollTo(pmPos: number) {
     if (!view) return
@@ -129,7 +136,12 @@
   }
 
   function handleAddClick() {
-    if (affordance && onaddcomment) onaddcomment(affordance.from, affordance.to)
+    if (affordance && onaddcomment && view) {
+      // Viewport coords are recomputed at click time (not stored at mouseup) so
+      // a scroll between select and click still positions the bubble correctly.
+      const c = view.coordsAtPos(affordance.to)
+      onaddcomment(affordance.from, affordance.to, c.left, c.bottom)
+    }
     affordance = null
   }
 </script>

@@ -19,7 +19,7 @@
 
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { untrack, onDestroy } from 'svelte'
+  import { untrack, onDestroy, tick } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
 
   let { tabBar, onOpenTab, initialState }: {
@@ -33,7 +33,7 @@
   // state_referenced_locally warning; we DO want the mount-time snapshot.
   const init = untrack(() => initialState)
 
-  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, onPollFail, onSSEState, wireAutoRefresh, clearAllCaches, bookmarkPushFlags, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
+  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, onPollFail, onSSEState, wireAutoRefresh, clearAllCaches, bookmarkPushFlags, agentBaseURL, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
   import { setDetectedJJVersion, missingJJFeatures } from './lib/jj-features.svelte'
   import MessageBar, { errorMessage, type Message } from './lib/MessageBar.svelte'
   import { clearDiffCaches, parseDiffCached } from './lib/diff-cache'
@@ -335,15 +335,37 @@
   // not an overlay. {#key docFilePath} remounts the lazy-loaded view per path.
   let docFilePath: string | null = $state(null)
   let docSession: DocSession | null = $state(null)
-  let docViewRef: { scrollTo: (pos: number) => void } | undefined = $state()
+  let docViewRef: { scrollTo: (pos: number) => void; applyReplace: (f: number, t: number, s: string) => void } | undefined = $state()
   let docEditable = $state(false)
   let docStale = $state(false)
+  // Add-comment bubble state. AnnotationBubble is annotation-coupled (severity
+  // select, lineContext, Annotation type) so doc-mode uses a small dedicated
+  // input. {x,y} are viewport coords (DocView emits view.coordsAtPos result).
+  let docCommentDraft = $state<{ from: number; to: number; x: number; y: number } | null>(null)
+  let docCommentDraftBody = $state('')
+  let docCommentDraftEl: HTMLTextAreaElement | undefined = $state()
+  $effect(() => {
+    if (docCommentDraft) tick().then(() => docCommentDraftEl?.focus())
+  })
+
+  function submitDocComment() {
+    const body = docCommentDraftBody.trim()
+    if (!body || !docCommentDraft || !docSession) return
+    void docSession.addComment(docCommentDraft.from, docCommentDraft.to, body)
+    docCommentDraft = null
+  }
 
   async function handleDocCommit() {
     if (!docSession) return
     const result = await withMutation(() => docSession!.commitBack())
     if (result === 'stale') docStale = true
-    else if (result === 'ok') setMessage({ kind: 'success', text: `Saved ${docFilePath}` })
+    else if (result === 'ok') {
+      setMessage({ kind: 'success', text: `Saved ${docFilePath}` })
+      // Explicit reload (DiffPanel.onfilesaved precedent) — withMutation doesn't
+      // call loadLog, and waiting for the SSE round-trip leaves the diff stale
+      // for the moment the user Escapes back to log.
+      void loadLog()
+    }
   }
 
   async function handleDocOverwrite() {
@@ -351,6 +373,7 @@
     await withMutation(() => docSession!.overwrite())
     docStale = false
     setMessage({ kind: 'success', text: `Saved ${docFilePath} (overwrote external change)` })
+    void loadLog()
   }
 
   async function handleDocReload() {
@@ -370,6 +393,7 @@
     if (activeView !== 'doc' || docFilePath !== path) return
     docEditable = false
     docStale = false
+    docCommentDraft = null
     docSession = createDocSession(path, () => workingCopyEntry?.commit.commit_id)
     void docSession.import_().catch(e => setMessage(errorMessage(e)))
   }
@@ -378,6 +402,7 @@
     docFilePath = null
     docSession = null
     docStale = false
+    docCommentDraft = null
     switchToLogView()
   }
 
@@ -2013,7 +2038,7 @@
   // only the try-then-fall-through sequence.
 
   function isInInput(t: HTMLElement) {
-    return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || !!t.closest('.cm-editor')
+    return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable || !!t.closest('.cm-editor')
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -2699,6 +2724,16 @@
               <span class="doc-mode-spacer"></span>
               {#if docSession.busy}<span class="placeholder-text">Loading…</span>{/if}
               {#if docSession.error}<span class="doc-mode-error">{docSession.error}</span>{/if}
+              <button
+                class="btn btn-sm"
+                title="Copy agent prompt for this file"
+                onclick={() => {
+                  const base = agentBaseURL()
+                  const hint = `lightjj doc API: fetch ${base}/api/agent for usage. This file: GET/POST ${base}/api/doc-comments?path=${encodeURIComponent(docFilePath ?? '')}`
+                  navigator.clipboard.writeText(hint)
+                  setMessage({ kind: 'success', text: 'Agent hint copied to clipboard' })
+                }}
+              >Agent…</button>
               <button class="btn btn-sm" disabled={!docSession.dirty || docSession.saving} onclick={handleDocCommit} title="Save to working copy (⌘S)">
                 {docSession.saving ? 'Saving…' : 'Save'}
               </button>
@@ -2725,18 +2760,48 @@
                     session={docSession}
                     editable={docEditable}
                     onsave={handleDocCommit}
-                    onaddcomment={(from, to) => {
-                      const body = window.prompt('Comment:')
-                      if (body) void docSession?.addComment(from, to, body)
+                    onaddcomment={(from, to, x, y) => {
+                      docCommentDraft = { from, to, x, y }
+                      docCommentDraftBody = ''
                     }}
                   />
                   <DocCommentRail
                     session={docSession}
                     onjump={(pos) => docViewRef?.scrollTo(pos)}
+                    onaccept={(id) => {
+                      const spec = docSession?.acceptSuggestion(id)
+                      if (!spec) return
+                      docViewRef?.applyReplace(spec.from, spec.to, spec.replacement)
+                      void docSession?.resolveComment(id, 'addressed')
+                    }}
                   />
                 </div>
               {/await}
             {/key}
+            {#if docCommentDraft}
+              <div
+                class="doc-comment-bubble"
+                style:left="{Math.min(docCommentDraft.x, window.innerWidth - 350)}px"
+                style:top="{docCommentDraft.y + 6}px"
+              >
+                <textarea
+                  bind:this={docCommentDraftEl}
+                  bind:value={docCommentDraftBody}
+                  class="modal-input"
+                  rows="3"
+                  placeholder="Comment… (⌘Enter to add)"
+                  onkeydown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Escape') { docCommentDraft = null }
+                    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitDocComment() }
+                  }}
+                ></textarea>
+                <div class="doc-comment-bubble-actions">
+                  <button class="btn" onclick={() => docCommentDraft = null}>Cancel</button>
+                  <button class="btn btn-primary" disabled={!docCommentDraftBody.trim()} onclick={submitDocComment}>Add</button>
+                </div>
+              </div>
+            {/if}
           </div>
         {:else if divergence.active}
           <!-- {#key} enforces what DivergencePanel assumes: changeId never
@@ -3405,6 +3470,18 @@
     border-bottom: 1px solid var(--surface1);
     font-size: var(--fs-sm);
   }
+  .doc-comment-bubble {
+    position: fixed;
+    z-index: 91;
+    width: 340px;
+    background: var(--mantle);
+    border: 1px solid var(--surface1);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    padding: 8px;
+  }
+  .doc-comment-bubble textarea { width: 100%; resize: vertical; }
+  .doc-comment-bubble-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
   .merge-mode-layout > :global(.merge-panel) {
     flex: 1;
     min-width: 0;

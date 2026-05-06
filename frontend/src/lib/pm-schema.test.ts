@@ -157,6 +157,25 @@ describe('pm-schema unit', () => {
     expect(rt(md)).toBe(md)
   })
 
+  it('link title with quote escapes', () => {
+    const md = '[x](url "say \\"hi\\"")\n'
+    expect(rt(md)).toBe(md)
+  })
+
+  it('href with space wraps in angle brackets', () => {
+    const md = '[x](<http://a/b c>)\n'
+    expect(rt(md)).toBe(md)
+  })
+
+  it('paragraph starting N) escapes so it does not become a list', () => {
+    // Can't test via rt() — markdown source `1) foo` IS a list. Build the PM
+    // doc directly to simulate the user typing `1) foo` in WYSIWYG.
+    const p = docSchema.node('paragraph', null, [docSchema.text('1) not a list')])
+    const out = serializeMarkdown(docSchema.node('doc', null, [p]))
+    expect(out).toBe('\\1) not a list\n')
+    expect(parseMarkdown(out).firstChild?.type.name).toBe('paragraph')
+  })
+
   it('hr', () => {
     expect(rt('---\n')).toBe('---\n')
   })

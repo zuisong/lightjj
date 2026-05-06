@@ -5,9 +5,11 @@
   let {
     session,
     onjump,
+    onaccept,
   }: {
     session: DocSession
     onjump?: (pmPos: number) => void
+    onaccept?: (id: string) => void
   } = $props()
 
   type Thread = { root: PlacedComment; replies: PlacedComment[] }
@@ -62,10 +64,16 @@
       <div class="thread" class:resolved={!!t.root.resolution}>
         <button
           class="thread-quote"
+          class:is-suggestion={t.root.kind === 'suggestion'}
           onclick={() => t.root.from !== undefined && onjump?.(t.root.from)}
           title="Jump to selection"
         >
-          {t.root.anchor.selection || '(empty selection)'}
+          {#if t.root.kind === 'suggestion' && t.root.suggestion}
+            <span class="sugg-del">{t.root.anchor.selection}</span>
+            <span class="sugg-add">{t.root.suggestion.replacement}</span>
+          {:else}
+            {t.root.anchor.selection || '(empty selection)'}
+          {/if}
         </button>
         {#each [t.root, ...t.replies] as c (c.id)}
           <div class="comment">
@@ -84,7 +92,12 @@
             onkeydown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submitReply(t.root.id))}
           />
           {#if !t.root.resolution}
-            <button class="btn-sm" onclick={() => session.resolveComment(t.root.id, 'addressed')}>Resolve</button>
+            {#if t.root.kind === 'suggestion' && t.root.suggestion}
+              <button class="btn-sm btn-primary" disabled={t.root.orphaned} onclick={() => onaccept?.(t.root.id)}>Accept</button>
+              <button class="btn-sm" onclick={() => session.resolveComment(t.root.id, 'wontfix')}>Reject</button>
+            {:else}
+              <button class="btn-sm" onclick={() => session.resolveComment(t.root.id, 'addressed')}>Resolve</button>
+            {/if}
           {:else}
             <span class="resolved-badge">✓ {t.root.resolution}</span>
           {/if}
@@ -155,6 +168,16 @@
     cursor: pointer;
   }
   .thread-quote:hover { background: var(--bg-active); }
+  .thread-quote.is-suggestion {
+    white-space: normal;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: var(--font-mono);
+    border-left-color: var(--green);
+  }
+  .sugg-del { color: var(--red); text-decoration: line-through; }
+  .sugg-add { color: var(--green); }
   .orphan-quote { border-left-color: var(--surface2); background: var(--surface0); cursor: default; }
 
   .comment { padding: 6px 8px; border-top: 1px solid var(--surface0); }

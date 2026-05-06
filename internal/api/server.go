@@ -197,6 +197,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /api/doc-comments", s.handleDocComments)
 	s.Mux.HandleFunc("POST /api/doc-comments", s.handleDocComments)
 	s.Mux.HandleFunc("DELETE /api/doc-comments", s.handleDocComments)
+	s.Mux.HandleFunc("GET /api/agent", s.handleAgentDocs)
 
   // handle file edits
 	s.Mux.HandleFunc("POST /api/file-write", s.handleFileWrite)

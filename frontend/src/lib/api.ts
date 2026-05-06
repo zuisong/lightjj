@@ -257,6 +257,14 @@ export function clearAllCaches(): void {
 // at the top level, no prefix needed).
 let basePath = '/tab/0'
 
+// Absolute base URL for the active tab's API — what an external agent should
+// hit. window.location.origin is correct in production (frontend is served
+// from the API port) and in dev (Vite proxies /tab/* through). For a forwarded
+// port the user copies what they see, which is the forwarded address.
+export function agentBaseURL(): string {
+  return window.location.origin + basePath
+}
+
 export interface TabInfo {
   id: string
   kind: string

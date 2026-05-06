@@ -87,14 +87,17 @@ export function createDocSession(
   // fails (SSH drop, 500) the local state must not silently diverge.
   let mutationError = $state('')
   async function optimistic(apply: () => void, persist: () => Promise<unknown>): Promise<void> {
-    bumpGen()
+    const g = bumpGen()
     const snapshot = comments
     apply()
     mutationError = ''
     try {
       await persist()
     } catch (e) {
-      comments = snapshot
+      // Only roll back if nothing else (import_/onTransaction/another mutation)
+      // has written comments since — restoring a stale snapshot would clobber
+      // remapped positions or a fresh load.
+      if (g === gen) comments = snapshot
       mutationError = e instanceof Error ? e.message : String(e)
     }
   }
@@ -134,6 +137,9 @@ export function createDocSession(
     doc = newDoc
     if (tr.docChanged) {
       version++
+      // Bump gen: this writes comments[], so any in-flight optimistic() rollback
+      // must NOT restore its pre-edit snapshot (positions would be stale).
+      bumpGen()
       comments = comments.map((c) =>
         c.orphaned || c.from === undefined || c.to === undefined
           ? c
@@ -146,9 +152,12 @@ export function createDocSession(
     return doc ? serializeMarkdown(doc) : ''
   }
 
-  async function writeAndAdvance(md: string, commitId: string): Promise<void> {
+  async function writeAndAdvance(md: string, atVersion: number, commitId: string): Promise<void> {
     await api.fileWrite(filePath, md)
-    committedVersion = version
+    // atVersion was captured alongside md at serialize() time — reading live
+    // `version` here would mark a keystroke that landed during the await as
+    // committed, silently dropping it on close.
+    committedVersion = atVersion
     baseContentHash = await sha256Hex(md)
     // Best-effort: the watcher will snapshot post-write and bump @'s commit_id;
     // we record the pre-write id since we can't observe the new one synchronously.
@@ -168,7 +177,8 @@ export function createDocSession(
     try {
       const { content } = await api.fileShow(commitId, filePath)
       if ((await sha256Hex(content)) !== baseContentHash) return 'stale'
-      await writeAndAdvance(serialize(), commitId)
+      const atVersion = version
+      await writeAndAdvance(serialize(), atVersion, commitId)
       return 'ok'
     } finally {
       saving = false
@@ -181,7 +191,8 @@ export function createDocSession(
     if (!commitId) throw new Error('working copy unavailable')
     saving = true
     try {
-      await writeAndAdvance(serialize(), commitId)
+      const atVersion = version
+      await writeAndAdvance(serialize(), atVersion, commitId)
     } finally {
       saving = false
     }
@@ -233,6 +244,16 @@ export function createDocSession(
     )
   }
 
+  // Returns the edit spec for a suggestion; caller (DocView) builds+dispatches
+  // the transaction, then calls resolveComment(id, 'addressed'). Kept pure so
+  // session has no view coupling — DocView owns EditorState.
+  function acceptSuggestion(id: string): { from: number; to: number; replacement: string } | null {
+    const c = comments.find((x) => x.id === id)
+    if (!c || c.kind !== 'suggestion' || c.orphaned || !c.suggestion) return null
+    if (c.from === undefined || c.to === undefined) return null
+    return { from: c.from, to: c.to, replacement: c.suggestion.replacement }
+  }
+
   const orphanedComments = $derived(comments.filter((c) => c.orphaned && !c.parentId))
   const dirty = $derived(version > committedVersion)
 
@@ -257,6 +278,7 @@ export function createDocSession(
     addComment,
     resolveComment,
     removeComment,
+    acceptSuggestion,
   }
 }
 
