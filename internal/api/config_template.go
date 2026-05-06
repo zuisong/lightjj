@@ -22,9 +22,6 @@ const configTemplate = `{
   // Diff viewer: false = unified (one column), true = side-by-side.
   "splitView": false,
 
-  // Disable transitions and animations.
-  "reduceMotion": false,
-
   "fontSize": 13,
 
   // CSS font-family stack for UI text. Empty string = built-in default.
@@ -33,11 +30,8 @@ const configTemplate = `{
   // CSS font-family stack for code, diffs, change IDs.
   "fontMono": "",
 
-  // Markdown preview fonts.
+  // Markdown preview body font (headings inherit; code uses fontMono).
   "fontMdBody": "",
-  "fontMdHeading": "",
-  "fontMdDisplay": "",
-  "fontMdCode": "",
 
   "revisionPanelWidth": 420,
   "evologPanelHeight": 360,

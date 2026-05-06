@@ -20,7 +20,6 @@ export const FONT_SIZE_DEFAULT = 13
 interface Config {
   theme: string  // matches THEMES[].id in themes.ts; legacy 'dark'|'light' values are valid ids
   splitView: boolean
-  reduceMotion: boolean
   /** Base font size in px. The --fs-* scale derives from this. Clamped to
    *  [10,16] at apply time — beyond that --fs-md overflows the fixed 18px
    *  graph row height (virtualization arithmetic assumes it). */
@@ -29,15 +28,9 @@ interface Config {
   fontUI: string
   /** CSS font-family stack for code/diffs. Empty → theme.css default. */
   fontMono: string
-  /** Markdown preview body font. Empty → system-ui. */
+  /** Markdown preview body font (headings inherit it; code uses --font-mono).
+   *  Empty → system-ui. */
   fontMdBody: string
-  /** Markdown preview heading font (h2–h6). Empty → falls through to fontMdBody. */
-  fontMdHeading: string
-  /** Markdown preview display font (h1 only — serif-h1/sans-h2 pairing).
-   *  Empty → falls through to fontMdHeading. */
-  fontMdDisplay: string
-  /** Markdown preview code/pre font. Empty → --font-mono. */
-  fontMdCode: string
   revisionPanelWidth: number
   evologPanelHeight: number
   tutorialVersion: string
@@ -59,14 +52,10 @@ interface Config {
 const defaults: Config = {
   theme: 'dark',
   splitView: false,
-  reduceMotion: false,
   fontSize: 13,
   fontUI: '',
   fontMono: '',
   fontMdBody: '',
-  fontMdHeading: '',
-  fontMdDisplay: '',
-  fontMdCode: '',
   revisionPanelWidth: 420,
   evologPanelHeight: 360,
   tutorialVersion: '',
@@ -262,9 +251,6 @@ function createConfig() {
     get splitView() { return state.splitView },
     set splitView(v: boolean) { state.splitView = v },
 
-    get reduceMotion() { return state.reduceMotion },
-    set reduceMotion(v: boolean) { state.reduceMotion = v },
-
     // Getter clamps so every read site (CSS var, palette label, ±1 arithmetic)
     // sees a sane value regardless of how it was loaded — applyKey/loadLocal
     // write state directly, bypassing the setter. Number() coerces "14" and
@@ -285,15 +271,6 @@ function createConfig() {
 
     get fontMdBody() { return state.fontMdBody },
     set fontMdBody(v: string) { state.fontMdBody = v },
-
-    get fontMdHeading() { return state.fontMdHeading },
-    set fontMdHeading(v: string) { state.fontMdHeading = v },
-
-    get fontMdDisplay() { return state.fontMdDisplay },
-    set fontMdDisplay(v: string) { state.fontMdDisplay = v },
-
-    get fontMdCode() { return state.fontMdCode },
-    set fontMdCode(v: string) { state.fontMdCode = v },
 
     get revisionPanelWidth() { return state.revisionPanelWidth },
     set revisionPanelWidth(v: number) { state.revisionPanelWidth = v },

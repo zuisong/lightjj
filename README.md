@@ -12,6 +12,7 @@ A fast, powerful UI for Jujutsu VCS didn't exist, so I built one! In addition to
 - Smart divergence resolution
 - File history
 - Review diffs with markdown preview, annotate lines with severity and comments, export to agent prompt, repeat
+- Open markdown as a live document — WYSIWYG editing, range-anchored comments, agents post suggestions you accept inline
 - Works everywhere — locally, over SSH, or port-forwarded
 - Multi-repo, multi-workspace support
 
@@ -25,6 +26,7 @@ A fast, powerful UI for Jujutsu VCS didn't exist, so I built one! In addition to
 - **Op log & evolog** — full operation history with undo/restore, per-revision evolution with inter-diffs
 - **File history** — right-click any diff line, two-cursor compare (j/k + Space to pin), scoped to mutable for speed
 - **Inline annotations** — per-line review comments keyed by `change_id`; auto-re-anchor on rewrite; export markdown/JSON
+- **Doc mode** — open any `.md` as a ProseMirror document (`Doc` button in the file header). View/Edit toggle, mermaid blocks render with a per-block source toggle, content-addressed comments that survive edits. Coding agents can `POST` suggestions to the same store via plain HTTP — `Agent hint` copies the URL, `GET /api/agent` documents the schema. Accept/Reject inline; Save commits back to `@` with stale-detection.
 - **Stale-WC detection** — concurrent CLI op left the working copy stale? Warning bar with one-click recovery
 - **Themes** — 7 hand-tuned builtins + 486 derived from Ghostty's palette set; `t` toggles dark/light, full picker in Cmd+K
 
@@ -82,7 +84,7 @@ SSH proxy mode adds ~400ms per command (reduce to ~20ms with ControlMaster). Aut
 | ------- | --------------------- | -------------------------------------------------------------------------------------------- |
 | **1.0** | Ship-ready core       | done                                                                                         |
 | **2.0** | Code editing & review | Mega-file virtualization, cross-revision search, N-way conflict resolution, LSP-in-FileEditor |
-| **3.0** | Agentic               | Annotations as a library, agent-writable API, MCP server mode                                |
+| **3.0** | Agentic               | Doc-mode unread badges, annotations as a library, MCP server mode                            |
 
 ## Requirements
 

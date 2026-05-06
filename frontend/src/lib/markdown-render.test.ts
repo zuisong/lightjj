@@ -13,7 +13,8 @@ vi.mock('beautiful-mermaid', () => ({
     return `<svg data-src="${src.slice(0, 20)}"></svg>`
   }),
 }))
-import { renderMarkdown, renderMarkdownAnnotated, ensureMermaidLoaded, wirePanzoom, stampedBlocks } from './markdown-render'
+import { renderMarkdown, renderMarkdownAnnotated, stampedBlocks } from './markdown-render'
+import { ensureMermaidLoaded, wirePanzoom } from './mermaid'
 
 
 describe('renderMarkdown', () => {

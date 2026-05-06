@@ -1,10 +1,10 @@
-// Line-level LCS diff for merge-pane highlighting. Same LCS backbone as
-// word-diff.ts but operates on whole lines (one token = one line). Returns
-// 1-indexed line numbers (CM6's Decoration.line convention).
+// ChangeBlock model + line-set expansion for merge-pane highlighting.
 //
-// O(m*n) DP — bails on oversized inputs. Practical limit: a 1000-line file
-// vs a 1000-line file = 1M cells × 4 bytes = 4MB, still fine. Threshold set
-// higher than word-diff's MAX_TOKENS (lines are the unit, not words).
+// `diffBlocks` (line-level LCS) has NO production callers — conflict-extract.ts
+// builds `sides.blocks` at parse time from jj's marker structure, which is
+// exact. The LCS stays as a test-fixture generator (merge-surgery.test.ts /
+// MergePanel.test.ts construct synthetic ours/theirs and need a ChangeBlock[]
+// without round-tripping through conflict-marker text).
 
 const MAX_CELLS = 2_000_000
 
@@ -75,8 +75,7 @@ export function diffBlocks(a: string[], b: string[]): ChangeBlock[] {
   return blocks.reverse()
 }
 
-/** Expand blocks into line-number sets. Derives from diffBlocks() — no second
- *  LCS pass. Callers needing both should call diffBlocks once, then this. */
+/** Expand blocks into line-number sets for CM6 line decorations. */
 export function blocksToLineSets(blocks: ChangeBlock[]): LineDiff {
   const aOnly = new Set<number>()
   const bOnly = new Set<number>()
@@ -85,9 +84,4 @@ export function blocksToLineSets(blocks: ChangeBlock[]): LineDiff {
     for (let i = b.bFrom; i < b.bTo; i++) bOnly.add(i)
   }
   return { aOnly, bOnly }
-}
-
-/** Convenience — single call when blocks aren't needed separately. */
-export function diffLineSets(a: string[], b: string[]): LineDiff {
-  return blocksToLineSets(diffBlocks(a, b))
 }

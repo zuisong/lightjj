@@ -34,10 +34,20 @@ function buildTextMap(doc: Node) {
       text += node.text
     }
   })
-  const toPM = (off: number): number => {
+  // toPM: at a segment boundary (off == prev.end == next.start) the two
+  // candidate PM positions can live in different structural parents (table
+  // cell, list item, heading). bias=1 ("from") wants next segment's start,
+  // bias=-1 ("to") wants prev segment's end — otherwise tr.insertText spans
+  // the node boundary and restructures the tree (observed: table suggestion
+  // landing in the wrong column; suffix-of-paragraph eating the next heading).
+  const toPM = (off: number, bias: 1 | -1): number => {
+    let prevEnd = -1
     for (const s of segs) {
-      if (off >= s.t && off <= s.t + s.len) return s.p + (off - s.t)
+      if (off === s.t && bias < 0 && prevEnd >= 0) return prevEnd
+      if (off >= s.t && off < s.t + s.len) return s.p + (off - s.t)
+      if (off === s.t + s.len) prevEnd = s.p + s.len
     }
+    if (prevEnd >= 0) return prevEnd
     return doc.content.size
   }
   const toText = (pm: number): number => {
@@ -48,7 +58,19 @@ function buildTextMap(doc: Node) {
     }
     return nearest
   }
-  return { text, toPM, toText }
+  // Single placement helper so import_ + refreshComments stay in lockstep on
+  // bias semantics. Zero-width hits (refind Stage-3) use ONE bias for both
+  // ends — opposite biases at a boundary would yield from > to.
+  const place = (hit: { from: number; to: number }) => {
+    const from = toPM(hit.from, 1)
+    const to = hit.to === hit.from ? from : toPM(hit.to, -1)
+    return { from, to: Math.max(from, to) }
+  }
+  return { text, toPM, toText, place }
+}
+
+function anchorEq(a: import('./api').DocAnchor, b: import('./api').DocAnchor): boolean {
+  return a.selection === b.selection && a.contextBefore === b.contextBefore && a.contextAfter === b.contextAfter
 }
 
 async function sha256Hex(s: string): Promise<string> {
@@ -115,9 +137,7 @@ export function createDocSession(
     const stored = await api.docComments.list(filePath)
     const placed: PlacedComment[] = stored.map((c) => {
       const hit = refind(c.anchor, tm.text)
-      return hit
-        ? { ...c, from: tm.toPM(hit.from), to: tm.toPM(hit.to), orphaned: false }
-        : { ...c, orphaned: true }
+      return hit ? { ...c, ...tm.place(hit), orphaned: false } : { ...c, orphaned: true }
     })
     return { commitId, content, doc, placed }
   }, null)
@@ -155,11 +175,19 @@ export function createDocSession(
     }
     if (g !== gen || inFlightMutation > 0 || !doc) return
     const tm = buildTextMap(doc)
+    // Preserve existing local placement for known ids whose anchor is unchanged
+    // — onTransaction has been remapping their from/to through every edit,
+    // which is exact. Re-running refind would orphan accepted suggestions
+    // (stored selection no longer exists). New ids OR same id with a changed
+    // anchor (agent re-upsert to move a comment) fall through to refind.
+    const local = new Map(comments.map((c) => [c.id, c]))
     comments = stored.map((c) => {
+      const prev = local.get(c.id)
+      if (prev && prev.from !== undefined && anchorEq(prev.anchor, c.anchor)) {
+        return { ...c, from: prev.from, to: prev.to, orphaned: prev.orphaned }
+      }
       const hit = refind(c.anchor, tm.text)
-      return hit
-        ? { ...c, from: tm.toPM(hit.from), to: tm.toPM(hit.to), orphaned: false }
-        : { ...c, orphaned: true }
+      return hit ? { ...c, ...tm.place(hit), orphaned: false } : { ...c, orphaned: true }
     })
   }
 
@@ -280,11 +308,14 @@ export function createDocSession(
   function acceptSuggestion(id: string): { from: number; to: number; replacement: string } | null {
     const c = comments.find((x) => x.id === id)
     if (!c || c.kind !== 'suggestion' || c.orphaned || !c.suggestion) return null
-    if (c.from === undefined || c.to === undefined) return null
+    if (c.from === undefined || c.to === undefined || c.from > c.to) return null
     return { from: c.from, to: c.to, replacement: c.suggestion.replacement }
   }
 
-  const orphanedComments = $derived(comments.filter((c) => c.orphaned && !c.parentId))
+  // Resolved-but-orphaned isn't actionable — the user already acted on it; the
+  // anchor is by definition stale (Accept replaced its selection). Surfacing it
+  // in the orphan drawer reads as a regression.
+  const orphanedComments = $derived(comments.filter((c) => c.orphaned && !c.parentId && !c.resolution))
   const dirty = $derived(version > committedVersion)
 
   return {

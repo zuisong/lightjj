@@ -7,16 +7,19 @@
   import { baseKeymap } from 'prosemirror-commands'
   import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
   import { docSchema } from './pm-schema'
+  import { mermaidNodeViews } from './pm-mermaid'
   import type { DocSession } from './doc-session.svelte'
 
   let {
     session,
     editable = false,
+    focusedComment = null,
     onaddcomment,
     onsave,
   }: {
     session: DocSession
     editable?: boolean
+    focusedComment?: string | null
     onaddcomment?: (from: number, to: number, x: number, y: number) => void
     onsave?: () => void
   } = $props()
@@ -52,7 +55,9 @@
       .filter((c) => !c.parentId && !c.orphaned && c.from !== undefined && c.to !== undefined && c.from < c.to)
       .map((c) =>
         Decoration.inline(c.from!, c.to!, {
-          class: c.resolution ? 'doc-comment-hl resolved' : 'doc-comment-hl',
+          class:
+            (c.resolution ? 'doc-comment-hl resolved' : 'doc-comment-hl') +
+            (c.id === focusedComment ? ' focused' : ''),
           'data-comment-id': c.id,
         }),
       )
@@ -76,6 +81,7 @@
       view = new EditorView(mount, {
         state: EditorState.create({ schema: docSchema, doc: d, plugins: editPlugins }),
         editable: () => editable,
+        nodeViews: mermaidNodeViews,
         decorations: () => decoSet,
         dispatchTransaction: (tr) => {
           if (!view) return
@@ -147,10 +153,10 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="doc-view" bind:this={mount} onmouseup={handleMouseUp} role="document">
+<div class="doc-view prose" bind:this={mount} onmouseup={handleMouseUp} role="document">
   {#if affordance}
     <button
-      class="btn-sm doc-add-comment"
+      class="btn btn-sm doc-add-comment"
       style:left="{affordance.x + 6}px"
       style:top="{affordance.y}px"
       onclick={handleAddClick}
@@ -167,44 +173,14 @@
     height: 100%;
     overflow-y: auto;
     padding: 24px 32px;
-    font-family: var(--font-ui);
-    font-size: var(--fs-md);
-    line-height: 1.6;
-    color: var(--text);
   }
+  /* Typography comes from theme.css .prose. Here: PM-specific layout only. */
   .doc-view :global(.ProseMirror) {
     outline: none;
-    max-width: 760px;
+    max-width: 920px;
     margin: 0 auto;
   }
-  .doc-view :global(.ProseMirror h1) { font-size: var(--fs-xl); margin: 1.2em 0 0.4em; }
-  .doc-view :global(.ProseMirror h2) { font-size: var(--fs-lg); margin: 1.2em 0 0.4em; }
-  .doc-view :global(.ProseMirror h3) { font-size: var(--fs-md); margin: 1em 0 0.3em; font-weight: 600; }
-  .doc-view :global(.ProseMirror p) { margin: 0.5em 0; }
-  .doc-view :global(.ProseMirror code) {
-    font-family: var(--font-mono);
-    font-size: 0.92em;
-    background: var(--surface0);
-    padding: 1px 4px;
-    border-radius: 3px;
-  }
-  .doc-view :global(.ProseMirror pre) {
-    font-family: var(--font-mono);
-    background: var(--surface0);
-    padding: 10px 12px;
-    border-radius: 4px;
-    overflow-x: auto;
-  }
-  .doc-view :global(.ProseMirror pre code) { background: none; padding: 0; }
-  .doc-view :global(.ProseMirror blockquote) {
-    border-left: 3px solid var(--surface2);
-    margin: 0.5em 0;
-    padding: 0 0 0 12px;
-    color: var(--subtext0);
-  }
-  .doc-view :global(.ProseMirror hr) { border: none; border-top: 1px solid var(--surface1); margin: 1.5em 0; }
-  .doc-view :global(.ProseMirror ul),
-  .doc-view :global(.ProseMirror ol) { padding-left: 24px; margin: 0.4em 0; }
+  .doc-view :global(.ProseMirror > :first-child) { margin-top: 0; }
 
   .doc-view :global(.doc-comment-hl) {
     background: var(--bg-warning);
@@ -215,10 +191,40 @@
     background: var(--surface0);
     border-bottom: 1px dotted var(--subtext0);
   }
+  .doc-view :global(.doc-comment-hl.focused) {
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+    background: var(--bg-active);
+    border-radius: 2px;
+  }
+
+  .doc-view :global(.pm-mermaid) {
+    position: relative;
+    border: 1px solid var(--surface1);
+    border-radius: 4px;
+    margin: 12px 0;
+  }
+  .doc-view :global(.pm-mermaid-toggle) {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 2;
+    font-family: var(--font-ui);
+  }
+  .doc-view :global(.pm-mermaid-src) {
+    margin: 0;
+    padding: 8px;
+    display: none;
+  }
+  .doc-view :global(.pm-mermaid.show-source .pm-mermaid-src) { display: block; }
+  .doc-view :global(.pm-mermaid.show-source .mermaid-block) { display: none; }
 
   .doc-add-comment {
     position: absolute;
     z-index: 5;
     white-space: nowrap;
+    /* .prose sets weight 370 / fs-lg on the container; reassert UI chrome. */
+    font-family: var(--font-ui);
+    font-weight: 500;
   }
 </style>

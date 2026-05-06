@@ -90,15 +90,19 @@ function findIn(text: string, sel: string, before: string, after: string): FindR
   if (hits.length === 1) return { from: hits[0], to: hits[0] + sel.length }
   let best = -1
   let bestScore = -1
+  let tied = false
   const a: Anchor = { selection: sel, contextBefore: before, contextAfter: after }
   for (const h of hits) {
     const s = contextScore(a, text, h, h + sel.length)
     if (s > bestScore) {
       bestScore = s
       best = h
+      tied = false
+    } else if (s === bestScore) {
+      tied = true
     }
   }
-  if (bestScore >= 0.7) return { from: best, to: best + sel.length }
+  if (!tied && bestScore >= 0.7) return { from: best, to: best + sel.length }
   return 'ambiguous'
 }
 

@@ -5,10 +5,12 @@
   let {
     session,
     onjump,
+    onhover,
     onaccept,
   }: {
     session: DocSession
     onjump?: (pmPos: number) => void
+    onhover?: (id: string | null) => void
     onaccept?: (id: string) => void
   } = $props()
 
@@ -61,7 +63,13 @@
 
   <div class="rail-body">
     {#each threads as t (t.root.id)}
-      <div class="thread" class:resolved={!!t.root.resolution}>
+      <!-- svelte-ignore a11y_no_static_element_interactions a11y_mouse_events_have_key_events -->
+      <div
+        class="thread"
+        class:resolved={!!t.root.resolution}
+        onmouseenter={() => onhover?.(t.root.id)}
+        onmouseleave={() => onhover?.(null)}
+      >
         <button
           class="thread-quote"
           class:is-suggestion={t.root.kind === 'suggestion'}
@@ -99,7 +107,10 @@
               <button class="btn btn-sm" onclick={() => session.resolveComment(t.root.id, 'addressed')}>Resolve</button>
             {/if}
           {:else}
-            <span class="resolved-badge">✓ {t.root.resolution}</span>
+            <span class="resolved-badge" class:wontfix={t.root.resolution === 'wontfix'}>{t.root.resolution === 'wontfix' ? '✗' : '✓'} {t.root.resolution}</span>
+            {#if t.root.kind === 'suggestion' && t.root.resolution === 'addressed'}
+              <button class="btn btn-sm" onclick={() => session.resolveComment(t.root.id, 'wontfix')} title="Mark rejected instead (text change stays — ⌘Z in the editor to undo it)">Reject</button>
+            {/if}
           {/if}
           <button class="btn btn-sm btn-danger" onclick={() => session.removeComment(t.root.id)} title="Delete thread (and replies)">✕</button>
         </div>
@@ -176,8 +187,14 @@
     font-family: var(--font-mono);
     border-left-color: var(--green);
   }
+  .sugg-del, .sugg-add {
+    display: block;
+    overflow-wrap: break-word;
+  }
   .sugg-del { color: var(--red); text-decoration: line-through; }
   .sugg-add { color: var(--green); }
+  .orphan-header { margin-top: 12px; }
+  .orphan-header .panel-title { color: var(--amber); }
   .orphan-quote { border-left-color: var(--surface2); background: var(--surface0); cursor: default; }
 
   .comment { padding: 6px 8px; border-top: 1px solid var(--surface0); }
@@ -197,6 +214,7 @@
   }
   .reply-input { flex: 1; font-size: var(--fs-xs); padding: 2px 6px; }
   .resolved-badge { font-size: var(--fs-2xs); color: var(--green); }
+  .resolved-badge.wontfix { color: var(--subtext0); }
 
   .orphan-header { margin-top: 12px; }
 

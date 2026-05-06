@@ -339,6 +339,7 @@
   let docEditable = $state(false)
   let docStale = $state(false)
   let docAgentPopover = $state(false)
+  let docFocusedComment: string | null = $state(null)
   // Poll for agent-posted comments while doc-mode is open. refreshComments()
   // re-places against the current doc (no version reset, safe while dirty) and
   // skips while a local mutation is in flight, so this never clobbers user
@@ -421,6 +422,7 @@
     docEditable = false
     docStale = false
     docAgentPopover = false
+    docFocusedComment = null
     docCommentDraft = null
     docSession = createDocSession(path, () => workingCopyEntry?.commit.commit_id)
     void docSession.import_().catch(e => setMessage(errorMessage(e)))
@@ -431,6 +433,7 @@
     docSession = null
     docStale = false
     docAgentPopover = false
+    docFocusedComment = null
     docCommentDraft = null
     switchToLogView()
   }
@@ -503,8 +506,7 @@
   let ghosttyThemes = $state<GhosttyTheme[]>([])
 
   // Own $derived — keyed only on config.theme + ghosttyThemes so the 493
-  // children DON'T rebuild on Space-spam / pullRequests / reduceMotion (which
-  // dynamicCommands depends on).
+  // children DON'T rebuild on Space-spam / pullRequests (dynamicCommands deps).
   let themeSubmenuCommand = $derived<PaletteCommand>({
     label: 'Theme…', category: 'View', showInCheatsheet: true,
     hint: [...THEMES, ...ghosttyThemes].find(t => t.id === config.theme)?.label,
@@ -515,8 +517,6 @@
     })),
   })
 
-  // Theme application — split from reduceMotion so toggling that doesn't
-  // re-inject the ghostty <style> (O(486) find + stylesheet reparse).
   // `void ghosttyThemes` re-fires after lazy load (applyGhosttyTheme reads
   // non-reactive module state). .theme-switching for one frame suppresses
   // .btn/.seg color transitions animating old→new theme values.
@@ -533,20 +533,14 @@
     requestAnimationFrame(() => requestAnimationFrame(() =>
       root.classList.remove('theme-switching')))
   })
-  $effect(() => {
-    document.documentElement.classList.toggle('reduce-motion', config.reduceMotion)
-  })
   // Typography. setProperty on :root overrides the theme.css defaults (inline
   // style > stylesheet); removeProperty falls back to them. Empty string = "use
   // default", so a hand-edited config.json with the key absent and one with ""
   // behave identically. Clamping lives in the config.fontSize getter.
   const FONT_VARS = [
-    ['--font-ui',         () => config.fontUI],
-    ['--font-mono',       () => config.fontMono],
-    ['--font-md-body',    () => config.fontMdBody],
-    ['--font-md-heading', () => config.fontMdHeading],
-    ['--font-md-display', () => config.fontMdDisplay],
-    ['--font-md-code',    () => config.fontMdCode],
+    ['--font-ui',      () => config.fontUI],
+    ['--font-mono',    () => config.fontMono],
+    ['--font-md-body', () => config.fontMdBody],
   ] as const
   $effect(() => {
     const s = document.documentElement.style
@@ -803,7 +797,6 @@
     { label: `New from ${checkedRevisions.size} checked`, category: 'Revisions', action: handleNewFromChecked, when: () => !inlineMode && checkedRevisions.size > 0 },
     { label: darkMode ? 'Light theme' : 'Dark theme', shortcut: 't', category: 'View', action: toggleTheme },
     themeSubmenuCommand,
-    { label: config.reduceMotion ? 'Enable animations' : 'Reduce motion', category: 'View', action: () => { config.reduceMotion = !config.reduceMotion } },
     { label: `Font size: increase (${config.fontSize}px)`, category: 'View', action: () => { config.fontSize += 1 }, when: () => config.fontSize < FONT_SIZE_MAX },
     { label: `Font size: decrease (${config.fontSize}px)`, category: 'View', action: () => { config.fontSize -= 1 }, when: () => config.fontSize > FONT_SIZE_MIN },
     { label: 'Font size: reset', category: 'View', action: () => { config.fontSize = FONT_SIZE_DEFAULT }, when: () => config.fontSize !== FONT_SIZE_DEFAULT },
@@ -2808,6 +2801,7 @@
                     bind:this={docViewRef}
                     session={docSession}
                     editable={docEditable}
+                    focusedComment={docFocusedComment}
                     onsave={handleDocCommit}
                     onaddcomment={(from, to, x, y) => {
                       docCommentDraft = { from, to, x, y }
@@ -2816,6 +2810,7 @@
                   />
                   <DocCommentRail
                     session={docSession}
+                    onhover={(id) => docFocusedComment = id}
                     onjump={(pos) => docViewRef?.scrollTo(pos)}
                     onaccept={(id) => {
                       const spec = docSession?.acceptSuggestion(id)
@@ -3500,6 +3495,9 @@
     min-width: 0;
     overflow: auto;
   }
+  .doc-mode-header {
+    gap: 12px;
+  }
   .doc-mode-path {
     font-family: var(--font-mono);
     font-size: var(--fs-sm);
@@ -3533,6 +3531,7 @@
   }
   .doc-dirty {
     color: var(--amber);
+    margin-left: 4px;
   }
   .doc-banner {
     display: flex;

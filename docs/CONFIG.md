@@ -12,14 +12,10 @@ The config file lives in your local config directory regardless of mode — only
 |---|---|---|---|
 | `theme` | `string` | `"dark"` | Theme id — one of 7 builtins (`dark`, `light`, `nord`, `gruvbox-dark`, `dracula`, `tokyo-night`, `rose-pine`) or any Ghostty theme slug |
 | `splitView` | `boolean` | `false` | Diff viewer: unified vs side-by-side |
-| `reduceMotion` | `boolean` | `false` | Disable transitions/animations |
 | `fontSize` | `number` | `13` | Base font size in px (clamped 10–16). All UI text scales relative to this — see [Typography](#typography) |
 | `fontUI` | `string` | `""` | CSS `font-family` stack for UI text. Empty = built-in default |
 | `fontMono` | `string` | `""` | CSS `font-family` stack for code, diffs, change IDs. Empty = built-in default |
-| `fontMdBody` | `string` | `""` | Markdown preview body text. Empty = `system-ui` |
-| `fontMdHeading` | `string` | `""` | Markdown preview headings. Empty = inherits `fontMdBody` |
-| `fontMdDisplay` | `string` | `""` | Markdown preview h1 only. Empty = inherits `fontMdHeading` (so a serif h1 with sans h2–h6 is one line of config) |
-| `fontMdCode` | `string` | `""` | Markdown preview `code`/`pre`. Empty = inherits `fontMono` |
+| `fontMdBody` | `string` | `""` | Markdown preview body text (headings inherit; `code`/`pre` use `fontMono`). Empty = `system-ui` |
 | `revisionPanelWidth` | `number` | `420` | Revision panel width in px |
 | `evologPanelHeight` | `number` | `360` | Evolog panel height in px |
 | `tutorialVersion` | `string` | `""` | Last-seen "what's new" version; managed by the UI |
@@ -42,12 +38,11 @@ The upper clamp (`16`) exists because graph rows and diff lines have a fixed `18
   "fontSize": 14,
   "fontUI": "'SF Pro Text', system-ui, sans-serif",
   "fontMono": "'Berkeley Mono', 'JetBrains Mono', monospace",
-  "fontMdBody": "'Charter', 'Georgia', serif",
-  "fontMdHeading": "'Inter', sans-serif"
+  "fontMdBody": "'Charter', 'Georgia', serif"
 }
 ```
 
-Markdown preview fonts are intentionally separate from `fontUI` — prose reads better in a book-style face than a UI font. `fontMdHeading` defaults to `fontMdBody` (set just one for matched serif headings) and `fontMdCode` defaults to `fontMono` (so diffs and code blocks match).
+Markdown preview body is intentionally separate from `fontUI` — prose reads better in a book-style face than a UI font. Headings inherit it; code blocks use `fontMono`.
 
 The font must be installed locally — lightjj does not download webfonts. From the UI: **Cmd+K → "Font size"** for increase/decrease/reset; font families are config-file only.
 

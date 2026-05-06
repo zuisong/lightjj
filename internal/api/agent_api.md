@@ -54,7 +54,24 @@ Matching is **lenient on markdown syntax and whitespace**: the characters
 before comparison, so anchor against rendered prose and
 don't worry about whether `**bold**` or a paragraph break falls inside the
 window. If `selection` is unique it lands exactly; context disambiguates
-duplicates; if the text was deleted the comment shows as "orphaned".
+duplicates; if the text was deleted the comment shows as "orphaned". A tied
+context score also orphans (rather than guess).
+
+**Anchor against what renders, not what's in the source.** Link/image URLs,
+HTML comments, and table pipes are not in the matched text — only link *text*
+is. For `[race.png](205-race-a.png)` in a table row, this works:
+
+```jsonc
+{ "selection": "Reference",
+  "contextBefore": "solves it · race.png" }   // link text ✓
+```
+
+and this orphans:
+
+```jsonc
+{ "selection": "Reference",
+  "contextBefore": "205-race-a.png) | " }     // URL + table pipe ✗
+```
 
 ## Post a comment
 

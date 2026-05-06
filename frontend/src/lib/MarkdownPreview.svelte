@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import { ensureMermaidLoaded } from './markdown-render'
+  import { ensureMermaidLoaded } from './mermaid'
   // Module-level: the lazy chunk loads once. Per-instance $state(false) was
   // forcing a SECOND full marked.parse on every mount-after-first (the .then
   // microtask flips it after html already computed correctly).
@@ -8,7 +8,8 @@
 </script>
 
 <script lang="ts">
-  import { renderMarkdown, renderMarkdownAnnotated, wirePanzoom, stampedBlocks, type PreviewContext } from './markdown-render'
+  import { renderMarkdown, renderMarkdownAnnotated, stampedBlocks, type PreviewContext } from './markdown-render'
+  import { wirePanzoom } from './mermaid'
   import type { Annotation } from './api'
 
   interface Props {
@@ -154,7 +155,7 @@
 
 </script>
 
-<div class="md-preview">
+<div class="md-preview prose">
   {#if annotationsForLine}
     <div class="md-hint"><kbd class="nav-hint">Alt</kbd>+click any block to annotate</div>
   {/if}
@@ -224,20 +225,12 @@
 </div>
 
 <style>
+  /* Typography (font, leading, h1-6/code/table/etc) comes from theme.css
+     .prose — shared with DocView. Here: layout + preview-specific overrides. */
   .md-preview {
     padding: 20px 24px 40px 0;
-    font-family: var(--font-md-body);
-    font-size: var(--fs-lg);
-    /* Prose rhythm: 1.72 leading + weight 370. 370 rounds to 400 on
-       non-variable fonts (graceful); with a variable face it's the "designed"
-       look. 920px ≈ 70ch — classic readable measure (was 1100/90ch). */
-    line-height: 1.72;
-    font-weight: 370;
-    color: var(--text);
     max-width: 920px;
     margin: 0 auto;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
   .md-body {
     position: relative;  /* anchor for .md-gutter absolute */
@@ -278,92 +271,12 @@
     overflow-wrap: break-word;
   }
   .md-preview :global(h1), .md-preview :global(h2), .md-preview :global(h3),
-  .md-preview :global(h4), .md-preview :global(h5), .md-preview :global(h6) {
-    font-family: var(--font-md-heading);
-    font-weight: 600;
-    line-height: 1.25;
-    margin: 1.5em 0 0.5em;
+  .md-preview :global(h4), .md-preview :global(h5), .md-preview :global(h6),
+  .md-preview :global([id^="fn"]) {
     /* scrollIntoView({block:'start'}) + footnote # links would land under
        DiffFileView's sticky .diff-file-header (~33px) without this. */
     scroll-margin-top: 40px;
   }
-  /* h1 alone gets the display face + tighter tracking. h2 stays
-     --font-md-heading but with the in-between 650 weight that variable
-     fonts expose. */
-  .md-preview :global(h1) {
-    font-family: var(--font-md-display);
-    font-size: 2em;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
-  .md-preview :global(h2) {
-    font-size: 1.5em;
-    font-weight: 650;
-    letter-spacing: -0.01em;
-  }
-  .md-preview :global(h3) { font-size: 1.25em; }
-  .md-preview :global(h4) { font-size: 1em; }
-  .md-preview :global(h5) { font-size: 0.875em; }
-  .md-preview :global(h6) { font-size: 0.85em; color: var(--subtext0); }
-  .md-preview :global(h1), .md-preview :global(h2) {
-    border-bottom: 1px solid var(--surface1);
-    padding-bottom: 0.3em;
-  }
-  .md-preview :global([id^="fn"]) { scroll-margin-top: 40px; }
-  .md-preview :global(code) {
-    background: var(--surface0);
-    padding: 0.15em 0.35em;
-    border-radius: 3px;
-    font-family: var(--font-md-code);
-    font-size: 0.9em;
-  }
-  .md-preview :global(pre) {
-    background: var(--surface0);
-    padding: 14px 16px;
-    border-radius: 8px;
-    overflow-x: auto;
-    line-height: 1.55;
-  }
-  .md-preview :global(pre code) {
-    background: none;
-    padding: 0;
-  }
-  .md-preview :global(blockquote) {
-    border-left: 3px solid var(--overlay0);
-    margin-left: 0;
-    padding-left: 12px;
-    color: var(--overlay0);
-  }
-  .md-preview :global(table) {
-    border-collapse: collapse;
-    margin: 1em 0;
-    /* Wide tables would be clipped by contain:paint — display:block lets
-       overflow-x scroll. (table-layout stays auto; cells size normally.) */
-    display: block;
-    overflow-x: auto;
-    max-width: 100%;
-  }
-  .md-preview :global(th) {
-    text-align: left;
-    padding: 8px 12px;
-    border-bottom: 2px solid var(--surface2);
-    background: var(--surface0);
-    font-weight: 600;
-  }
-  .md-preview :global(td) {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--surface1);
-  }
-  .md-preview :global(tbody tr:nth-child(even)) {
-    background: color-mix(in srgb, var(--surface0) 40%, transparent);
-  }
-  .md-preview :global(a) {
-    color: var(--blue);
-    text-decoration: none;
-    font-weight: 450;
-  }
-  .md-preview :global(a:hover) { text-decoration: underline; }
-  .md-preview :global(li) { margin-bottom: 4px; }
   .md-preview :global(img) {
     /* contain:paint on .md-content silently CLIPS overflow — without this,
        wide screenshots lose their right edge with no scrollbar. */

@@ -19,12 +19,8 @@
   --anim-ease: cubic-bezier(0.2, 0, 0.2, 1);
 }
 
-/* Disable animations globally for reduced-motion preference or config */
 @media (prefers-reduced-motion: reduce) {
   :root { --anim-duration: 0ms; }
-}
-.reduce-motion {
-  --anim-duration: 0ms;
 }
 /* One-frame class during theme swap — stops .btn etc from animating
    old-theme-color → new-theme-color over 150ms (perceived as a flash). */
@@ -72,14 +68,8 @@ body {
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
   /* Markdown preview is content, not chrome — system-ui (GitHub's choice) reads
-     better as prose than --font-ui. Heading defaults to body so setting only
-     fontMdBody cascades. Code defaults to --font-mono so diffs/preview match. */
+     better as prose than --font-ui. Headings inherit it; code uses --font-mono. */
   --font-md-body: system-ui, -apple-system, sans-serif;
-  --font-md-heading: var(--font-md-body);
-  /* h1-only display face (serif h1, sans h2–h6). Cascades to heading so
-     setting fontMdBody alone still flows through all four. */
-  --font-md-display: var(--font-md-heading);
-  --font-md-code: var(--font-mono);
 
   /* Typography scale. --font-size is the config override hook (App.svelte sets
      it via root.style.setProperty); the --fs-* derived sizes are what
@@ -441,6 +431,87 @@ body {
    at small sizes, inverting the hierarchy). */
 .placeholder-text {
   color: var(--overlay0);
+}
+
+/* Rendered-markdown typography. Shared by MarkdownPreview (marked → {@html})
+   and DocView (ProseMirror toDOM) — both emit raw <h1>/<p>/<table>/etc into a
+   .prose container. Keep ONLY element-level prose rules here; container layout
+   (padding, max-width, contain:paint) stays per-component. */
+.prose {
+  font-family: var(--font-md-body);
+  font-size: var(--fs-lg);
+  /* 1.72 leading + 370 weight ≈ book-prose rhythm. 370 rounds to 400 on
+     non-variable faces; with a variable font it's the designed look. */
+  line-height: 1.72;
+  font-weight: 370;
+  color: var(--text);
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.5em 0 0.5em;
+}
+.prose h1 {
+  font-size: 2em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.prose h2 { font-size: 1.5em; font-weight: 650; letter-spacing: -0.01em; }
+.prose h3 { font-size: 1.25em; }
+.prose h4 { font-size: 1em; }
+.prose h5 { font-size: 0.875em; }
+.prose h6 { font-size: 0.85em; color: var(--subtext0); }
+.prose h1, .prose h2 {
+  border-bottom: 1px solid var(--surface1);
+  padding-bottom: 0.3em;
+}
+.prose p { margin: 0.5em 0; }
+.prose a { color: var(--blue); text-decoration: none; font-weight: 450; }
+.prose a:hover { text-decoration: underline; }
+.prose code {
+  background: var(--surface0);
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.prose pre {
+  background: var(--surface0);
+  padding: 14px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  line-height: 1.55;
+}
+.prose pre code { background: none; padding: 0; }
+.prose blockquote {
+  border-left: 3px solid var(--overlay0);
+  margin-left: 0;
+  padding-left: 12px;
+  color: var(--overlay0);
+}
+.prose hr { border: none; border-top: 1px solid var(--surface1); margin: 1.5em 0; }
+.prose ul, .prose ol { padding-left: 24px; margin: 0.4em 0; }
+.prose li { margin-bottom: 4px; }
+.prose table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.prose th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--surface2);
+  background: var(--surface0);
+  font-weight: 600;
+}
+.prose td { padding: 8px 12px; border-bottom: 1px solid var(--surface1); }
+.prose tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface0) 40%, transparent);
 }
 
 /* Subtle keyboard hint shown next to panel titles (Revisions, Evolog, etc.).

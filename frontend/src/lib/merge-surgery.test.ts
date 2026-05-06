@@ -339,8 +339,8 @@ describe('planTake — round-trip (take-ours → take-theirs = identity)', () =>
 // Multi-block round-trip through diffBlocks → planTake. Covers shapes the
 // single-block roundTrip above misses (adjacent blocks, crossing diffs,
 // empty-line runs). NOT the MergePanel pipeline (that uses sides.blocks from
-// reconstructSides — see the fixture-driven describe below); this is the
-// diffBlocks→planTake composition lock, kept since diffLineSets still ships.
+// reconstructSides — see the fixture-driven describe below); diffBlocks here
+// is just a fixture generator for arbitrary ChangeBlock[] shapes.
 describe('planTake — diffBlocks multi-block round-trip (every block ours→theirs = identity)', () => {
   // Apply ALL blocks take-ours, then ALL blocks take-theirs-back. Position
   // remapping via remapBlock between each dispatch. This is what MergePanel

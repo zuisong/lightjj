@@ -167,6 +167,28 @@ describe('createDocSession', () => {
     expect(s.dirty).toBe(true)
   })
 
+  it('refreshComments preserves local placement for known ids (accepted-suggestion stays anchored)', async () => {
+    mockApi.__setContent(MD)
+    mockApi.__setStored([{
+      id: 's1', filePath: 'docs/DESIGN.md', kind: 'suggestion',
+      anchor: { selection: 'distinctive phrase', contextBefore: '', contextAfter: '' },
+      suggestion: { replacement: 'replaced text' },
+      body: '', author: 'agent', createdAt: 1,
+    }])
+    const s = createDocSession('docs/DESIGN.md', () => 'cid')
+    await s.import_()
+    expect(s.comments[0].orphaned).toBe(false)
+    const origFrom = s.comments[0].from
+    // Accept: replace the selection — stored anchor now points at vanished text.
+    const spec = s.acceptSuggestion('s1')!
+    applyEdit(s, tr => tr.insertText(spec.replacement, spec.from, spec.to))
+    // Poll tick: must NOT orphan — local from/to (remapped via onTransaction)
+    // are authoritative for known ids.
+    await s.refreshComments()
+    expect(s.comments[0].orphaned).toBe(false)
+    expect(s.comments[0].from).toBe(origFrom)
+  })
+
   it('normalizationDiff: null when round-trip identical, populated otherwise', async () => {
     mockApi.__setContent('# H\n\npara\n')
     const s = createDocSession('a.md', () => 'cid')
@@ -186,6 +208,48 @@ describe('createDocSession', () => {
     expect(s.dirty).toBe(false)
     expect(await s.commitBack()).toBe('noop')
     expect(api.fileWrite).not.toHaveBeenCalled()
+  })
+
+  it('acceptSuggestion in table cell: from/to stay within the target cell', async () => {
+    // Adjacent text nodes from different cells share a flat-text boundary;
+    // toPM at that boundary must prefer the LATER segment or insertText spans
+    // the cell boundary and the table restructures.
+    const md = '| A | B |\n|---|---|\n| [link](u) | Folded |\n'
+    mockApi.__setContent(md)
+    mockApi.__setStored([{
+      id: 's1', filePath: 'x.md', kind: 'suggestion',
+      anchor: { selection: 'Folded', contextBefore: '', contextAfter: '' },
+      suggestion: { replacement: 'Archived' },
+      body: '', author: 'agent', createdAt: 1,
+    }])
+    const s = createDocSession('x.md', () => 'cid')
+    await s.import_()
+    const spec = s.acceptSuggestion('s1')!
+    applyEdit(s, tr => tr.insertText(spec.replacement, spec.from, spec.to))
+    // Cell B has the replacement; cell A's link text untouched.
+    const out = s.serialize()
+    expect(out).toContain('| [link](u) | Archived |')
+    expect(out).not.toContain('linkArchived')
+  })
+
+  it('acceptSuggestion at end of paragraph: replacement does not consume following heading', async () => {
+    // `to` at a segment boundary must bias LEFT (end of prev segment), or
+    // insertText spans into the heading and PM merges them.
+    mockApi.__setContent('intro `code` tail.\n\n## Heading\n')
+    mockApi.__setStored([{
+      id: 's1', filePath: 'x.md', kind: 'suggestion',
+      anchor: { selection: 'tail.', contextBefore: '', contextAfter: '' },
+      suggestion: { replacement: 'tail (extended).' },
+      body: '', author: 'a', createdAt: 1,
+    }])
+    const s = createDocSession('x.md', () => 'cid')
+    await s.import_()
+    const spec = s.acceptSuggestion('s1')!
+    applyEdit(s, tr => tr.insertText(spec.replacement, spec.from, spec.to))
+    const out = s.serialize()
+    expect(out).toContain('intro `code` tail (extended).')
+    expect(out).toContain('## Heading')
+    expect(out).not.toMatch(/extended\)\.Heading/)
   })
 
   // Helper: simulate DocView's dispatchTransaction for commitBack tests.
