@@ -26,15 +26,16 @@ var annMu sync.Mutex
 // doesn't know which commit_id is "current", and re-anchor math belongs with
 // the diff parser that's already in the frontend.
 
-// Annotation mirrors the frontend type. The server treats it as opaque JSON
-// beyond the fields it validates (ChangeId for routing, ID for upsert/delete).
-// Unknown fields survive round-trip via the raw storage — the frontend can
-// add severity/status without backend changes.
+// Annotation mirrors the frontend type. The server validates only ChangeId
+// (routing) and ID (upsert/delete). Note: this is a typed struct, not a
+// json.RawMessage — fields the frontend adds must be mirrored here or they're
+// dropped on the unmarshal→marshal round-trip.
 type Annotation struct {
 	ID                string `json:"id"`
 	ChangeId          string `json:"changeId"`
 	FilePath          string `json:"filePath"`
 	LineNum           int    `json:"lineNum"`
+	Side              string `json:"side,omitempty"`
 	LineContent       string `json:"lineContent"`
 	Comment           string `json:"comment"`
 	Severity          string `json:"severity,omitempty"`

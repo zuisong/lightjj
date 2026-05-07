@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseDiffContent, filePathFromHeader, newSideAddedLines, expandTabs } from './diff-parser'
+import { parseDiffContent, filePathFromHeader, newSideAddedLines, expandTabs, hunkIndexForLine, oldCount } from './diff-parser'
 
 describe('expandTabs', () => {
   it('passes through tab-free strings unchanged', () => {
@@ -371,5 +371,40 @@ describe('newSideAddedLines', () => {
 
   it('empty hunks → empty set', () => {
     expect(newSideAddedLines([]).size).toBe(0)
+  })
+})
+
+describe('hunkIndexForLine', () => {
+  const mk = (oldStart: number, newStart: number, types: ('add' | 'remove' | 'context')[]) => ({
+    header: '@@', oldStart, newStart,
+    newCount: types.filter(t => t !== 'remove').length,
+    lines: types.map(type => ({ type, content: '' })),
+  })
+  // Hunk 0: old 5-7 (rem,ctx,ctx), new 5-7 (ctx,ctx,add). Hunk 1: old 20-20, new 20-21.
+  const hunks = [
+    mk(5, 5, ['remove', 'context', 'context', 'add']),
+    mk(20, 20, ['context', 'add']),
+  ]
+
+  it('new-side: line in first hunk', () => {
+    expect(hunkIndexForLine(hunks, 6, 'new')).toBe(0)
+  })
+  it('new-side: line in second hunk', () => {
+    expect(hunkIndexForLine(hunks, 21, 'new')).toBe(1)
+  })
+  it('new-side: line between hunks → -1', () => {
+    expect(hunkIndexForLine(hunks, 15, 'new')).toBe(-1)
+  })
+  it('new-side: default param is new', () => {
+    expect(hunkIndexForLine(hunks, 21)).toBe(1)
+  })
+  it('old-side uses oldStart + oldCount', () => {
+    expect(oldCount(hunks[0])).toBe(3) // rem + ctx + ctx
+    expect(hunkIndexForLine(hunks, 5, 'old')).toBe(0)
+    expect(hunkIndexForLine(hunks, 7, 'old')).toBe(0)
+    expect(hunkIndexForLine(hunks, 8, 'old')).toBe(-1)
+  })
+  it('empty hunks → -1', () => {
+    expect(hunkIndexForLine([], 1)).toBe(-1)
   })
 })

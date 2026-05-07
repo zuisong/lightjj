@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte'
-  import { FILE_LEVEL, type Annotation, type AnnotationSeverity } from './api'
+  import { FILE_LEVEL, type Annotation, type AnnotationSeverity, type DiffSide } from './api'
 
   interface Props {
     open: boolean
@@ -9,7 +9,7 @@
     /** Existing annotation for edit; null for create-new. */
     editing: Annotation | null
     /** Prefilled line context (for create-new). */
-    lineContext?: { filePath: string; lineNum: number; lineContent: string }
+    lineContext?: { filePath: string; lineNum: number; side?: DiffSide; lineContent: string }
     onsave: (comment: string, severity: AnnotationSeverity) => void
     onresolve?: () => void
     ondelete?: () => void
@@ -33,7 +33,9 @@
   const MARGIN = 8
 
   let contextLabel = $derived(
-    !lineContext ? '' : lineContext.lineNum === FILE_LEVEL ? lineContext.filePath : `${lineContext.filePath}:${lineContext.lineNum}`
+    !lineContext ? ''
+    : lineContext.lineNum === FILE_LEVEL ? lineContext.filePath
+    : `${lineContext.filePath}:${lineContext.lineNum}${lineContext.side === 'old' ? ' (deleted line)' : ''}`
   )
 
   $effect(() => {

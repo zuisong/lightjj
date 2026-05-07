@@ -2,7 +2,7 @@
   import { newSideAddedLines, type DiffFile, type DiffHunk, type DiffLine } from './diff-parser'
   import { toSplitView, type SplitLine } from './split-view'
   import type { WordSpan } from './word-diff'
-  import { api, FILE_LEVEL, FILE_TYPE_LABELS, IMAGE_RE, type FileChange, type Annotation } from './api'
+  import { api, FILE_LEVEL, FILE_TYPE_LABELS, IMAGE_RE, type FileChange, type Annotation, type DiffSide } from './api'
   import { isReviewedMarker } from './annotations.svelte'
   import { findConflicts } from './conflict-parser'
   import { hunkKey, fileSelectionState, type SelectionState } from './hunk-apply'
@@ -53,22 +53,25 @@
     onfilehistory?: (path: string) => void
     onopendoc?: (path: string) => void
     oncompare?: (path: string) => void
-    /** Lookup annotations for a new-side line number. Called per-line during
-     *  render — MUST be O(1) (backed by a Map, not a filter). Stable reference
-     *  (the store's forLine method directly) — a fresh closure per render would
-     *  defeat MarkdownPreview's gutterRows $derived short-circuit. */
-    annotationsForLine?: (filePath: string, lineNum: number) => readonly Annotation[]
+    /** Lookup annotations for a line. Called per-line during render — MUST be
+     *  O(1) (backed by a Map, not a filter). Stable reference (the store's
+     *  forLine method directly) — a fresh closure per render would defeat
+     *  MarkdownPreview's gutterRows $derived short-circuit. */
+    annotationsForLine?: (filePath: string, lineNum: number, side?: DiffSide) => readonly Annotation[]
     /** File-level (lineNum=0) annotations. Separate from forLine so the
      *  FILE_LEVEL sentinel never reaches per-line render paths. */
     annotationsForFile?: (filePath: string) => readonly Annotation[]
-    /** Click handler for the annotation gutter badge. Receives the new-side
-     *  line number, the line's raw content (without diff prefix), and the
+    /** Count of line-level annotations on this file (excluding the reviewed
+     *  marker) — drives the header chip. */
+    annotationCount?: number
+    /** Click handler for the annotation gutter badge. Receives the line number
+     *  on `side`, the line's raw content (without diff prefix), and the
      *  click event (for positioning the bubble). Also fires on left-click of
      *  an unannotated line when Alt is held — quick-annotate shortcut.
      *  lineNum=0 (FILE_LEVEL) for file-level comments via Alt+click on header.
      *  `editing` set when a specific annotation was clicked (file-note strip,
      *  multi-annotation lines) so the bubble edits THAT one, not first-match. */
-    onannotationclick?: (lineNum: number, lineContent: string, e: MouseEvent, editing?: Annotation) => void
+    onannotationclick?: (lineNum: number, lineContent: string, e: MouseEvent, editing?: Annotation, side?: DiffSide) => void
     /** Toggle the file's "reviewed" marker (GitHub-style viewed checkbox).
      *  undefined = checkbox hidden (multi-rev mode). */
     onreviewedtoggle?: (filePath: string, next: boolean) => void
@@ -93,7 +96,7 @@
     lines: { lineNum: number | null, content: string }[]
   }
 
-  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, onfilehistory, onopendoc, oncompare, annotationsForLine, annotationsForFile, onannotationclick, onreviewedtoggle, hunkReview = null }: Props = $props()
+  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, onfilehistory, onopendoc, oncompare, annotationsForLine, annotationsForFile, annotationCount = 0, onannotationclick, onreviewedtoggle, hunkReview = null }: Props = $props()
 
   // Translate effective (rendered) gap index → original. When no gaps are
   // revealed, gapMap is undefined → identity. After revealing, hunks merge so
@@ -292,12 +295,16 @@
   }
 
   /** Alt+click on any diff line → quick-annotate (mirrors markdown preview's wireAnnotations). */
-  function handleAltClick(e: MouseEvent, annLine: number | null, rawContent: string): void {
-    // annLine can be 0 on split-view deleted-file rows / `\ No newline` —
-    // FILE_LEVEL is reserved for the header path, so drop those here.
-    if (!e.altKey || !annLine || !onannotationclick) return
+  function handleAltClick(e: MouseEvent, annOld: number | null, annNew: number | null, rawContent: string): void {
+    if (!e.altKey || !onannotationclick) return
+    // Prefer new-side (current behavior); fall back to old-side for pure-remove
+    // lines so "why was this deleted?" is finally annotatable. 0/FILE_LEVEL on
+    // either side (split-view deleted-file rows, `\ No newline`) is dropped —
+    // FILE_LEVEL is reserved for the header path.
+    const [line, side]: [number, DiffSide] = annNew ? [annNew, 'new'] : annOld ? [annOld, 'old'] : [0, 'new']
+    if (!line) return
     e.preventDefault()
-    onannotationclick(annLine, rawContent, e)
+    onannotationclick(line, rawContent, e, undefined, side)
   }
 
   function handleLineContextMenu(e: MouseEvent, line: DiffLine, lineNumbers: (number | null)[]): void {
@@ -434,22 +441,24 @@
   </svg>
 {/snippet}
 
-{#snippet gutter(lineNumbers: (number | null)[], rawContent: string, annLine: number | null)}
-  {@const anns = annLine !== null && annotationsForLine ? annotationsForLine(filePath, annLine) : []}
-  {#each lineNumbers as n}<span class="line-num">{n ?? ''}</span>{/each}{#if anns.length > 0 && annLine !== null}<!--
+{#snippet gutter(lineNumbers: (number | null)[], rawContent: string, annOld: number | null, annNew: number | null)}
+  {@const annsNew = annNew && annotationsForLine ? annotationsForLine(filePath, annNew, 'new') : []}
+  {@const annsOld = annOld && annotationsForLine ? annotationsForLine(filePath, annOld, 'old') : []}
+  {@const anns = annsNew.length || annsOld.length ? [...annsOld, ...annsNew] : annsNew}
+  {#each lineNumbers as n}<span class="line-num">{n ?? ''}</span>{/each}{#if anns.length > 0}<!--
   -->{@const firstOpen = anns.find(a => a.status !== 'resolved') ?? anns[0]}{@const allResolved = anns.every(a => a.status === 'resolved')}<button
         class="annotation-badge severity-{firstOpen.severity}"
         class:orphaned={firstOpen.status === 'orphaned'}
         class:resolved={allResolved}
-        onclick={(e) => { e.stopPropagation(); onannotationclick?.(annLine, rawContent, e, firstOpen) }}
+        onclick={(e) => { e.stopPropagation(); onannotationclick?.(firstOpen.lineNum, rawContent, e, firstOpen, firstOpen.side ?? 'new') }}
         title="{anns.length} annotation{anns.length > 1 ? 's' : ''}: {firstOpen.comment}"
         aria-label="View annotation"
       >{@render annGlyph(allResolved, anns.length)}</button>{/if}{/snippet}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- annLine default infers new-side for unified ([old,new]) and split-right
-     ([newRight]). Split-left must pass null — it has [oldLeft], not new-side. -->
-{#snippet diffLine(line: DiffLine, hlKey: string, spans: WordSpan[] | undefined, lineNumbers: (number | null)[], hunkIdx?: number, lineIdx?: number, conflictMeta?: ConflictLineMeta, annLine: number | null = lineNumbers[lineNumbers.length - 1])}
+<!-- annOld/annNew defaults derive from lineNumbers shape: unified=[old,new] →
+     both set; split-right=[new] → annOld=null; split-left passes explicitly. -->
+{#snippet diffLine(line: DiffLine, hlKey: string, spans: WordSpan[] | undefined, lineNumbers: (number | null)[], hunkIdx?: number, lineIdx?: number, conflictMeta?: ConflictLineMeta, annOld: number | null = lineNumbers.length === 2 ? lineNumbers[0] : null, annNew: number | null = lineNumbers[lineNumbers.length - 1])}
   {@const searchKey = hunkIdx !== undefined && lineIdx !== undefined ? `${hunkIdx}:${lineIdx}` : ''}
   {@const lm = searchKey ? lineMatchMap.get(searchKey) : undefined}
   {@const inConflict = !!conflictMeta}
@@ -476,9 +485,9 @@
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
       data-search-match-current={hasCurrent ? 'true' : undefined}
-      onclick={(e) => handleAltClick(e, annLine, rawContent)}
+      onclick={(e) => handleAltClick(e, annOld, annNew, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{@html highlightSearchInText(displayContent, lm, currentMatchIdx)}</div>
+    >{@render gutter(lineNumbers, rawContent, annOld, annNew)}<span class="diff-prefix">{displayPrefix}</span>{@html highlightSearchInText(displayContent, lm, currentMatchIdx)}</div>
   {:else if highlightedLines.has(hlKey)}
     <div
       class="diff-line highlighted"
@@ -487,9 +496,9 @@
       class:diff-context={!inConflict && line.type === 'context'}
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
-      onclick={(e) => handleAltClick(e, annLine, rawContent)}
+      onclick={(e) => handleAltClick(e, annOld, annNew, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent, annLine)}{@html highlightedLines.get(hlKey)}</div>
+    >{@render gutter(lineNumbers, rawContent, annOld, annNew)}{@html highlightedLines.get(hlKey)}</div>
   {:else if spans}
     <div
       class="diff-line"
@@ -497,9 +506,9 @@
       class:diff-remove={!inConflict && line.type === 'remove'}
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
-      onclick={(e) => handleAltClick(e, annLine, rawContent)}
+      onclick={(e) => handleAltClick(e, annOld, annNew, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{#each spans as span}{#if span.changed}<span
+    >{@render gutter(lineNumbers, rawContent, annOld, annNew)}<span class="diff-prefix">{displayPrefix}</span>{#each spans as span}{#if span.changed}<span
           class="word-change"
         >{span.text}</span>{:else}{span.text}{/if}{/each}</div>
   {:else}
@@ -510,9 +519,9 @@
       class:diff-context={!inConflict && line.type === 'context'}
       class:conflict-inner-add={innerType === 'add'}
       class:conflict-inner-remove={innerType === 'remove'}
-      onclick={(e) => handleAltClick(e, annLine, rawContent)}
+      onclick={(e) => handleAltClick(e, annOld, annNew, rawContent)}
       oncontextmenu={(e) => handleLineContextMenu(e, line, lineNumbers)}
-    >{@render gutter(lineNumbers, rawContent, annLine)}<span class="diff-prefix">{displayPrefix}</span>{displayContent}</div>
+    >{@render gutter(lineNumbers, rawContent, annOld, annNew)}<span class="diff-prefix">{displayPrefix}</span>{displayContent}</div>
   {/if}
 {/snippet}
 
@@ -559,6 +568,11 @@
       <span class="file-stats">
         {#if fileStats.additions > 0}<span class="stat-add">+{fileStats.additions}</span>{/if}
         {#if fileStats.deletions > 0}<span class="stat-del">-{fileStats.deletions}</span>{/if}
+      </span>
+    {/if}
+    {#if annotationCount > 0}
+      <span class="ann-count-chip" title="{annotationCount} line annotation{annotationCount > 1 ? 's' : ''} — { '{' }/{ '}' } to step">
+        {@render annGlyph(false, annotationCount)}
       </span>
     {/if}
     {#if fileNotes.length > 0}
@@ -668,14 +682,14 @@
         <div class="split-col split-left">
           {#each splitLines as sl, si}
             {#if sl.left?.line.type === 'header'}
-              {#if !isExpanded}<div class="diff-hunk-header">{sl.left.line.content}</div>{/if}
+              {#if !isExpanded}<div class="diff-hunk-header" data-hunk={sl.left.hunkIdx}>{sl.left.line.content}</div>{/if}
             {:else if sl.left}
               {@const slKey = `${filePath}:${sl.left.hunkIdx}:${sl.left.lineIdx}`}
               {@const spans = wordDiffs.get(String(sl.left.hunkIdx))?.get(sl.left.lineIdx)}
               {@const slCm = conflictData?.lineMeta.get(sl.left.hunkIdx)?.get(sl.left.lineIdx)}
-              <!-- 8th arg null: split-left has OLD line numbers; annotation
-                   store is NEW-indexed. Right column + unified use the default. -->
-              {@render diffLine(sl.left.line, slKey, spans, [splitNums[si].oldLeft], sl.left.hunkIdx, sl.left.lineIdx, slCm, null)}
+              <!-- Split-left = OLD column: annOld=oldLeft, annNew=null. The
+                   length-based default would mis-infer annNew=oldLeft. -->
+              {@render diffLine(sl.left.line, slKey, spans, [splitNums[si].oldLeft], sl.left.hunkIdx, sl.left.lineIdx, slCm, splitNums[si].oldLeft, null)}
             {:else}
               <div class="diff-line diff-empty">&nbsp;</div>
             {/if}
@@ -757,7 +771,7 @@
           </div>
         {/if}
         {@const lineNums = lineNumsByHunk[hunkIdx]}
-        <div class="diff-lines" class:hunk-dim={hunkReview && !hunkAccepted}>
+        <div class="diff-lines" class:hunk-dim={hunkReview && !hunkAccepted} data-hunk={hunkIdx}>
           {#each hunk.lines as line, lineIdx}
             {@const hlKey = `${filePath}:${hunkIdx}:${lineIdx}`}
             {@const spans = hunkWordDiffs.get(lineIdx)}
@@ -1004,6 +1018,12 @@
     flex-shrink: 0;
     font-size: var(--fs-sm);
     font-weight: 600;
+  }
+
+  .ann-count-chip {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--amber);
   }
 
   /* In-header annotation badge — flow position (override theme.css absolute). */

@@ -32,6 +32,24 @@ func TestAnnotations_GetEmpty(t *testing.T) {
 	assert.NotNil(t, anns) // [] not null
 }
 
+func TestAnnotations_SideRoundTrips(t *testing.T) {
+	// The struct is typed (not json.RawMessage), so a field missing here is
+	// silently dropped on POST→GET. Locks the Side field's presence.
+	srv := newAnnotationsServer(t)
+	ann := Annotation{ID: "a1", ChangeId: "abc", FilePath: "f.go", LineNum: 7, Side: "old", Comment: "why deleted?"}
+	body, _ := json.Marshal(ann)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/annotations", body))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/annotations?changeId=abc", nil))
+	var anns []Annotation
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &anns))
+	require.Len(t, anns, 1)
+	assert.Equal(t, "old", anns[0].Side)
+}
+
 func TestAnnotations_CRUD(t *testing.T) {
 	srv := newAnnotationsServer(t)
 

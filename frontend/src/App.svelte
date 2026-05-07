@@ -712,7 +712,8 @@
     { label: 'Clear revset filter', category: 'Navigation', action: clearRevsetFilter, when: () => revsetFilter !== '' },
     ...STATIC_PRESETS.map(p => ({ label: `View: ${p.label}`, hint: p.revset, category: 'Navigation', action: () => applyRevsetExample(p.revset) })),
     { label: 'Jump to working copy (@)', shortcut: '@', category: 'Navigation', action: () => { if (workingCopyIndex >= 0) selectRevision(workingCopyIndex) }, when: () => workingCopyIndex >= 0 },
-    { label: 'Next file / Previous file', shortcut: '] / [', category: 'Navigation', action: noop, infoOnly: true },
+    { label: 'Next / Previous hunk', shortcut: '] / [', category: 'Navigation', action: noop, infoOnly: true },
+    { label: 'Next / Previous annotation', shortcut: '} / {', category: 'Navigation', action: noop, infoOnly: true },
     { label: 'Toggle markdown preview', shortcut: 'm', category: 'Navigation', action: () => diffPanelRef?.togglePreviewActive(), when: () => !inlineMode },
     { label: 'Open file as document…', category: 'Navigation', action: () => {
       const p = prompt('Open as document (repo-relative .md path):')
@@ -2277,8 +2278,10 @@
       case 'r': e.preventDefault(); userRefresh(); break
       case 'b': e.preventDefault(); openBookmarkModal(); break
       case '/': e.preventDefault(); revsetInputEl?.focus(); break
-      case ']': e.preventDefault(); diffPanelRef?.stepFile(1); break
-      case '[': e.preventDefault(); diffPanelRef?.stepFile(-1); break
+      case ']': e.preventDefault(); diffPanelRef?.stepHunk(1); break
+      case '[': e.preventDefault(); diffPanelRef?.stepHunk(-1); break
+      case '}': e.preventDefault(); if (diffPanelRef?.stepAnnotation(1) === false) setMessage({ kind: 'warning', text: 'No annotations on this revision' }); break
+      case '{': e.preventDefault(); if (diffPanelRef?.stepAnnotation(-1) === false) setMessage({ kind: 'warning', text: 'No annotations on this revision' }); break
       case 'm': e.preventDefault(); diffPanelRef?.togglePreviewActive(); break
       case 'E': e.preventDefault(); switchToLogView(); toggleEvolog(); break
       case 'O': e.preventDefault(); switchToLogView(); toggleOplog(); break
