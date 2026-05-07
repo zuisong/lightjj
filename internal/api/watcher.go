@@ -79,6 +79,7 @@ type Watcher struct {
 const (
 	evStaleWC  = "!stale-wc"
 	evFreshWC  = "!fresh-wc"
+	evNav      = "!nav:" // payload-carrying — suffix is server-marshaled JSON
 	evPollFail = "!pollfail"
 	evPollOk   = "!pollok"
 )
@@ -476,6 +477,15 @@ func (w *Watcher) subscribe() (ch chan string, unsubscribe func()) {
 	}
 }
 
+// Navigate broadcasts a one-shot navigation payload to connected SSE clients.
+// payload is a server-marshaled JSON blob (handleNavigate validates and
+// re-marshals so untrusted input can't smuggle SSE framing). Dropped if no
+// subscribers or all buffers full — navigation is best-effort steering, not
+// state, so there's no edge to lose (unlike evStaleWC).
+func (w *Watcher) Navigate(payload []byte) {
+	w.broadcast(evNav + string(payload))
+}
+
 // broadcast sends the op-id to all subscribers. Non-blocking: if a subscriber's
 // buffer is full, the event is dropped (they'll catch up on their next poll).
 func (w *Watcher) broadcast(opId string) {
@@ -603,6 +613,14 @@ func (w *Watcher) handleEvents(rw http.ResponseWriter, r *http.Request) {
 			// `event: <name>\ndata: {}\n\n` — the frontend adds a dedicated
 			// listener per event type, so no payload parsing needed.
 			if strings.HasPrefix(msg, "!") {
+				// nav carries a JSON payload inline (server-marshaled, no
+				// embedded newlines — see handleNavigate).
+				if after, ok := strings.CutPrefix(msg, evNav); ok {
+					if err := write("event: nav\ndata: " + after + "\n\n"); err != nil {
+						return
+					}
+					continue
+				}
 				// pollfail carries the error text; read from Watcher state
 				// (single source of truth — can't get out of sync with a poll
 				// that updated the error between channel send and receive).

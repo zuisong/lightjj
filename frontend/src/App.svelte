@@ -33,7 +33,7 @@
   // state_referenced_locally warning; we DO want the mount-time snapshot.
   const init = untrack(() => initialState)
 
-  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, onPollFail, onSSEState, wireAutoRefresh, clearAllCaches, bookmarkPushFlags, agentBaseURL, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup } from './lib/api'
+  import { api, effectiveId, multiRevset, computeConnectedCommitIds, getCached, prefetchRevision, prefetchFilesBatch, onStale, onStaleWC, onPollFail, onSSEState, onNavigate, wireAutoRefresh, clearAllCaches, bookmarkPushFlags, agentBaseURL, type LogEntry, type FileChange, type OpEntry, type EvologEntry, type Workspace, type Alias, type PullRequest, type DiffTarget, type Bookmark, type MutationResult, type StaleImmutableGroup, type NavigatePayload } from './lib/api'
   import { setDetectedJJVersion, missingJJFeatures } from './lib/jj-features.svelte'
   import MessageBar, { errorMessage, type Message } from './lib/MessageBar.svelte'
   import { clearDiffCaches, parseDiffCached } from './lib/diff-cache'
@@ -1054,9 +1054,10 @@
     }
   }
 
-  function selectByChangeId(changeId: string) {
+  function selectByChangeId(changeId: string): boolean {
     const idx = revisions.findIndex(r => effectiveId(r.commit) === changeId)
     if (idx >= 0) selectRevision(idx)
+    return idx >= 0
   }
 
   // BookmarksPanel jump: consumed by loadLog's post-load selection when the
@@ -2328,6 +2329,40 @@
   $effect(() => wireAutoRefresh())
   $effect(() => onStaleWC((s) => { workspaceStale = s }))
   $effect(() => onPollFail((err) => { pollFailError = err }))
+
+  // Agent-driven navigate (POST /api/navigate → SSE). Gated on inlineMode +
+  // merge view + mutating so an agent can't yank the user out of half-complete
+  // rebase/squash or discard an unsaved 3-pane resolution.
+  let pendingNavScroll: { changeId: string; path: string } | null = $state(null)
+  $effect(() => onNavigate((p: NavigatePayload) => {
+    if (inlineMode || mutating || activeView === 'merge') {
+      setMessage({ kind: 'warning', text: 'Agent navigate ignored — finish or Esc current mode' })
+      return
+    }
+    switchToLogView()
+    if (p.change_id) {
+      if (!selectByChangeId(p.change_id)) {
+        setMessage({ kind: 'warning', text: `Agent navigate: ${p.change_id} not in current revset` })
+        return
+      }
+      // Defer file scroll until that revision's diff is the loadedTarget. The
+      // effect below identity-checks changeId so a user j/k between now and
+      // diff-load (or selectByChangeId being a no-op for already-selected)
+      // doesn't apply the scroll to the wrong diff.
+      if (p.file_path) pendingNavScroll = { changeId: p.change_id, path: p.file_path }
+    } else if (p.file_path) {
+      // No change_id → scroll within whatever's currently shown; no async wait.
+      diffPanelRef?.scrollToFile(p.file_path)
+    }
+  }))
+  $effect(() => {
+    if (!pendingNavScroll || diffLoading || !diffPanelRef) return
+    const lt = loadedTarget
+    if (lt?.kind !== 'single' || lt.changeId !== pendingNavScroll.changeId) return
+    const { path } = pendingNavScroll
+    pendingNavScroll = null
+    requestAnimationFrame(() => diffPanelRef?.scrollToFile(path))
+  })
 
   let sseConnected = $state(true)
   let pageTitle = $state('lightjj')

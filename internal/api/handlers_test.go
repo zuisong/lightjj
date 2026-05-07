@@ -3383,3 +3383,107 @@ func TestWireTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleCapabilities(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/capabilities", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var got capabilitiesResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, apiVersion, got.APIVersion)
+	assert.Equal(t, "jj 0.39.0", got.JJVersion) // from newTestServer's Allow
+	assert.Contains(t, got.Actions, "/api/navigate")
+	assert.Contains(t, got.Actions, "/api/doc-comments")
+	assert.Contains(t, got.Actions, "/api/capabilities")
+	// Dedupe: doc-comments registered 3× (GET/POST/DELETE) → one entry.
+	var n int
+	for _, a := range got.Actions {
+		if a == "/api/doc-comments" {
+			n++
+		}
+	}
+	assert.Equal(t, 1, n)
+	// Method prefix stripped — no entry should contain a space.
+	for _, a := range got.Actions {
+		assert.NotContains(t, a, " ", "action %q should be path-only", a)
+	}
+}
+
+func TestHandleNavigate(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+
+	ch, unsub := srv.Watcher.subscribe()
+	defer unsub()
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/navigate", []byte(`{"change_id":"abc","file_path":"src/a.go","line":42}`)))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	select {
+	case msg := <-ch:
+		require.True(t, strings.HasPrefix(msg, evNav))
+		var p navigateRequest
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(msg, evNav)), &p))
+		assert.Equal(t, "abc", p.ChangeID)
+		assert.Equal(t, "src/a.go", p.FilePath)
+		assert.Equal(t, 42, p.Line)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("navigate not broadcast")
+	}
+}
+
+func TestHandleNavigate_ReMarshalsSSEInjection(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+
+	ch, unsub := srv.Watcher.subscribe()
+	defer unsub()
+
+	// Body with embedded newlines that would break SSE framing if echoed raw.
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/navigate",
+		[]byte("{\"change_id\":\"x\\n\\nevent: stale-wc\\ndata: {}\"}")))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	msg := <-ch
+	// json.Marshal escapes newlines inside string values, so the broadcast
+	// payload contains no raw LF that would terminate the SSE data field.
+	assert.NotContains(t, strings.TrimPrefix(msg, evNav), "\n")
+}
+
+func TestHandleNavigate_BadRequest(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+
+	for _, tc := range []struct{ name, body string }{
+		{"empty", `{}`},
+		{"line only", `{"line":5}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			srv.Mux.ServeHTTP(w, jsonPost("/api/navigate", []byte(tc.body)))
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
+func TestHandleNavigate_NoWatcher503(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner) // Watcher is nil
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/navigate", []byte(`{"change_id":"x"}`)))
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}

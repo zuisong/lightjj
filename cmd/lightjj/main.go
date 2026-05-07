@@ -252,6 +252,27 @@ func main() {
 	url := fmt.Sprintf("http://%s", listener.Addr().String())
 	fmt.Printf("lightjj v%s listening on %s\n", resolvedVersion(), url)
 
+	// Agent-discovery metadata. Best-effort — sessionFile is "" on error and
+	// os.Remove("") is a harmless ENOENT. addr is normalized to a dialable form:
+	// a wildcard bind ("[::]:N", "0.0.0.0:N") would be unconnectable, and the
+	// localhostOnly middleware rejects non-localhost Host headers anyway.
+	var port int
+	dialAddr := listener.Addr().String()
+	if tcp, ok := listener.Addr().(*net.TCPAddr); ok {
+		port = tcp.Port
+		if tcp.IP.IsUnspecified() {
+			dialAddr = fmt.Sprintf("localhost:%d", port)
+		}
+	}
+	sessionFile := writeSessionFile(sessionInfo{
+		PID:       os.Getpid(),
+		Addr:      dialAddr,
+		Port:      port,
+		RepoDir:   displayPath,
+		Mode:      tm.Mode,
+		StartedAt: time.Now().UnixMilli(),
+	})
+
 	if !*noBrowser {
 		openBrowser(url)
 	}
@@ -264,6 +285,7 @@ func main() {
 		case <-sigCh:
 		case <-tm.ShutdownCh:
 		}
+		_ = os.Remove(sessionFile)
 		tm.Shutdown()
 		os.Exit(0)
 	}()

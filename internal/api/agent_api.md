@@ -8,13 +8,26 @@ This page is served at `GET /api/agent`. A minimal JSON index is at `GET /api`.
 
 ## Reaching the server
 
-`<base>` below means **the URL you used to fetch this page, minus
-`/api/agent`** — e.g. fetched `http://localhost:8080/tab/0/api/agent` →
-`<base> = http://localhost:8080/tab/0`. The doc-mode UI's **Agent hint**
-button shows this value for the open file.
+A running lightjj writes `{pid, addr, port, repo_dir, mode, started_at}` to
+`$XDG_RUNTIME_DIR/lightjj/sessions/<pid>.json` (or
+`$TMPDIR/lightjj-<uid>/sessions/<pid>.json` where `$XDG_RUNTIME_DIR` is unset
+— macOS, most servers). To find the instance for the repo you're working in:
+
+```sh
+dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/lightjj-$(id -u)}"
+[ -n "$XDG_RUNTIME_DIR" ] && dir="$dir/lightjj"
+jq -r --arg repo "$PWD" 'select(.repo_dir == $repo) | .addr' "$dir"/sessions/*.json
+# → 127.0.0.1:54321
+```
+
+All routes are tab-scoped: `<base> = http://<addr>/tab/{N}`. Tab 0 is the repo
+lightjj was launched in; `GET http://<addr>/tabs` lists open tabs with their
+paths if you need a different one. `GET <base>/api/capabilities` returns
+`{api_version, jj_version, actions: [...]}` so you can probe for endpoint
+availability instead of 404-handling.
 
 lightjj only accepts requests with `Host: localhost` (DNS-rebinding
-protection), so reaching it from another machine requires an SSH tunnel that
+protection). If the agent runs on a different machine, use an SSH tunnel that
 keeps the Host header local:
 
 ```sh
@@ -23,8 +36,8 @@ ssh -R 8080:localhost:<lightjj-port> user@agent-host
 # Agent then uses <base> = http://localhost:8080/tab/0
 ```
 
-All routes are tab-scoped: `<base> = <origin>/tab/{N}`. Tab 0 is the repo
-lightjj was launched in; `GET <origin>/tabs` lists open tabs with their paths.
+The doc-mode UI's **Agent hint** button still shows the `<base>` URL for the
+open file if you prefer the manual route.
 
 ## Read the document
 
@@ -116,6 +129,41 @@ Same endpoint, `kind: "suggestion"` plus `suggestion.replacement`:
 The user sees the selection struck through with the replacement below it and
 **Accept** / **Reject** buttons. Accept replaces the text in the live editor
 (the file on disk updates when the user clicks Save).
+
+## Batch post
+
+For multiple comments at once, `POST <base>/api/doc-comments/batch` validates
+the entire array before writing any (all-or-nothing):
+
+```jsonc
+{
+  "file_path": "docs/DESIGN.md",
+  "comments": [
+    { "anchor": {"selection": "..."}, "kind": "comment", "body": "..." },
+    { "anchor": {"selection": "..."}, "kind": "suggestion",
+      "suggestion": {"replacement": "..."}, "body": "..." }
+  ]
+}
+```
+
+→ `200` with the stamped array (server-assigned `id`/`createdAt` filled in).
+`400` with `comments[N].anchor.selection required` if any entry is invalid; in
+that case nothing is written.
+
+## Steer the user's view
+
+```
+POST <base>/api/navigate
+Content-Type: application/json
+{"change_id": "wqnwkozp", "file_path": "src/handlers.go"}
+```
+
+→ `200`. The connected browser switches to that revision and scrolls the diff
+to that file. Use this to walk the user through a review: post a batch of
+comments, then `navigate` to the first one. `change_id` and/or `file_path`
+required; `line` is accepted but currently ignored. `503` if the server was
+started with `--no-watch` (no SSE channel to push through). Ignored if the
+user is mid-rebase/squash — they'll see an info toast instead.
 
 ## Read back / poll
 

@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -87,6 +89,93 @@ func randID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// mergeDocComment upserts c into items, preserving an existing record's
+// resolution/resolvedAt when c omits them, and its createdAt when c's was
+// server-stamped (so an agent re-POST to amend body doesn't clobber the
+// human's accept/reject or rewrite history). Returns the post-merge c so the
+// HTTP response reflects what was actually stored (the preserved fields).
+func mergeDocComment(items []DocComment, c DocComment, stamped bool) ([]DocComment, DocComment) {
+	for i := range items {
+		if items[i].ID == c.ID {
+			if c.Resolution == "" {
+				c.Resolution = items[i].Resolution
+				c.ResolvedAt = items[i].ResolvedAt
+			}
+			if stamped {
+				c.CreatedAt = items[i].CreatedAt
+			}
+			break
+		}
+	}
+	return upsertByID(items, c), c
+}
+
+const maxBatchComments = 256
+
+type docCommentBatchRequest struct {
+	FilePath string       `json:"file_path"`
+	Comments []DocComment `json:"comments"`
+}
+
+// handleDocCommentsBatch validates ALL comments before writing ANY — an agent
+// posting 12 review notes gets all-or-nothing instead of a partial set on the
+// 7th failing validation. Held under docCommentMu for the whole batch so a
+// concurrent single-POST can't interleave between read and write.
+func (s *Server) handleDocCommentsBatch(w http.ResponseWriter, r *http.Request) {
+	var req docCommentBatchRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.FilePath == "" {
+		s.writeError(w, http.StatusBadRequest, "file_path required")
+		return
+	}
+	if n := len(req.Comments); n == 0 || n > maxBatchComments {
+		s.writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("comments must have 1..%d entries (got %d)", maxBatchComments, n))
+		return
+	}
+	clean, err := cleanDocPath(req.FilePath)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	now := time.Now().UnixMilli()
+	stamped := make([]bool, len(req.Comments))
+	for i := range req.Comments {
+		c := &req.Comments[i]
+		if c.Anchor.Selection == "" {
+			s.writeError(w, http.StatusBadRequest, "comments["+strconv.Itoa(i)+"].anchor.selection required")
+			return
+		}
+		c.FilePath = clean
+		if c.ID == "" {
+			c.ID = randID()
+		}
+		stamped[i] = c.CreatedAt == 0
+		if stamped[i] {
+			c.CreatedAt = now
+		}
+	}
+	path, err := s.docCommentPath(clean)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	docCommentMu.Lock()
+	defer docCommentMu.Unlock()
+	items, _ := readJSONStore[DocComment](path)
+	for i := range req.Comments {
+		items, req.Comments[i] = mergeDocComment(items, req.Comments[i], stamped[i])
+	}
+	if err := atomicWriteJSON(path, items); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "write failed: "+err.Error())
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, req.Comments)
+}
+
 // GET    /api/doc-comments?path=X       — list (empty array if none)
 // POST   /api/doc-comments              — upsert by id (body = DocComment)
 // DELETE /api/doc-comments?path=X&id=Y  — remove one (cascades to replies)
@@ -141,23 +230,7 @@ func (s *Server) handleDocComments(w http.ResponseWriter, r *http.Request) {
 		docCommentMu.Lock()
 		defer docCommentMu.Unlock()
 		items, _ := readJSONStore[DocComment](path)
-		// Whole-record upsert would let an agent re-POST clobber the user's
-		// resolution. Preserve resolution + original timestamp when the incoming
-		// record omits them — explicit "" still can't clear, but the only writer
-		// of resolution is resolveComment() which always sets a non-empty value.
-		for i := range items {
-			if items[i].ID == c.ID {
-				if c.Resolution == "" {
-					c.Resolution = items[i].Resolution
-					c.ResolvedAt = items[i].ResolvedAt
-				}
-				if stamped {
-					c.CreatedAt = items[i].CreatedAt
-				}
-				break
-			}
-		}
-		items = upsertByID(items, c)
+		items, c = mergeDocComment(items, c, stamped)
 		if err := atomicWriteJSON(path, items); err != nil {
 			s.writeError(w, http.StatusInternalServerError, "write failed: "+err.Error())
 			return

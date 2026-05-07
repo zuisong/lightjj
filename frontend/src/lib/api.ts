@@ -157,6 +157,14 @@ function notifyStaleWC(stale: boolean) {
   for (const cb of staleWCCallbacks) cb(stale)
 }
 
+// Agent-driven navigate subscribers. POST /api/navigate → SSE `nav` event with
+// {change_id?, file_path?, line?}. App scrolls the human's view there.
+export interface NavigatePayload { change_id?: string; file_path?: string; line?: number }
+const navigateCallbacks = new Set<(p: NavigatePayload) => void>()
+function notifyNavigate(p: NavigatePayload) {
+  for (const cb of navigateCallbacks) cb(p)
+}
+
 // Poll-failure subscribers. Server's watcher broadcasts `pollfail` with an
 // error payload after ≥ pollFailThreshold consecutive poll/snapshot errors
 // that aren't stale-WC, and `pollok` when polling recovers. Works in both
@@ -199,6 +207,12 @@ const MUTATION_TIMEOUT_MS = 60_000
 export function onStale(callback: () => void): () => void {
   staleCallbacks.add(callback)
   return () => { staleCallbacks.delete(callback) }
+}
+
+/** Subscribe to agent-driven navigate hints (POST /api/navigate → SSE). */
+export function onNavigate(callback: (p: NavigatePayload) => void): () => void {
+  navigateCallbacks.add(callback)
+  return () => { navigateCallbacks.delete(callback) }
 }
 
 /** Subscribe to workspace-stale state changes (true=stale, false=recovered). */
@@ -384,6 +398,11 @@ export function wireAutoRefresh(): () => void {
     // AND unconditionally on connect (watcher.go:handleEvents).
     es.addEventListener('stale-wc', () => { mark(); notifyStaleWC(true) })
     es.addEventListener('fresh-wc', () => { mark(); notifyStaleWC(false) })
+    es.addEventListener('nav', (ev) => {
+      mark()
+      try { notifyNavigate(JSON.parse(ev.data) as NavigatePayload) }
+      catch { /* malformed — ignore */ }
+    })
     // pollfail carries an error string; pollok clears. Server emits pollfail
     // both on transition AND unconditionally on connect if currently failed,
     // so reconnect always syncs state.

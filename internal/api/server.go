@@ -57,6 +57,10 @@ type Server struct {
 	// failure. Set by main.go after NewServer; routes() tolerates nil.
 	Watcher *Watcher
 
+	// apiRoutes is the list of patterns registered via routes()'s reg closure.
+	// Feeds GET /api/capabilities so agents can negotiate instead of 404-probing.
+	apiRoutes []string
+
 	// jjVersion is the `jj --version` output (e.g. "jj 0.39.0"). Lazy-resolved
 	// on first handleInfo / jjSupports. Mutex+bool (not sync.Once) so a
 	// transient failure retries — same pattern as ghRepo. jjVer is the parsed
@@ -123,100 +127,108 @@ func (s *Server) Shutdown() {
 // for per-tab routing. A non-/api/ route would silently 404 in production
 // (tests hit srv.Mux directly and wouldn't catch it).
 func (s *Server) routes() {
-	s.Mux.HandleFunc("GET /api/log", s.handleLog)
-	s.Mux.HandleFunc("GET /api/bookmarks", s.handleBookmarks)
-	s.Mux.HandleFunc("GET /api/diff", s.handleDiff)
-	s.Mux.HandleFunc("GET /api/files", s.handleFiles)
-	s.Mux.HandleFunc("GET /api/description", s.handleGetDescription)
-	s.Mux.HandleFunc("GET /api/revision", s.handleRevision)
-	s.Mux.HandleFunc("GET /api/revision-meta", s.handleRevisionMeta)
-	s.Mux.HandleFunc("GET /api/files-batch", s.handleFilesBatch)
-	s.Mux.HandleFunc("GET /api/conflicts", s.handleConflicts)
-	s.Mux.HandleFunc("GET /api/file-history", s.handleFileHistory)
-	s.Mux.HandleFunc("POST /api/index-paths", s.handleIndexPaths)
-	s.Mux.HandleFunc("GET /api/remotes", s.handleRemotes)
-	s.Mux.HandleFunc("GET /api/oplog", s.handleOpLog)
-	s.Mux.HandleFunc("GET /api/op/show", s.handleOpShow)
-	s.Mux.HandleFunc("GET /api/evolog", s.handleEvolog)
-	s.Mux.HandleFunc("GET /api/divergence", s.handleDivergence)
-	s.Mux.HandleFunc("GET /api/stale-immutable", s.handleStaleImmutable)
-	s.Mux.HandleFunc("GET /api/diff-range", s.handleDiffRange)
-	s.Mux.HandleFunc("GET /api/file-show", s.handleFileShow)
-	s.Mux.HandleFunc("GET /api/file-raw", s.handleFileRaw)
-	s.Mux.HandleFunc("GET /api/info", s.handleInfo)
-	s.Mux.HandleFunc("GET /api/workspaces", s.handleWorkspaces)
+	reg := func(pattern string, h http.HandlerFunc) {
+		s.apiRoutes = append(s.apiRoutes, pattern)
+		s.Mux.HandleFunc(pattern, h)
+	}
+	reg("GET /api/log", s.handleLog)
+	reg("GET /api/bookmarks", s.handleBookmarks)
+	reg("GET /api/diff", s.handleDiff)
+	reg("GET /api/files", s.handleFiles)
+	reg("GET /api/description", s.handleGetDescription)
+	reg("GET /api/revision", s.handleRevision)
+	reg("GET /api/revision-meta", s.handleRevisionMeta)
+	reg("GET /api/files-batch", s.handleFilesBatch)
+	reg("GET /api/conflicts", s.handleConflicts)
+	reg("GET /api/file-history", s.handleFileHistory)
+	reg("POST /api/index-paths", s.handleIndexPaths)
+	reg("GET /api/remotes", s.handleRemotes)
+	reg("GET /api/oplog", s.handleOpLog)
+	reg("GET /api/op/show", s.handleOpShow)
+	reg("GET /api/evolog", s.handleEvolog)
+	reg("GET /api/divergence", s.handleDivergence)
+	reg("GET /api/stale-immutable", s.handleStaleImmutable)
+	reg("GET /api/diff-range", s.handleDiffRange)
+	reg("GET /api/file-show", s.handleFileShow)
+	reg("GET /api/file-raw", s.handleFileRaw)
+	reg("GET /api/info", s.handleInfo)
+	reg("GET /api/workspaces", s.handleWorkspaces)
 
-	s.Mux.HandleFunc("POST /api/new", s.handleNew)
-	s.Mux.HandleFunc("POST /api/edit", s.handleEdit)
-	s.Mux.HandleFunc("POST /api/abandon", s.handleAbandon)
-	s.Mux.HandleFunc("POST /api/metaedit-change-id", s.handleMetaeditChangeId)
-	s.Mux.HandleFunc("POST /api/restore", s.handleRestore)
-	s.Mux.HandleFunc("POST /api/describe", s.handleDescribe)
-	s.Mux.HandleFunc("POST /api/rebase", s.handleRebase)
-	s.Mux.HandleFunc("POST /api/squash", s.handleSquash)
-	s.Mux.HandleFunc("POST /api/split", s.handleSplit)
-	s.Mux.HandleFunc("POST /api/split-hunks", s.handleSplitHunks)
-	s.Mux.HandleFunc("POST /api/resolve", s.handleResolve)
-	s.Mux.HandleFunc("POST /api/merge-resolve", s.handleMergeResolve)
-	s.Mux.HandleFunc("POST /api/undo", s.handleUndo)
-	s.Mux.HandleFunc("POST /api/op/undo", s.opMutation(jj.OpUndo))
-	s.Mux.HandleFunc("POST /api/op/restore", s.opMutation(jj.OpRestore))
-	s.Mux.HandleFunc("POST /api/restore-from", s.handleRestoreFrom)
-	s.Mux.HandleFunc("POST /api/snapshot", s.handleSnapshot)
-	s.Mux.HandleFunc("POST /api/workspace/add", s.handleWorkspaceAdd)
-	s.Mux.HandleFunc("POST /api/workspace/update-stale", s.handleWorkspaceUpdateStale)
-	s.Mux.HandleFunc("POST /api/unlock-repo", s.handleUnlockRepo)
-	s.Mux.HandleFunc("POST /api/commit", s.handleCommit)
-	s.Mux.HandleFunc("POST /api/open-file", s.handleOpenFile)
+	reg("POST /api/new", s.handleNew)
+	reg("POST /api/edit", s.handleEdit)
+	reg("POST /api/abandon", s.handleAbandon)
+	reg("POST /api/metaedit-change-id", s.handleMetaeditChangeId)
+	reg("POST /api/restore", s.handleRestore)
+	reg("POST /api/describe", s.handleDescribe)
+	reg("POST /api/rebase", s.handleRebase)
+	reg("POST /api/squash", s.handleSquash)
+	reg("POST /api/split", s.handleSplit)
+	reg("POST /api/split-hunks", s.handleSplitHunks)
+	reg("POST /api/resolve", s.handleResolve)
+	reg("POST /api/merge-resolve", s.handleMergeResolve)
+	reg("POST /api/undo", s.handleUndo)
+	reg("POST /api/op/undo", s.opMutation(jj.OpUndo))
+	reg("POST /api/op/restore", s.opMutation(jj.OpRestore))
+	reg("POST /api/restore-from", s.handleRestoreFrom)
+	reg("POST /api/snapshot", s.handleSnapshot)
+	reg("POST /api/workspace/add", s.handleWorkspaceAdd)
+	reg("POST /api/workspace/update-stale", s.handleWorkspaceUpdateStale)
+	reg("POST /api/unlock-repo", s.handleUnlockRepo)
+	reg("POST /api/commit", s.handleCommit)
+	reg("POST /api/open-file", s.handleOpenFile)
 
-	s.Mux.HandleFunc("POST /api/bookmark/set", s.bookmarkRevMutation(jj.BookmarkSet))
-	s.Mux.HandleFunc("POST /api/bookmark/delete", s.bookmarkMutation(jj.BookmarkDelete))
-	s.Mux.HandleFunc("POST /api/bookmark/move", s.bookmarkRevMutation(func(rev, name string) jj.CommandArgs {
+	reg("POST /api/bookmark/set", s.bookmarkRevMutation(jj.BookmarkSet))
+	reg("POST /api/bookmark/delete", s.bookmarkMutation(jj.BookmarkDelete))
+	reg("POST /api/bookmark/move", s.bookmarkRevMutation(func(rev, name string) jj.CommandArgs {
 		return jj.BookmarkMove(rev, name, "--allow-backwards")
 	}))
-	s.Mux.HandleFunc("POST /api/bookmark/advance", s.bookmarkRevMutation(jj.BookmarkAdvance))
-	s.Mux.HandleFunc("POST /api/bookmark/forget", s.bookmarkMutation(jj.BookmarkForget))
-	s.Mux.HandleFunc("POST /api/bookmark/track", s.bookmarkRemoteMutation(jj.BookmarkTrack))
-	s.Mux.HandleFunc("POST /api/bookmark/untrack", s.bookmarkRemoteMutation(jj.BookmarkUntrack))
-	s.Mux.HandleFunc("POST /api/bookmark/set-to-remote", s.bookmarkRemoteMutation(jj.BookmarkSetToRemote))
+	reg("POST /api/bookmark/advance", s.bookmarkRevMutation(jj.BookmarkAdvance))
+	reg("POST /api/bookmark/forget", s.bookmarkMutation(jj.BookmarkForget))
+	reg("POST /api/bookmark/track", s.bookmarkRemoteMutation(jj.BookmarkTrack))
+	reg("POST /api/bookmark/untrack", s.bookmarkRemoteMutation(jj.BookmarkUntrack))
+	reg("POST /api/bookmark/set-to-remote", s.bookmarkRemoteMutation(jj.BookmarkSetToRemote))
 
-	s.Mux.HandleFunc("GET /api/aliases", s.handleAliases)
-	s.Mux.HandleFunc("POST /api/alias", s.handleRunAlias)
+	reg("GET /api/aliases", s.handleAliases)
+	reg("POST /api/alias", s.handleRunAlias)
 
-	s.Mux.HandleFunc("GET /api/pull-requests", s.handlePullRequests)
+	reg("GET /api/pull-requests", s.handlePullRequests)
 
-	s.Mux.HandleFunc("GET /api/config", handleConfigGet)
-	s.Mux.HandleFunc("POST /api/config", handleConfigSet)
-	s.Mux.HandleFunc("GET /api/config/raw", handleConfigGetRaw)
-	s.Mux.HandleFunc("POST /api/config/raw", handleConfigSetRaw)
+	reg("GET /api/config", handleConfigGet)
+	reg("POST /api/config", handleConfigSet)
+	reg("GET /api/config/raw", handleConfigGetRaw)
+	reg("POST /api/config/raw", handleConfigSetRaw)
 
-	s.Mux.HandleFunc("GET /api/annotations", s.handleAnnotationsGet)
-	s.Mux.HandleFunc("POST /api/annotations", s.handleAnnotationsPost)
-	s.Mux.HandleFunc("DELETE /api/annotations", s.handleAnnotationsDelete)
+	reg("GET /api/annotations", s.handleAnnotationsGet)
+	reg("POST /api/annotations", s.handleAnnotationsPost)
+	reg("DELETE /api/annotations", s.handleAnnotationsDelete)
 
-	s.Mux.HandleFunc("GET /api/doc-comments", s.handleDocComments)
-	s.Mux.HandleFunc("POST /api/doc-comments", s.handleDocComments)
-	s.Mux.HandleFunc("DELETE /api/doc-comments", s.handleDocComments)
-	s.Mux.HandleFunc("GET /api/agent", s.handleAgentDocs)
+	reg("GET /api/doc-comments", s.handleDocComments)
+	reg("POST /api/doc-comments", s.handleDocComments)
+	reg("DELETE /api/doc-comments", s.handleDocComments)
+	reg("POST /api/doc-comments/batch", s.handleDocCommentsBatch)
+	reg("GET /api/agent", s.handleAgentDocs)
+	reg("GET /api/capabilities", s.handleCapabilities)
+	reg("POST /api/navigate", s.handleNavigate)
 	// Index for cold agent discovery — probing the bare /api path yields a
 	// pointer to the doc instead of a 404.
-	s.Mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
+	reg("GET /api", func(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, r, http.StatusOK, map[string]string{
-			"_note":    "paths are relative to your tab base — the URL you used to reach this, minus the trailing /api",
-			"docs":     "/api/agent",
-			"comments": "/api/doc-comments",
-			"file":     "/api/file-show",
+			"_note":        "paths are relative to your tab base — the URL you used to reach this, minus the trailing /api",
+			"docs":         "/api/agent",
+			"capabilities": "/api/capabilities",
+			"comments":     "/api/doc-comments",
+			"file":         "/api/file-show",
 		})
 	})
 
   // handle file edits
-	s.Mux.HandleFunc("POST /api/file-write", s.handleFileWrite)
+	reg("POST /api/file-write", s.handleFileWrite)
 
-	s.Mux.HandleFunc("POST /api/git/push", s.handleGitPush)
-	s.Mux.HandleFunc("POST /api/git/fetch", s.handleGitFetch)
+	reg("POST /api/git/push", s.handleGitPush)
+	reg("POST /api/git/fetch", s.handleGitFetch)
 
 	// SSE auto-refresh — registered lazily since Watcher is set after NewServer.
-	s.Mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
+	reg("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
 		if s.Watcher != nil {
 			s.Watcher.handleEvents(w, r)
 		} else {

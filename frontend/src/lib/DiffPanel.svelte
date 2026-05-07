@@ -1121,7 +1121,7 @@
     collapsedFiles.clear()
   }
 
-  function scrollToFile(path: string, opts: { expand?: boolean; smooth?: boolean } = {}) {
+  export function scrollToFile(path: string, opts: { expand?: boolean; smooth?: boolean } = {}) {
     const { expand = true, smooth = true } = opts
     if (expand) collapsedFiles.delete(path)
     requestAnimationFrame(() => {

@@ -184,3 +184,96 @@ func TestDocComments_Validation(t *testing.T) {
 		})
 	}
 }
+
+func TestDocCommentsBatch(t *testing.T) {
+	srv := newDocCommentServer(t)
+	const fp = "docs/design.md"
+
+	body, _ := json.Marshal(docCommentBatchRequest{
+		FilePath: fp,
+		Comments: []DocComment{
+			{Anchor: DocAnchor{Selection: "a"}, Body: "first"},
+			{Anchor: DocAnchor{Selection: "b"}, Body: "second"},
+			{ID: "fixed", Anchor: DocAnchor{Selection: "c"}, Body: "third"},
+		},
+	})
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/doc-comments/batch", body))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var stamped []DocComment
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &stamped))
+	require.Len(t, stamped, 3)
+	assert.NotEmpty(t, stamped[0].ID, "server stamps id")
+	assert.NotZero(t, stamped[0].CreatedAt)
+	assert.Equal(t, fp, stamped[0].FilePath, "filePath stamped from batch")
+	assert.Equal(t, "fixed", stamped[2].ID, "explicit id preserved")
+
+	got := getDocComments(t, srv, fp)
+	require.Len(t, got, 3)
+}
+
+func TestDocCommentsBatch_ValidateAllBeforeWrite(t *testing.T) {
+	srv := newDocCommentServer(t)
+	const fp = "docs/design.md"
+
+	body, _ := json.Marshal(docCommentBatchRequest{
+		FilePath: fp,
+		Comments: []DocComment{
+			{Anchor: DocAnchor{Selection: "ok"}, Body: "first"},
+			{Anchor: DocAnchor{Selection: ""}, Body: "bad — empty selection"},
+		},
+	})
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/doc-comments/batch", body))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "comments[1]")
+
+	got := getDocComments(t, srv, fp)
+	assert.Empty(t, got, "all-or-nothing: nothing written on validation failure")
+}
+
+func TestDocCommentsBatch_PreservesResolution(t *testing.T) {
+	srv := newDocCommentServer(t)
+	const fp = "docs/design.md"
+
+	// Seed one resolved comment via single-POST.
+	seed, _ := json.Marshal(DocComment{
+		ID: "c1", FilePath: fp, Anchor: DocAnchor{Selection: "x"},
+		Resolution: "addressed", ResolvedAt: 1000,
+	})
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/doc-comments", seed))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Batch re-POST same id with empty resolution → must preserve.
+	body, _ := json.Marshal(docCommentBatchRequest{
+		FilePath: fp,
+		Comments: []DocComment{{ID: "c1", Anchor: DocAnchor{Selection: "x"}, Body: "amended"}},
+	})
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/doc-comments/batch", body))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	got := getDocComments(t, srv, fp)
+	require.Len(t, got, 1)
+	assert.Equal(t, "addressed", got[0].Resolution)
+	assert.Equal(t, "amended", got[0].Body)
+}
+
+func TestDocCommentsBatch_BadRequest(t *testing.T) {
+	srv := newDocCommentServer(t)
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"missing file_path", `{"comments":[{"anchor":{"selection":"x"}}]}`},
+		{"empty comments", `{"file_path":"a.md","comments":[]}`},
+		{"path escapes", `{"file_path":"../etc","comments":[{"anchor":{"selection":"x"}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			srv.Mux.ServeHTTP(w, jsonPost("/api/doc-comments/batch", []byte(tc.body)))
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}

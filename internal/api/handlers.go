@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -526,6 +527,75 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"jj_version":                s.resolveJJVersion(r.Context()),
 		"watchman_snapshot_trigger": s.jjConfigBool(r.Context(), "fsmonitor.watchman.register-snapshot-trigger"),
 	})
+}
+
+// apiVersion bumps when an existing route's request/response shape changes
+// incompatibly. Adding routes does NOT bump it — agents probe `actions`.
+const apiVersion = 1
+
+type capabilitiesResponse struct {
+	APIVersion int      `json:"api_version"`
+	JJVersion  string   `json:"jj_version"`
+	Actions    []string `json:"actions"`
+}
+
+func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	seen := map[string]bool{}
+	actions := make([]string, 0, len(s.apiRoutes))
+	for _, p := range s.apiRoutes {
+		// Go 1.22 mux patterns are "METHOD /path" — strip the method.
+		if i := strings.IndexByte(p, ' '); i > 0 {
+			p = p[i+1:]
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		actions = append(actions, p)
+	}
+	sort.Strings(actions)
+	s.writeJSON(w, r, http.StatusOK, capabilitiesResponse{
+		APIVersion: apiVersion,
+		JJVersion:  s.resolveJJVersion(r.Context()),
+		Actions:    actions,
+	})
+}
+
+type navigateRequest struct {
+	ChangeID string `json:"change_id,omitempty"`
+	FilePath string `json:"file_path,omitempty"`
+	Line     int    `json:"line,omitempty"`
+}
+
+// handleNavigate broadcasts a one-shot navigation hint to connected SSE
+// clients. The frontend's onNavigate handler scrolls the human's view there —
+// the agent-guided-review steering verb. The validated struct is RE-MARSHALED
+// (not echoed from the request body) so an attacker-controlled body containing
+// "\n\nevent: ..." can't inject SSE frames.
+func (s *Server) handleNavigate(w http.ResponseWriter, r *http.Request) {
+	if s.Watcher == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "navigate requires SSE (--no-watch disables it)")
+		return
+	}
+	var req navigateRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.ChangeID == "" && req.FilePath == "" {
+		s.writeError(w, http.StatusBadRequest, "change_id or file_path required")
+		return
+	}
+	// Cap before broadcast — payload is copied into every subscriber's chan
+	// buffer; an oversized field is a cheap amplification vector. 4k is far
+	// beyond any real change_id (~12 chars) or repo-relative path.
+	if len(req.ChangeID) > 256 || len(req.FilePath) > 4096 {
+		s.writeError(w, http.StatusBadRequest, "field too long")
+		return
+	}
+	js, _ := json.Marshal(req)
+	s.Watcher.Navigate(js)
+	s.writeJSON(w, r, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // jjConfigBool reads a boolean jj config key. Returns false on any error
