@@ -326,7 +326,7 @@ describe('footnotes', () => {
 
   it('def appearing before its ref renders (not dropped)', () => {
     // Def at top renders FIRST — def renderer must create the entry too,
-    // not just the ref renderer. (bughunt-lite 3-2 finding.)
+    // not just the ref renderer.
     const html = renderMarkdown('[^1]: defined first\n\nText with[^1] ref.')
     expect(html).toContain('defined first')
     expect(html).not.toContain('(missing)')

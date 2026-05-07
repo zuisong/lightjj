@@ -117,12 +117,12 @@ func TestAbandon_IgnoreImmutable(t *testing.T) {
 
 func TestDiff(t *testing.T) {
 	got := Diff("abc", "", "")
-	assert.Equal(t, []string{"diff", "-r", "abc", "--color", "always", "--ignore-working-copy"}, got)
+	assert.Equal(t, []string{"diff", "-r", "abc", "--color", "always", "--ignore-working-copy", "--config", pinGitDiffPrefix}, got)
 }
 
 func TestDiff_NoColor(t *testing.T) {
 	got := Diff("abc", "", "never")
-	assert.Equal(t, []string{"diff", "-r", "abc", "--color", "never", "--ignore-working-copy"}, got)
+	assert.Equal(t, []string{"diff", "-r", "abc", "--color", "never", "--ignore-working-copy", "--config", pinGitDiffPrefix}, got)
 }
 
 func TestDiff_WithFile(t *testing.T) {
@@ -579,7 +579,7 @@ func TestParseOpLog_Malformed(t *testing.T) {
 
 func TestDiffRange(t *testing.T) {
 	got := DiffRange("abc", "def", nil)
-	assert.Equal(t, []string{"diff", "--from", "abc", "--to", "def", "--tool", ":git", "--color", "never", "--ignore-working-copy"}, got)
+	assert.Equal(t, []string{"diff", "--from", "abc", "--to", "def", "--tool", ":git", "--color", "never", "--ignore-working-copy", "--config", pinGitDiffPrefix}, got)
 }
 
 func TestDiffRange_WithFiles(t *testing.T) {

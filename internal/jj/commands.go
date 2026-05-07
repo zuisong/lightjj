@@ -17,6 +17,15 @@ const (
 
 type CommandArgs = []string
 
+// pinGitDiffPrefix locks jj's git-format diff output to include the a/ b/
+// path prefixes diff-parser.ts:filePathFromHeader anchors on. jj 0.41 added
+// diff.git.show-path-prefix; a user who sets it false globally would emit
+// `diff --git path path` and the header regex falls through to the raw-line
+// fallback (wrong file keys, no highlight). Unknown --config keys are silently
+// accepted on older jj, so no version gate. Same defensive class as --tool :git
+// (defeats difftastic) and --color never (defeats ANSI).
+const pinGitDiffPrefix = "diff.git.show-path-prefix=true"
+
 // Version returns args for `jj --version`. Output format: `jj 0.39.0`.
 func Version() CommandArgs {
 	return []string{"--version"}
@@ -162,7 +171,7 @@ func Diff(revision string, fileName string, color string, extraArgs ...string) C
 	if color == "" {
 		color = "always"
 	}
-	args := []string{"diff", "-r", revision, "--color", color, "--ignore-working-copy"}
+	args := []string{"diff", "-r", revision, "--color", color, "--ignore-working-copy", "--config", pinGitDiffPrefix}
 	if fileName != "" {
 		args = append(args, EscapeFileName(fileName))
 	}
@@ -304,7 +313,7 @@ func Squash(from SelectedRevisions, destination string, files []string, keepEmpt
 
 // DiffRange builds args for `jj diff --from X --to Y` to compare two specific commits.
 func DiffRange(from, to string, files []string) CommandArgs {
-	args := []string{"diff", "--from", from, "--to", to, "--tool", ":git", "--color", "never", "--ignore-working-copy"}
+	args := []string{"diff", "--from", from, "--to", to, "--tool", ":git", "--color", "never", "--ignore-working-copy", "--config", pinGitDiffPrefix}
 	if len(files) > 0 {
 		args = append(args, escapeFiles(files)...)
 	}
@@ -381,7 +390,7 @@ func Evolog(revision string) CommandArgs {
 		`operation.description() ++ "\x1F" ++ ` +
 		`predecessors.map(|p| p.commit_id().short(12)).join(",") ++ "\x1F" ++ ` +
 		`self.inter_diff().git() ++ "\x1E"`
-	return []string{"evolog", "-r", revision, "--no-graph", "--color", "never", "--ignore-working-copy", "-T", tmpl}
+	return []string{"evolog", "-r", revision, "--no-graph", "--color", "never", "--ignore-working-copy", "--config", pinGitDiffPrefix, "-T", tmpl}
 }
 
 type EvologEntry struct {

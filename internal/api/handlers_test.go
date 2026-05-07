@@ -524,9 +524,8 @@ func TestHandleUnlockRepo_RunnerError(t *testing.T) {
 // snapshot-success paths. Both must clear stale + broadcast fresh-wc via
 // setStale(false) — otherwise a CLI-fixed staleness + tab-focus snapshot
 // leaves server stale=true until snapshotLoop's next tick (≤5s), and an SSE
-// reconnect in that window shows a false stale-wc warning. The asymmetry
-// (handleSnapshot didn't clear, handleWorkspaceUpdateStale did) was a
-// confirmed bug from the 2026-03-18 targeted bughunt.
+// reconnect in that window shows a false stale-wc warning. handleSnapshot
+// previously didn't clear (handleWorkspaceUpdateStale did) — sibling asymmetry.
 func TestHandler_ClearsStale(t *testing.T) {
 	for _, tc := range []struct {
 		name string
