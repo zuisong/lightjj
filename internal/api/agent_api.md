@@ -1,4 +1,4 @@
-# lightjj agent API — doc-mode comments & suggestions
+# lightjj agent API
 
 lightjj's doc mode lets a human review markdown files with range-anchored
 comments and accept/reject text suggestions. Agents interact with the same
@@ -16,9 +16,15 @@ A running lightjj writes `{pid, addr, port, repo_dir, mode, started_at}` to
 ```sh
 dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/lightjj-$(id -u)}"
 [ -n "$XDG_RUNTIME_DIR" ] && dir="$dir/lightjj"
+[ -O "$dir/sessions" ] || exit 1   # refuse a dir you don't own
 jq -r --arg repo "$PWD" 'select(.repo_dir == $repo) | .addr' "$dir"/sessions/*.json
 # → 127.0.0.1:54321
 ```
+
+On a shared `/tmp`, verify you own the directory before trusting `addr` —
+lightjj refuses to *write* into a dir it doesn't own, but a planted file would
+otherwise redirect your traffic. Unix only; on Windows fall back to the
+`Agent hint` button in the doc-mode UI which shows the URL directly.
 
 All routes are tab-scoped: `<base> = http://<addr>/tab/{N}`. Tab 0 is the repo
 lightjj was launched in; `GET http://<addr>/tabs` lists open tabs with their
@@ -137,7 +143,7 @@ the entire array before writing any (all-or-nothing):
 
 ```jsonc
 {
-  "file_path": "docs/DESIGN.md",
+  "filePath": "docs/DESIGN.md",
   "comments": [
     { "anchor": {"selection": "..."}, "kind": "comment", "body": "..." },
     { "anchor": {"selection": "..."}, "kind": "suggestion",
@@ -163,7 +169,7 @@ to that file. Use this to walk the user through a review: post a batch of
 comments, then `navigate` to the first one. `change_id` and/or `file_path`
 required; `line` is accepted but currently ignored. `503` if the server was
 started with `--no-watch` (no SSE channel to push through). Ignored if the
-user is mid-rebase/squash — they'll see an info toast instead.
+user is mid-rebase/squash/merge/doc-mode — they'll see an info toast instead.
 
 ## Read back / poll
 

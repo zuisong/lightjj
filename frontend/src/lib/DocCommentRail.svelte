@@ -216,8 +216,6 @@
   .resolved-badge { font-size: var(--fs-2xs); color: var(--green); }
   .resolved-badge.wontfix { color: var(--subtext0); }
 
-  .orphan-header { margin-top: 12px; }
-
   @media (max-width: 900px) {
     .rail { width: 240px; }
   }

@@ -266,9 +266,9 @@ func TestDocCommentsBatch_BadRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 	}{
-		{"missing file_path", `{"comments":[{"anchor":{"selection":"x"}}]}`},
-		{"empty comments", `{"file_path":"a.md","comments":[]}`},
-		{"path escapes", `{"file_path":"../etc","comments":[{"anchor":{"selection":"x"}}]}`},
+		{"missing filePath", `{"comments":[{"anchor":{"selection":"x"}}]}`},
+		{"empty comments", `{"filePath":"a.md","comments":[]}`},
+		{"path escapes", `{"filePath":"../etc","comments":[{"anchor":{"selection":"x"}}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()

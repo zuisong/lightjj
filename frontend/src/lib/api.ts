@@ -53,12 +53,18 @@ export type AnnotationStatus = 'open' | 'resolved' | 'orphaned'
 /** lineNum sentinel for file-level annotations (line numbers are 1-based). */
 export const FILE_LEVEL = 0
 
+export type DiffSide = 'old' | 'new'
+
 export interface Annotation {
   id: string
   changeId: string
   filePath: string
-  /** 1-based new-side line number, or FILE_LEVEL (0) for whole-file. */
+  /** 1-based line number on `side`, or FILE_LEVEL (0) for whole-file. */
   lineNum: number
+  /** Which side of the diff `lineNum` refers to. Absent = 'new' (back-compat:
+   *  pre-side annotations were always new-side). 'old' = comment on a deleted
+   *  line — "why was this removed?". */
+  side?: DiffSide
   lineContent: string // snapshot for re-anchor after agent iterates
   comment: string
   severity: AnnotationSeverity

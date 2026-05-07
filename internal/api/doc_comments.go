@@ -113,7 +113,7 @@ func mergeDocComment(items []DocComment, c DocComment, stamped bool) ([]DocComme
 const maxBatchComments = 256
 
 type docCommentBatchRequest struct {
-	FilePath string       `json:"file_path"`
+	FilePath string       `json:"filePath"`
 	Comments []DocComment `json:"comments"`
 }
 
@@ -128,7 +128,7 @@ func (s *Server) handleDocCommentsBatch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if req.FilePath == "" {
-		s.writeError(w, http.StatusBadRequest, "file_path required")
+		s.writeError(w, http.StatusBadRequest, "filePath required")
 		return
 	}
 	if n := len(req.Comments); n == 0 || n > maxBatchComments {

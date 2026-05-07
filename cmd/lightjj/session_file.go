@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -115,7 +116,14 @@ func sweepStaleSessions(dir string) {
 // writeSessionFile writes the metadata file and returns its path for cleanup.
 // Sweeps stale entries first so crashes don't accumulate. Non-fatal on error —
 // agent discovery is best-effort; the server still works.
+//
+// No-op on Windows: os.Getuid()==-1, fileStat.Mode() synthesizes 0777 (so the
+// 0o077 check is a wall not a gate), and Signal(0) is unsupported (sweep would
+// delete live siblings). release.yml ships darwin/linux only.
 func writeSessionFile(info sessionInfo) string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
 	dir, err := sessionDir()
 	if err != nil {
 		return ""

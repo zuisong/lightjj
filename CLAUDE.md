@@ -20,6 +20,7 @@ go build -tags embed ./cmd/lightjj                   # build binary (needs front
 
 ```
 cmd/lightjj/main.go       — CLI entry point, flag parsing, embeds frontend-dist/
+cmd/lightjj/session_file.go — Agent port-discovery: writes {pid,addr,repo_dir,mode} to $XDG_RUNTIME_DIR/lightjj/sessions/<pid>.json after bind; stale-pid sweep; symlink-race-hardened TempDir fallback (verifyOwnedDir double-check). No-op on Windows. Agents match by repo_dir instead of needing the random port.
 internal/
   jj/                     — Command builders + data models (PURE — no I/O, no side effects)
     commands.go            — Functions that return []string args for jj subcommands
@@ -62,6 +63,10 @@ internal/
     graph_test.go          — Graph parser tests
 testutil/                  — Test infrastructure
   mock_runner.go           — MockRunner with Expect(args)/Verify() pattern
+frontend/src/testutil/
+  mock-api.ts              — `vi.mock('./lib/api')` netStubs: Proxy-based `mockApi` (records calls, routes reads to Fixtures), `mkRevision`/`mkInfo` builders, `triggerNavigate` to fire the onNavigate handler. importActual keeps pure helpers (effectiveId etc.) real.
+  wait-for.ts              — `waitForFrame()` (double-rAF), `waitFor(pred)` polling
+frontend/src/App.interactions.test.ts — In-process keyboard-gate tests (j/k, Space, R-mode swallows globalKeys, branches fallthrough, `}` no-annotations, agent-navigate gate). Mounts App with mock-api; presses on document.body (bubbles to `<svelte:window>`).
 frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
   src/AppShell.svelte      — Tab-switch host. Snapshots `{selectedIndex, revsetFilter, activeView, diffScrollTop}` via `appRef.getState()` BEFORE the `{#key activeTabId}` remount, feeds as `initialState` prop to the new App instance. Inline modes NOT preserved (half-complete rebase across tabs is a footgun).
   src/App.svelte           — Main app shell: layout, keyboard handling, state management, revset filter bar (owned here — direct state access, no callback props). `handleKeydown` delegates to `routeKeydown` (keyboard-gate.ts) with handler callbacks; gate ORDER is load-bearing (Cmd+K before isInInput = works in text fields; inlineNav swallows everything = normal-mode keys don't leak into modes). Cmd+K uses `closeModals()` not `closeAllModals()` — palette opens without cancelling inline modes.
@@ -71,7 +76,7 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     RevisionGraph.svelte   — Revision list with graph gutter rendering; JS-tracked hoveredIndex (mousemove-driven, not :hover). Virtualized via `createWindower` (virtual.svelte.ts) above VIRTUALIZE_THRESHOLD=150 flatLines (~50 commits). Fixed 18px rows → pure-arithmetic windowing (no per-row measurement). Row template is a {#snippet} shared by virtual/eager paths. Pure display — no revset filter input (that lives in App.svelte above RevisionGraph inside `revision-panel-wrapper`).
     virtual.svelte.ts      — `createWindower()` fixed-row-height virtualization. count/scrollEl passed as getters → reactive without $effect glue. `items` is $derived reading count directly → no lag-frame between count shrink and item re-render (the tanstack setOptions-via-$effect problem). `scrollToIndex` implements align:'auto'.
     GraphSvg.svelte        — SVG renderer for graph gutter characters (pipes, curves, node dots)
-    DiffPanel.svelte       — Diff viewer: unified/split toggle, syntax highlighting, edit-state management. Reset effect (activeRevisionId change) clears edit/search/expanded state + saves/restores collapseStateCache (change_id-keyed). startEdit/discardFile guard against navigation-during-await by comparing captured changeId vs LIVE diffTarget prop.
+    DiffPanel.svelte       — Diff viewer: unified/split toggle, syntax highlighting, edit-state management. Reset effect (activeRevisionId change) clears edit/search/expanded state + saves/restores collapseStateCache (change_id-keyed). startEdit/discardFile guard against navigation-during-await by comparing captured changeId vs LIVE diffTarget prop. `[`/`]` → `stepHunk(dir)` over `flatHunks` (cross-file); `{`/`}` → `stepAnnotation(dir)` over `navAnnotations` (file-order sorted). Both via `scrollToHunk(path, hunkIdx)` (collapsedFiles.delete → rAF → data-attr query).
     diff-cache.ts          — App-lifetime caches: derivedCache (highlight+word-diff, commit_id-keyed), parsedDiffCache (diff-text-keyed for ref-identity on revisit), collapseStateCache (change_id-keyed). Previously DiffPanel `<script module>`; hoisted so clearDiffCaches() is callable from hard-refresh. NOT wired into clearAllCaches() (would create api.ts ↔ diff-cache cycle); App calls both.
     FileSelectionPanel.svelte — Squash/split/review file checkbox panel. j/k/Space/a/n keys, auto-focus on mount. Mounted via `{#if fileSelectionMode}` so mount = mode entry.
     RevisionHeader.svelte  — Header slot rendered by DiffPanel via `{@render header()}`: change_id, description expand, bookmark/PR badges, Describe/Divergence buttons, DescriptionEditor
@@ -134,7 +139,7 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     modes.svelte.ts        — Rebase/squash/split mode state factories. `ModeBase.diffFollows` is the per-mode nav semantic (rebase=true destination-preview, squash/split=false frozen-on-source) — App derives `diffFrozen` from this so mouse onselect + the multi-check $effect read one source instead of each spelling out `squash.active || split.active`. `inlineMode` stays for binary gates; `diffFrozen` is the answer `inlineMode` can't give. SplitMode.review distinguishes 'v' (review: accepted/rejected labels) from 's' (split: stays/moves labels) — same jj split underneath.
     config.svelte.ts       — Reactive config singleton — primary storage os.UserConfigDir()/lightjj/config.json, localStorage as write-through cache. `applyPartial()` pushes a parsed object into reactive state (known keys only) for ConfigModal live-apply; the save-effect then persists. `fontSize` getter clamps to `FONT_SIZE_MIN..MAX` with `Number()`+`isFinite` so all read sites (CSS var, palette label, ±1 arithmetic) see a sane value regardless of load path.
     recent-actions.svelte.ts — localStorage-backed frequency counter for bookmarks
-    annotations.svelte.ts   — Per-line review comment store for agent workflows. createAnnotationStore() + reanchor() + exportMarkdown/JSON. Server-side storage via /api/annotations (workspace tabs share). Re-anchor via diffRange delta + ±5 content scan.
+    annotations.svelte.ts   — Per-line review comment store for agent workflows. createAnnotationStore() + reanchor() + exportMarkdown/JSON. Server-side storage via /api/annotations (workspace tabs share). `side?: 'old'|'new'` (default new) lets comments target deleted lines; `byLine` key includes side. Re-anchor via diffRange delta + ±5 content scan (new-side only — old-side pinned to pre-image).
     AnnotationBubble.svelte — Annotation create/edit popup (severity select + textarea)
     WelcomeModal.svelte    — "What's new" modal shown on version bump; content from tutorial-content.ts
     tutorial-content.ts    — Feature announcements keyed by version

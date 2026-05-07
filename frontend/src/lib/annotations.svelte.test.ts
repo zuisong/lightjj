@@ -418,6 +418,30 @@ describe('createAnnotationStore', () => {
     expect(store.forLine('baz.go', 10)).toEqual([])
   })
 
+  it("forLine() buckets by side; legacy entries (no side) match 'new'", async () => {
+    mockAnnotations.mockResolvedValue([
+      mkStoreAnn('a1', { filePath: 'f.go', lineNum: 7 }),               // legacy → new
+      mkStoreAnn('a2', { filePath: 'f.go', lineNum: 7, side: 'old' }),  // explicit old
+    ])
+    const store = createAnnotationStore()
+    await store.load('xyz', 'abc')
+    expect(store.forLine('f.go', 7)).toHaveLength(1)           // default = 'new'
+    expect(store.forLine('f.go', 7, 'new')[0].id).toBe('a1')
+    expect(store.forLine('f.go', 7, 'old')[0].id).toBe('a2')
+  })
+
+  it('load() skips reanchor for old-side annotations', async () => {
+    // Old-side lineNum indexes the change's PARENT, which the
+    // diffRange(createdAtCommitId, current) inter-diff doesn't cover.
+    mockAnnotations.mockResolvedValue([
+      mkStoreAnn('a1', { lineNum: 5, side: 'old', createdAtCommitId: 'old' }),
+    ])
+    const store = createAnnotationStore()
+    await store.load('xyz', 'current') // commitId ≠ createdAtCommitId
+    expect(mockDiffRange).not.toHaveBeenCalled()
+    expect(store.list[0].lineNum).toBe(5) // unchanged
+  })
+
   it('add() generates id + createdAt and POSTs', async () => {
     mockAnnotations.mockResolvedValue([])
     const store = createAnnotationStore()

@@ -712,7 +712,8 @@
     { label: 'Clear revset filter', category: 'Navigation', action: clearRevsetFilter, when: () => revsetFilter !== '' },
     ...STATIC_PRESETS.map(p => ({ label: `View: ${p.label}`, hint: p.revset, category: 'Navigation', action: () => applyRevsetExample(p.revset) })),
     { label: 'Jump to working copy (@)', shortcut: '@', category: 'Navigation', action: () => { if (workingCopyIndex >= 0) selectRevision(workingCopyIndex) }, when: () => workingCopyIndex >= 0 },
-    { label: 'Next file / Previous file', shortcut: '] / [', category: 'Navigation', action: noop, infoOnly: true },
+    { label: 'Next / Previous hunk', shortcut: '] / [', category: 'Navigation', action: noop, infoOnly: true },
+    { label: 'Next / Previous annotation', shortcut: '} / {', category: 'Navigation', action: noop, infoOnly: true },
     { label: 'Toggle markdown preview', shortcut: 'm', category: 'Navigation', action: () => diffPanelRef?.togglePreviewActive(), when: () => !inlineMode },
     { label: 'Open file as document…', category: 'Navigation', action: () => {
       const p = prompt('Open as document (repo-relative .md path):')
@@ -2278,8 +2279,10 @@
       case 'r': e.preventDefault(); userRefresh(); break
       case 'b': e.preventDefault(); openBookmarkModal(); break
       case '/': e.preventDefault(); revsetInputEl?.focus(); break
-      case ']': e.preventDefault(); diffPanelRef?.stepFile(1); break
-      case '[': e.preventDefault(); diffPanelRef?.stepFile(-1); break
+      case ']': e.preventDefault(); diffPanelRef?.stepHunk(1); break
+      case '[': e.preventDefault(); diffPanelRef?.stepHunk(-1); break
+      case '}': e.preventDefault(); if (diffPanelRef?.stepAnnotation(1) === false) setMessage({ kind: 'warning', text: 'No annotations on this revision' }); break
+      case '{': e.preventDefault(); if (diffPanelRef?.stepAnnotation(-1) === false) setMessage({ kind: 'warning', text: 'No annotations on this revision' }); break
       case 'm': e.preventDefault(); diffPanelRef?.togglePreviewActive(); break
       case 'E': e.preventDefault(); switchToLogView(); toggleEvolog(); break
       case 'O': e.preventDefault(); switchToLogView(); toggleOplog(); break
@@ -2330,15 +2333,16 @@
   $effect(() => onStaleWC((s) => { workspaceStale = s }))
   $effect(() => onPollFail((err) => { pollFailError = err }))
 
-  // Agent-driven navigate (POST /api/navigate → SSE). Gated on inlineMode +
-  // merge view + mutating so an agent can't yank the user out of half-complete
-  // rebase/squash or discard an unsaved 3-pane resolution.
+  // Agent-driven navigate (POST /api/navigate → SSE). Gated so an agent can't
+  // yank the user out of half-complete rebase/squash, an unsaved 3-pane
+  // resolution, or unsaved doc-mode edits.
   let pendingNavScroll: { changeId: string; path: string } | null = $state(null)
   $effect(() => onNavigate((p: NavigatePayload) => {
-    if (inlineMode || mutating || activeView === 'merge') {
+    if (inlineMode || mutating || activeView === 'merge' || activeView === 'doc') {
       setMessage({ kind: 'warning', text: 'Agent navigate ignored — finish or Esc current mode' })
       return
     }
+    pendingNavScroll = null
     switchToLogView()
     if (p.change_id) {
       if (!selectByChangeId(p.change_id)) {
@@ -2356,7 +2360,18 @@
     }
   }))
   $effect(() => {
-    if (!pendingNavScroll || diffLoading || !diffPanelRef) return
+    if (!pendingNavScroll || !diffPanelRef) return
+    // User navigated away from the agent's target → drop the pending scroll
+    // rather than fire it whenever they happen to return. Distinguishes from
+    // "loadedTarget hasn't caught up yet" (cursor matches, lt doesn't).
+    // effectiveId — selectByChangeId matched via effectiveId (commit_id for
+    // divergent), so pendingNavScroll.changeId may be a commit_id; raw
+    // change_id comparison would never match for divergent targets.
+    if (!selectedRevision || effectiveId(selectedRevision.commit) !== pendingNavScroll.changeId) {
+      pendingNavScroll = null
+      return
+    }
+    if (diffLoading) return
     const lt = loadedTarget
     if (lt?.kind !== 'single' || lt.changeId !== pendingNavScroll.changeId) return
     const { path } = pendingNavScroll

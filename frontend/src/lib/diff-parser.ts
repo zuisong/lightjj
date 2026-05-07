@@ -135,6 +135,27 @@ export function filePathFromHeader(header: string): string {
   return firstLine
 }
 
+/** Old-file line span of a hunk. DiffHunk doesn't carry oldCount; recompute
+ *  from line types (remove + context = lines that exist in the old file). */
+export function oldCount(h: DiffHunk): number {
+  let n = 0
+  for (const l of h.lines) if (l.type === 'remove' || l.type === 'context') n++
+  return n
+}
+
+/** Index into `hunks` of the hunk covering 1-based `line` on the given side,
+ *  or -1 if the line falls between hunks / out of range. Powers annotation
+ *  jump (`{`/`}`) — scroll target is a hunk header, not a line element. */
+export function hunkIndexForLine(hunks: readonly DiffHunk[], line: number, side: 'old' | 'new' = 'new'): number {
+  for (let i = 0; i < hunks.length; i++) {
+    const h = hunks[i]
+    const start = side === 'new' ? h.newStart : h.oldStart
+    const count = side === 'new' ? h.newCount : oldCount(h)
+    if (line >= start && line < start + count) return i
+  }
+  return -1
+}
+
 // New-side line numbers that are additions. Same hunk-walk as lineContentAt
 // (annotations.svelte.ts): count from newStart, advance on add/context, skip
 // remove. Used by markdown preview's diff gutter — preview renders the NEW

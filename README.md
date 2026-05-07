@@ -26,7 +26,7 @@ A fast, powerful UI for Jujutsu VCS didn't exist, so I built one! In addition to
 - **Op log & evolog** — full operation history with undo/restore, per-revision evolution with inter-diffs
 - **File history** — right-click any diff line, two-cursor compare (j/k + Space to pin), scoped to mutable for speed
 - **Inline annotations** — per-line review comments keyed by `change_id`; auto-re-anchor on rewrite; export markdown/JSON
-- **Doc mode** — open any `.md` as a ProseMirror document (`Doc` button in the file header). View/Edit toggle, mermaid blocks render with a per-block source toggle, content-addressed comments that survive edits. Coding agents can `POST` suggestions to the same store via plain HTTP — `Agent hint` copies the URL, `GET /api/agent` documents the schema. Accept/Reject inline; Save commits back to `@` with stale-detection.
+- **Doc mode** — open any `.md` as a ProseMirror document (`Doc` button in the file header). View/Edit toggle, mermaid blocks render with a per-block source toggle, content-addressed comments that survive edits. Coding agents can `POST` suggestions and steer your view (`/api/navigate`) over plain HTTP — auto-discovered via the session file, `GET /api/agent` documents the schema. Accept/Reject inline; Save commits back to `@` with stale-detection.
 - **Stale-WC detection** — concurrent CLI op left the working copy stale? Warning bar with one-click recovery
 - **Themes** — 7 hand-tuned builtins + 486 derived from Ghostty's palette set; `t` toggles dark/light, full picker in Cmd+K
 

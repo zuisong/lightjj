@@ -24,6 +24,7 @@ class MermaidNodeView implements NodeView {
   private toggle: HTMLButtonElement
   private showingSource = false
   private lastSrc = ''
+  private panzoomCleanup?: () => void
 
   constructor(private node: Node) {
     this.dom = el('div', 'pm-mermaid')
@@ -52,19 +53,24 @@ class MermaidNodeView implements NodeView {
   private render() {
     const src = this.node.textContent
     if (src === this.lastSrc) return
-    this.lastSrc = src
     const svg = tryRenderDiagram(src)
     if (svg) {
+      this.lastSrc = src
+      this.panzoomCleanup?.()
       // Same trust boundary as markdown-render.ts:345 — beautiful-mermaid emits
       // structured SVG (label text goes through escapeHtml in its renderer),
       // not pass-through HTML. CSP script-src covers the remaining surface.
       this.svgHost.innerHTML = svg
-      wirePanzoom(this.dom)
+      this.panzoomCleanup = wirePanzoom(this.dom)
     } else {
       this.svgHost.textContent = '(mermaid render failed — edit source)'
       this.showingSource = true
       this.applyMode()
     }
+  }
+
+  destroy() {
+    this.panzoomCleanup?.()
   }
 
   update(node: Node): boolean {
@@ -87,11 +93,7 @@ class MermaidNodeView implements NodeView {
 }
 
 export const mermaidNodeViews = {
-  code_block(node: Node, _view: EditorView, _getPos: () => number | undefined): NodeView | null {
-    // Returning null is not part of the NodeView constructor signature; PM
-    // expects a NodeView. Non-mermaid blocks fall through by NOT registering —
-    // so we register code_block and delegate non-mermaid to a trivial NodeView
-    // that just builds the default DOM.
+  code_block(node: Node, _view: EditorView, _getPos: () => number | undefined): NodeView {
     if (node.attrs.lang === 'mermaid') return new MermaidNodeView(node)
     const pre = el('pre')
     const code = el('code')

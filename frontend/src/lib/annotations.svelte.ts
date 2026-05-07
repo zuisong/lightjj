@@ -13,7 +13,7 @@
 // scan ±N lines for an exact match (handles block moves). If both fail,
 // mark orphaned — likely means the agent addressed the feedback.
 
-import { api, FILE_LEVEL, type Annotation, type AnnotationSeverity } from './api'
+import { api, FILE_LEVEL, type Annotation, type AnnotationSeverity, type DiffSide } from './api'
 import { parseDiffContent, expandTabs } from './diff-parser'
 
 /** A file-level annotation that exists purely as a "viewed" checkbox state —
@@ -145,7 +145,8 @@ export function exportMarkdown(anns: Annotation[], changeId: string): string {
   for (const [file, fileAnns] of byFile) {
     fileAnns.sort((a, b) => a.lineNum - b.lineNum)
     for (const a of fileAnns) {
-      const loc = a.lineNum === FILE_LEVEL ? file : `${file}:${a.lineNum}`
+      const sideNote = a.side === 'old' ? ' (deleted line)' : ''
+      const loc = a.lineNum === FILE_LEVEL ? file : `${file}:${a.lineNum}${sideNote}`
       const orphanNote = a.status === 'orphaned' ? ' (line may have moved)' : ''
       out += `### ${loc} [${a.severity}]${orphanNote}\n`
       if (a.lineContent) out += '```\n' + a.lineContent + '\n```\n'
@@ -163,6 +164,7 @@ export function exportJSON(anns: Annotation[], changeId: string, commitId: strin
     annotations: anns.filter(a => !isReviewedMarker(a)).map(a => ({
       file: a.filePath,
       line: a.lineNum,
+      side: a.side ?? 'new',
       context: a.lineContent,
       comment: a.comment,
       severity: a.severity,
@@ -182,7 +184,7 @@ interface AnnotationStore {
   readonly busy: boolean
   /** Lookup annotations for a specific line (for gutter badge). Multiple
    *  annotations may share a line if the user annotated it twice. */
-  forLine(filePath: string, lineNum: number): readonly Annotation[]
+  forLine(filePath: string, lineNum: number, side?: DiffSide): readonly Annotation[]
   /** File-level annotations (lineNum=0). */
   forFile(filePath: string): readonly Annotation[]
   /** Whether the file has a "reviewed" marker (the viewed-checkbox state). */
@@ -199,6 +201,7 @@ interface AnnotationStore {
     changeId: string
     filePath: string
     lineNum: number
+    side?: DiffSide
     lineContent: string
     comment: string
     severity: AnnotationSeverity
@@ -215,13 +218,16 @@ export function createAnnotationStore(): AnnotationStore {
   let loadedChangeId = $state<string | null>(null)
   let busy = $state(false)
 
-  // Cache: (changeId + filePath + lineNum) → Annotation[]. Rebuilt on every
-  // list change. forLine() is called per-diff-line during render; O(1) lookup
-  // keeps the DiffFileView hot path fast.
+  // Cache: (filePath + side + lineNum) → Annotation[]. Rebuilt on every list
+  // change. forLine() is called per-diff-line during render; O(1) lookup keeps
+  // the DiffFileView hot path fast. `side ?? 'new'` so pre-side stored entries
+  // (no `side` field) bucket with new-side and existing 2-arg forLine() calls
+  // (MarkdownPreview) keep working.
+  const lineKey = (path: string, side: DiffSide, line: number) => `${path}:${side}:${line}`
   let byLine = $derived.by(() => {
     const m = new Map<string, Annotation[]>()
     for (const a of list) {
-      const k = `${a.filePath}:${a.lineNum}`
+      const k = lineKey(a.filePath, a.side ?? 'new', a.lineNum)
       if (!m.has(k)) m.set(k, [])
       m.get(k)!.push(a)
     }
@@ -274,6 +280,13 @@ export function createAnnotationStore(): AnnotationStore {
         if (a.lineNum === FILE_LEVEL) continue
         if (a.status === 'resolved') continue
         if (a.createdAtCommitId === commitId) continue
+        // Old-side annotations index into the change's PARENT, not the change
+        // itself. The diffRange(createdAtCommitId, current) inter-diff doesn't
+        // tell us how the parent moved (that needs diffRange between the two
+        // parents). Common case: agent edits without rebasing → parent unchanged
+        // → old-side line numbers stable. Skip reanchor; stale on rebase is the
+        // documented limitation.
+        if (a.side === 'old') continue
         if (!needsReanchor.has(a.createdAtCommitId)) needsReanchor.set(a.createdAtCommitId, [])
         needsReanchor.get(a.createdAtCommitId)!.push(a)
       }
@@ -414,9 +427,9 @@ export function createAnnotationStore(): AnnotationStore {
     // forLine excludes FILE_LEVEL — split-view's right column for deleted files
     // (and the `\ No newline` marker line) can yield annLine===0; without this
     // guard the file-level annotation would leak into the gutter as a line badge.
-    forLine: (filePath, lineNum) =>
-      lineNum === FILE_LEVEL ? NO_ANN : byLine.get(`${filePath}:${lineNum}`) ?? NO_ANN,
-    forFile: (filePath) => byLine.get(`${filePath}:${FILE_LEVEL}`) ?? NO_ANN,
+    forLine: (filePath, lineNum, side = 'new') =>
+      lineNum === FILE_LEVEL ? NO_ANN : byLine.get(lineKey(filePath, side, lineNum)) ?? NO_ANN,
+    forFile: (filePath) => byLine.get(lineKey(filePath, 'new', FILE_LEVEL)) ?? NO_ANN,
     isReviewed: (filePath) => reviewedFiles.has(filePath),
     load, add, update, remove, clear, setReviewed,
   }

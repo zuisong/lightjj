@@ -541,7 +541,32 @@ describe('DiffFileView', () => {
         'line one', // raw content without the '+' prefix
         expect.any(MouseEvent),
         expect.objectContaining({ severity: 'suggestion' }), // explicit edit target
+        'new',
       )
+    })
+
+    it("Alt+click on remove line creates with side='old'", async () => {
+      // Unified [old,new]: remove → annNew=null, annOld=oldStart. handleAltClick
+      // should fall back to (annOld, 'old') instead of bailing.
+      const onannotationclick = vi.fn()
+      const file = makeFile('test.go', [{ type: 'remove', content: '-gone' }])
+      const { container } = render(DiffFileView, {
+        props: defaultProps({ file, onannotationclick }),
+      })
+      const line = container.querySelector('.diff-line.diff-remove')!
+      await fireEvent.click(line, { altKey: true })
+      expect(onannotationclick).toHaveBeenCalledWith(
+        1, 'gone', expect.any(MouseEvent), undefined, 'old',
+      )
+    })
+
+    it('annotationCount prop renders header count chip', () => {
+      const { container } = render(DiffFileView, {
+        props: defaultProps({ file: fileWithLines, annotationCount: 3 }),
+      })
+      const chip = container.querySelector('.ann-count-chip')
+      expect(chip).not.toBeNull()
+      expect(chip?.getAttribute('title')).toContain('3 line annotations')
     })
 
     it('badge click stops propagation (does not trigger line contextmenu)', async () => {

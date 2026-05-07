@@ -1,9 +1,9 @@
 <script lang="ts">
   import { tick, untrack, onDestroy } from 'svelte'
   import type { Snippet } from 'svelte'
-  import { SvelteSet } from 'svelte/reactivity'
-  import { api, diffTargetKey, FILE_TYPE_LABELS, IMAGE_RE, type FileChange, type DiffTarget } from './api'
-  import { parseDiffContent, type DiffFile, type DiffLine } from './diff-parser'
+  import { SvelteSet, SvelteMap } from 'svelte/reactivity'
+  import { api, diffTargetKey, FILE_TYPE_LABELS, IMAGE_RE, type FileChange, type DiffTarget, type DiffSide } from './api'
+  import { parseDiffContent, hunkIndexForLine, type DiffFile, type DiffLine } from './diff-parser'
   import { expandGaps, type ExpandedDiff } from './context-expand'
   import type { WordSpan } from './word-diff'
   import {
@@ -295,7 +295,7 @@
     // changeId/createdAtCommitId are captured at open time — diffTarget is a
     // fresh $derived object on every nav, so reading it at SAVE time would
     // attach the annotation to whatever revision is now displayed.
-    lineContext: { filePath: string; lineNum: number; lineContent: string; changeId: string; createdAtCommitId: string } | null
+    lineContext: { filePath: string; lineNum: number; side: DiffSide; lineContent: string; changeId: string; createdAtCommitId: string } | null
   }
   let annBubble = $state<AnnotationBubbleState>({
     open: false, x: 0, y: 0, editing: null, lineContext: null,
@@ -318,7 +318,7 @@
     })
   })
 
-  function openAnnotationBubble(filePath: string, lineNum: number, lineContent: string, x: number, y: number, editing?: Annotation) {
+  function openAnnotationBubble(filePath: string, lineNum: number, lineContent: string, x: number, y: number, editing?: Annotation, side: DiffSide = 'new') {
     if (diffTarget?.kind !== 'single') return
     // File-level: skip the empty reviewed-marker so "Add file comment" opens
     // a real note, not the checkbox state. (Marker is still toggleable via
@@ -326,20 +326,20 @@
     // per-note strip click) wins so note #2/#3 are editable, not just first.
     const editTarget = editing ?? (lineNum === FILE_LEVEL
       ? annotations.forFile(filePath).find(a => !isReviewedMarker(a))
-      : annotations.forLine(filePath, lineNum)[0])
+      : annotations.forLine(filePath, lineNum, side)[0])
     annBubble = {
       open: true, x, y,
       editing: editTarget ?? null,
       lineContext: {
-        filePath, lineNum, lineContent,
+        filePath, lineNum, side, lineContent,
         changeId: diffTarget.changeId,
         createdAtCommitId: diffTarget.commitId,
       },
     }
   }
 
-  function handleAnnotationClick(filePath: string, lineNum: number, lineContent: string, e: MouseEvent, editing?: Annotation) {
-    openAnnotationBubble(filePath, lineNum, lineContent, e.clientX, e.clientY, editing)
+  function handleAnnotationClick(filePath: string, lineNum: number, lineContent: string, e: MouseEvent, editing?: Annotation, side?: DiffSide) {
+    openAnnotationBubble(filePath, lineNum, lineContent, e.clientX, e.clientY, editing, side)
   }
 
   async function saveAnnotation(comment: string, severity: AnnotationSeverity) {
@@ -390,10 +390,13 @@
 
   function scrollToAnnotation(ann: Annotation) {
     // Preview renders the badge too (wireAnnotations) — don't kick the user
-    // out of preview. scrollToFile gets to the header; the badge is visible
-    // in either mode. (Per-line scroll within preview would need querying the
-    // injected .annotation-badge element — deferred.)
-    scrollToFile(ann.filePath)
+    // out of preview. Jump to the containing hunk when we can find it; fall
+    // back to the file header otherwise (annotation between hunks, preview
+    // mode, or file removed from diff).
+    const file = parsedDiff.find(f => f.filePath === ann.filePath)
+    const hi = file ? hunkIndexForLine(file.hunks, ann.lineNum, ann.side ?? 'new') : -1
+    if (hi >= 0) scrollToHunk(ann.filePath, hi)
+    else scrollToFile(ann.filePath)
   }
 
   // Export helpers for command palette (bound via bind:this in App)
@@ -409,6 +412,100 @@
   export function hasAnnotations(): boolean {
     return annotations.list.some(a => a.status !== 'resolved' && !isReviewedMarker(a))
   }
+
+  // ── `[`/`]` hunk + `{`/`}` annotation navigation ──────────────────────────
+  // Both expose a flat list across files (in parsedDiff render order) and a
+  // cursor index. Cursors reset in the per-identity reset effect below. Clamp,
+  // no wrap — matches stepFile.
+
+  /** Expand + scroll. Queries the FIRST `[data-hunk]` match — header when
+   *  rendered (`!isExpanded`), else `.diff-lines`; both carry the attr so
+   *  expanded-unified still has a target. Split-expanded has neither
+   *  (no per-hunk wrapper) — degrades to scrollToFile. */
+  function scrollToHunk(path: string, hunkIdx: number) {
+    collapsedFiles.delete(path)
+    requestAnimationFrame(() => {
+      const fileEl = document.querySelector(`[data-file-path="${CSS.escape(path)}"]`)
+      const target = fileEl?.querySelector(`[data-hunk="${hunkIdx}"]`) ?? fileEl
+      // Instant — [/]/{/}  are spammed like j/k; browser-native 'smooth' is
+      // fixed ~500ms regardless of distance, which queues badly under repeat.
+      target?.scrollIntoView({ block: 'start' })
+      activeFilePath = path
+    })
+  }
+
+  let flatHunks = $derived(
+    parsedDiff.flatMap(f => f.hunks.map((_, hi) => ({ path: f.filePath, hunkIdx: hi })))
+  )
+  let hunkNavIdx = $state(-1)
+
+  export function stepHunk(dir: 1 | -1) {
+    if (flatHunks.length === 0) return
+    if (hunkNavIdx < 0) {
+      // Seed from current scroll position so first `]` lands near the visible
+      // file, not at the top. activeFilePath is observer-tracked.
+      const seed = activeFilePath ? flatHunks.findIndex(h => h.path === activeFilePath) : -1
+      hunkNavIdx = seed >= 0 ? seed : (dir > 0 ? -1 : flatHunks.length)
+    }
+    hunkNavIdx = Math.max(0, Math.min(flatHunks.length - 1, hunkNavIdx + dir))
+    const t = flatHunks[hunkNavIdx]
+    scrollToHunk(t.path, t.hunkIdx)
+  }
+
+  // Line-level annotations only, in file-render order then lineNum. The store
+  // doesn't know parsedDiff order so this lives here. Intersects with
+  // parsedDiff (annotations persist per changeId across rewrites — files that
+  // left the diff would otherwise sort to end and dead-step `}`).
+  let navAnnotations = $derived.by(() => {
+    const fileOrder = new Map(parsedDiff.map((f, i) => [f.filePath, i]))
+    return annotations.list
+      .filter(a => a.status !== 'resolved' && a.lineNum !== FILE_LEVEL && !isReviewedMarker(a)
+        && fileOrder.has(a.filePath))
+      .slice()
+      .sort((a, b) => fileOrder.get(a.filePath)! - fileOrder.get(b.filePath)! || a.lineNum - b.lineNum)
+  })
+  let annNavIdx = $state(-1)
+
+  /** Returns false when there's nothing to step to — caller (App) shows the
+   *  "No annotations" hint. Jumps to the containing hunk; line-level scroll
+   *  would need per-line DOM attrs (deferred — same note as scrollToAnnotation). */
+  export function stepAnnotation(dir: 1 | -1): boolean {
+    if (navAnnotations.length === 0) return false
+    if (annNavIdx < 0) annNavIdx = dir > 0 ? -1 : navAnnotations.length
+    annNavIdx = Math.max(0, Math.min(navAnnotations.length - 1, annNavIdx + dir))
+    const a = navAnnotations[annNavIdx]
+    const file = parsedDiff.find(f => f.filePath === a.filePath)
+    const hi = file ? hunkIndexForLine(file.hunks, a.lineNum, a.side ?? 'new') : -1
+    if (hi >= 0) scrollToHunk(a.filePath, hi)
+    else scrollToFile(a.filePath)
+    return true
+  }
+
+  let annCountByPath = $derived.by(() => {
+    const m = new Map<string, number>()
+    for (const a of navAnnotations) m.set(a.filePath, (m.get(a.filePath) ?? 0) + 1)
+    return m
+  })
+
+  // Doc-comment counts per .md file → badge on the Doc button so agent-posted
+  // comments are discoverable from diff view (dogfood: "impossible to tell
+  // from the UI" when an agent batch-posts and the user is in diff view).
+  // Per-file fetch; typical diffs have 0-2 .md files. Swallowed errors — badge
+  // is best-effort. Uncached so re-selecting picks up agent posts.
+  let docCommentCounts = new SvelteMap<string, number>()
+  let docCountGen = 0
+  $effect(() => {
+    const mdPaths = parsedDiff.filter(f => f.filePath.endsWith('.md')).map(f => f.filePath)
+    const gen = ++docCountGen
+    docCommentCounts.clear()
+    for (const p of mdPaths) {
+      api.docComments.list(p).then(cs => {
+        if (gen !== docCountGen) return
+        const open = cs.filter(c => !c.resolution && !c.parentId).length
+        if (open > 0) docCommentCounts.set(p, open)
+      }).catch(() => {})
+    }
+  })
 
   // Capability gate for per-file mutations (Edit, Discard). Derived to
   // `undefined` when the button shouldn't render — DiffFileView's
@@ -1000,6 +1097,8 @@
     mergeSides = null
     mergingPath = null
     activeFilePath = null
+    hunkNavIdx = -1
+    annNavIdx = -1
     annBubble = { open: false, x: 0, y: 0, editing: null, lineContext: null }
     if (searchOpen) { searchQuery = ''; currentMatchIdx = 0 }
 
@@ -1593,7 +1692,9 @@
             oncompare={diffTarget?.kind === 'single' ? toggleCompare : undefined}
             annotationsForLine={diffTarget?.kind === 'single' ? annotations.forLine : undefined}
             annotationsForFile={diffTarget?.kind === 'single' ? annotations.forFile : undefined}
-            onannotationclick={diffTarget?.kind === 'single' ? (ln, content, e, ed) => handleAnnotationClick(filePath, ln, content, e, ed) : undefined}
+            annotationCount={annCountByPath.get(filePath) ?? 0}
+            docCommentCount={docCommentCounts.get(filePath) ?? 0}
+            onannotationclick={diffTarget?.kind === 'single' ? (ln, content, e, ed, side) => handleAnnotationClick(filePath, ln, content, e, ed, side) : undefined}
             onreviewedtoggle={diffTarget?.kind === 'single' ? toggleReviewed : undefined}
           />
           {#if comparePickerPath === filePath && diffTarget?.kind === 'single'}
