@@ -681,7 +681,9 @@
   {#if composer && draftLine?.lineNum === FILE_LEVEL}
     <div class="inline-review-row">{@render composer()}</div>
   {/if}
-  {#if !isCollapsed}
+  {#if file.isBinary && !isCollapsed}
+    <div class="binary-placeholder placeholder-text">Binary file — not diffable</div>
+  {:else if !isCollapsed}
     {#if previewContent !== undefined}
       {#if isImage && previewRevision}
         <div class="image-preview">
@@ -871,6 +873,16 @@
 
   .diff-file:last-child {
     border-bottom: none;
+  }
+
+  /* One-line stand-in for binary files (no hunks). 18px line-height matches
+     the diff row height; left padding aligns with the gutter column. */
+  .binary-placeholder {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    line-height: 18px;
+    padding: 4px 8px 4px 16px;
+    user-select: none;
   }
 
   .image-preview {

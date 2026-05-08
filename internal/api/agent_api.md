@@ -207,10 +207,57 @@ Content-Type: application/json
 
 → `200`. The connected browser switches to that revision and scrolls the diff
 to that file. Use this to walk the user through a review: post a batch of
-comments, then `navigate` to the first one. `change_id` and/or `file_path`
-required; `line` is accepted but currently ignored. `503` if the server was
-started with `--no-watch` (no SSE channel to push through). Ignored if the
-user is mid-rebase/squash/merge/doc-mode — they'll see an info toast instead.
+comments, then `navigate` to the first one. At least one of `change_id`,
+`file_path`, or `comment_id` is required; `line` is accepted but currently
+ignored. `503` if the server was started with `--no-watch` (no SSE channel to
+push through). Ignored if the user is mid-rebase/squash/merge/doc-mode —
+they'll see an info toast instead.
+
+To jump straight to a specific comment, send `comment_id` (the `id` you got
+back from `POST /api/doc-comments` or from a `GET` poll):
+
+```jsonc
+{"comment_id": "c-1"}
+```
+
+The server passes `comment_id` through unchanged — the frontend resolves it
+against its loaded comment stores and scrolls to that thread. If the id isn't
+loaded in the user's current view, nothing happens. Combine with `change_id`
+or `file_path` if you want a fallback scroll target.
+
+## Read the user's current view
+
+```
+GET <base>/api/focus
+→ 200 {"change_id":"wqnwkozp","commit_id":"abc123","active_view":"doc",
+       "doc_file_path":"docs/DESIGN.md","updated_at":1746543600000}
+```
+
+The complement to `navigate`: instead of pushing the user somewhere, ask where
+they are. Use it to scope a review pass to what the user is already looking at,
+or to skip a `navigate` if they're already there.
+
+- `active_view` — one of `log | branches | merge | doc | oplog | evolog`.
+  `oplog`/`evolog` are reported when those drawers are open over the log view.
+  When `doc`, `doc_file_path` is the open file (repo-relative, same form as
+  `file-show` / `doc-comments` paths). `doc_file_path` is reported as the
+  frontend sent it — don't trust it as a pre-validated path; the consumer
+  endpoints (`doc-comments`, `file-show`) do their own validation.
+- `change_id` / `commit_id` — the revision the diff/doc panel is showing.
+  Empty when nothing is selected.
+- `updated_at` — Unix epoch **milliseconds**, **server-stamped** on every
+  frontend report (the client's clock is not trusted). `0` means the frontend
+  has never reported.
+
+**Staleness**: the frontend reports on view changes AND on a ~20 s heartbeat
+while the tab is visible. If `updated_at` is more than ~60 s old, assume the
+report is stale (browser tab closed, machine asleep, or an older lightjj that
+doesn't report focus) and fall back to `navigate` rather than acting on it.
+Don't poll this aggressively — it's a snapshot, not a stream.
+
+`POST /api/focus` is the **frontend's write path**. Agents shouldn't write to
+it — a forged report just lies to the next agent that reads it (and to
+yourself). It's documented here only so the contract is complete.
 
 ## Read back / poll
 

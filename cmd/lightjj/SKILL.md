@@ -54,6 +54,12 @@ lightjj api GET '/tab/0/api/file-show?revision=@&path=docs/DESIGN.md'
 ## Common operations
 
 ```bash
+# What is the user looking at right now? Read this FIRST — it's the difference
+# between narrating a review and spraying comments past the user's cursor.
+# Returns {change_id, commit_id, active_view, doc_file_path, updated_at}.
+# Stale if updated_at is >30s old (browser closed or not focused).
+lightjj api GET /tab/0/api/focus
+
 # Read the current revision graph (commit metadata, descriptions, bookmarks)
 lightjj api GET /tab/0/api/log
 
@@ -67,8 +73,9 @@ lightjj api GET '/tab/0/api/doc-comments?path=docs/DESIGN.md'
 # for the anchor schema)
 lightjj api POST /tab/0/api/doc-comments @comment.json
 
-# Steer the user's view to a file/line
+# Steer the user's view to a file/line, or to a comment by id
 lightjj api POST /tab/0/api/navigate '{"path":"src/main.go","line":42}'
+lightjj api POST /tab/0/api/navigate '{"change_id":"xyzabc","comment_id":"a1b2c3"}'
 
 # Read inline review comments (annotations) on a change
 lightjj api GET '/tab/0/api/annotations?change_id=xyzabc'

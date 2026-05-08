@@ -1141,9 +1141,9 @@ func TestHandleInfo(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal(t, "myhost", got["hostname"])
 	assert.Equal(t, "/home/user/repo", got["repo_path"])
-	assert.Equal(t, false, got["ssh_mode"]) // newTestServer: no SSHHost. Old RepoDir=="" conflation reported tests as SSH.
+	assert.Equal(t, false, got["ssh_mode"])          // newTestServer: no SSHHost. Old RepoDir=="" conflation reported tests as SSH.
 	assert.Equal(t, "origin", got["default_remote"]) // NewServer's baseline
-	assert.Equal(t, "", got["log_revset"])            // unset by newTestServer
+	assert.Equal(t, "", got["log_revset"])           // unset by newTestServer
 	assert.Equal(t, "jj 0.39.0", got["jj_version"])
 	assert.Equal(t, true, got["watchman_snapshot_trigger"])
 }
@@ -1931,7 +1931,7 @@ func TestPickCurrentWorkspace(t *testing.T) {
 // jj/workspace_store.go for the schema.
 func wsStoreEntry(name, path string) []byte {
 	inner := append(
-		append([]byte{0x0a, byte(len(name))}, name...),  // field 1: name
+		append([]byte{0x0a, byte(len(name))}, name...),    // field 1: name
 		append([]byte{0x12, byte(len(path))}, path...)..., // field 2: path
 	)
 	return append([]byte{0x0a, byte(len(inner))}, inner...) // outer field 1: entry
@@ -1947,7 +1947,7 @@ func TestReadWorkspaceStore_RelativePaths(t *testing.T) {
 	require.NoError(t, os.MkdirAll(storeDir, 0o755))
 
 	var store []byte
-	store = append(store, wsStoreEntry("default", "../../")...)         // jj 0.39 relative
+	store = append(store, wsStoreEntry("default", "../../")...)          // jj 0.39 relative
 	store = append(store, wsStoreEntry("legacy", "/abs/legacy/path")...) // pre-0.39 absolute
 	require.NoError(t, os.WriteFile(filepath.Join(storeDir, "index"), store, 0o644))
 
@@ -1969,7 +1969,7 @@ func TestReadWorkspaceStore_SSH(t *testing.T) {
 	// for join/clean regardless of host OS.
 	runner := testutil.NewMockRunner(t)
 	var store []byte
-	store = append(store, wsStoreEntry("default", "../../")...)       // relative → resolved
+	store = append(store, wsStoreEntry("default", "../../")...)      // relative → resolved
 	store = append(store, wsStoreEntry("other", "/remote/other")...) // absolute → passthrough
 	runner.Expect([]string{"cat", "/remote/repo/.jj/repo/workspace_store/index"}).SetOutput(store)
 	defer runner.Verify()
@@ -2716,9 +2716,9 @@ func TestGithubRepoFromURL(t *testing.T) {
 		{"git@gitlab.com:owner/repo.git", ""},
 		{"https://bitbucket.org/owner/repo", ""},
 		{"", ""},
-		{"github.com", ""},           // no path
-		{"github.com/owner", ""},     // one component
-		{"github.com/a/b/c", ""},     // too deep
+		{"github.com", ""},       // no path
+		{"github.com/owner", ""}, // one component
+		{"github.com/a/b/c", ""}, // too deep
 		{"notgithub.com/owner/repo", ""},
 		{"https://github.com:443/owner/repo", ""}, // port — not an SSH path
 	}
@@ -3485,4 +3485,143 @@ func TestHandleNavigate_NoWatcher503(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Mux.ServeHTTP(w, jsonPost("/api/navigate", []byte(`{"change_id":"x"}`)))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestHandleNavigateCommentID — comment_id alone satisfies the "at least one
+// target field" validation and is broadcast through to the SSE channel for the
+// frontend to resolve against its loaded comment stores.
+func TestHandleNavigateCommentID(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+
+	ch, unsub := srv.Watcher.subscribe()
+	defer unsub()
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/navigate", []byte(`{"comment_id":"c-42"}`)))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	select {
+	case msg := <-ch:
+		require.True(t, strings.HasPrefix(msg, evNav))
+		var p navigateRequest
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(msg, evNav)), &p))
+		assert.Equal(t, "c-42", p.CommentID)
+		assert.Empty(t, p.ChangeID)
+		assert.Empty(t, p.FilePath)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("navigate not broadcast")
+	}
+}
+
+// TestHandleFocusEmpty — GET before any POST returns the zero struct (the
+// "frontend hasn't reported yet" state), not an error.
+func TestHandleFocusEmpty(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/focus", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var got FocusState
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, FocusState{}, got)
+}
+
+func TestHandleFocusRoundTrip(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+
+	before := time.Now().UnixMilli()
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/focus", []byte(
+		`{"change_id":"wqnwkozp","commit_id":"abc123","active_view":"doc","doc_file_path":"docs/DESIGN.md","updated_at":1}`)))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var posted FocusState
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &posted))
+	// Server stamps UpdatedAt — the client-supplied value (1) must be overwritten.
+	assert.GreaterOrEqual(t, posted.UpdatedAt, before)
+	assert.LessOrEqual(t, posted.UpdatedAt, time.Now().UnixMilli())
+
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/focus", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var got FocusState
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, posted, got)
+	assert.Equal(t, "wqnwkozp", got.ChangeID)
+	assert.Equal(t, "abc123", got.CommitID)
+	assert.Equal(t, "doc", got.ActiveView)
+	assert.Equal(t, "docs/DESIGN.md", got.DocFilePath)
+}
+
+func TestHandleFocusValidation(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+
+	t.Run("bad active_view", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, jsonPost("/api/focus", []byte(`{"active_view":"nope"}`)))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("missing content-type", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/focus", strings.NewReader(`{"active_view":"log"}`))
+		// No Content-Type header — decodeBody must reject it.
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("empty active_view ok", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, jsonPost("/api/focus", []byte(`{"change_id":"abc"}`)))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	// Field length caps. Focus is stored and re-served on every GET — without
+	// a cap a 1MB POST becomes a 1MB-per-tab memory anchor.
+	t.Run("field too long", func(t *testing.T) {
+		long := strings.Repeat("a", 257)
+		longPath := strings.Repeat("a", 4097)
+		for _, body := range []string{
+			`{"change_id":"` + long + `"}`,
+			`{"commit_id":"` + long + `"}`,
+			`{"doc_file_path":"` + longPath + `"}`,
+		} {
+			w := httptest.NewRecorder()
+			srv.Mux.ServeHTTP(w, jsonPost("/api/focus", []byte(body)))
+			assert.Equal(t, http.StatusBadRequest, w.Code, body[:20])
+		}
+	})
+}
+
+// TestHandleNavigateFieldTooLong locks the per-field length caps. The cap
+// matters more here than on /api/focus — the navigate payload fans out to
+// every SSE subscriber's chan buffer.
+func TestHandleNavigateFieldTooLong(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+
+	long := strings.Repeat("a", 257)
+	longPath := strings.Repeat("a", 4097)
+	for _, body := range []string{
+		`{"change_id":"` + long + `"}`,
+		`{"file_path":"` + longPath + `"}`,
+		`{"comment_id":"` + long + `"}`,
+	} {
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, jsonPost("/api/navigate", []byte(body)))
+		assert.Equal(t, http.StatusBadRequest, w.Code, body[:20])
+	}
 }

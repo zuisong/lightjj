@@ -134,6 +134,7 @@ Binary file differs`
     expect(files[0].header).toContain('Binary file differs')
     expect(files[0].hunks).toHaveLength(0)
     expect(files[0].filePath).toBe('image.png')
+    expect(files[0].isBinary).toBe(true)
   })
 
   it('populates filePath on parsed files', () => {
@@ -143,6 +144,7 @@ Binary file differs`
 +new`
     const files = parseDiffContent(raw)
     expect(files[0].filePath).toBe('src/main.go')
+    expect(files[0].isBinary).toBe(false)
   })
 
   it('populates filePath with spaces in path', () => {
@@ -389,6 +391,7 @@ Binary files a/image.bin and b/image.bin differ`
     expect(f.filePath).toBe('image.bin')
     expect(f.hunks).toHaveLength(0)
     expect(f.header).toContain('Binary files a/image.bin and b/image.bin differ')
+    expect(f.isBinary).toBe(true)
   })
 
   it('new file: new file mode + --- /dev/null', () => {

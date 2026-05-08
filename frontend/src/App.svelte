@@ -2356,10 +2356,47 @@
   // yank the user out of half-complete rebase/squash, an unsaved 3-pane
   // resolution, or unsaved doc-mode edits.
   let pendingNavScroll: { changeId: string; path: string } | null = $state(null)
-  $effect(() => onNavigate((p: NavigatePayload) => {
+  $effect(() => onNavigate(async (p: NavigatePayload) => {
     if (inlineMode || mutating || activeView === 'merge' || activeView === 'doc') {
       setMessage({ kind: 'warning', text: 'Agent navigate ignored — finish or Esc current mode' })
       return
+    }
+    // comment_id → position resolution. Agents reference comments by id (the
+    // only stable handle they have). Two stores, distinguished by the OTHER
+    // field the agent supplies:
+    //   {comment_id, change_id}  → annotation (line-keyed inline review note)
+    //   {comment_id, file_path}  → doc-comment (range-keyed markdown comment)
+    // Best-effort — on miss, fall through to whatever fields were supplied.
+    if (p.comment_id && p.change_id) {
+      try {
+        const anns = await api.annotations(p.change_id)
+        const ann = anns.find(a => a.id === p.comment_id)
+        if (ann) p = { ...p, file_path: p.file_path ?? ann.filePath, line: p.line ?? ann.lineNum }
+      } catch { /* best-effort — proceed with the agent's raw payload */ }
+      // Re-gate after the await — user could have entered a mode mid-fetch.
+      if (inlineMode || mutating || activeView === 'merge' || activeView === 'doc') return
+    } else if (p.comment_id && p.file_path && !p.change_id) {
+      // Doc-comment path: open doc mode on the file and focus the comment in
+      // the rail. The top gate already rejected if the user is mid-doc-edit
+      // (`activeView === 'doc'`), so this only fires when entering fresh.
+      try {
+        const dcs = await api.docComments.list(p.file_path)
+        const dc = dcs.find(c => c.id === p.comment_id)
+        if (dc) {
+          // Re-gate after the await.
+          if (inlineMode || mutating || activeView === 'merge' || activeView === 'doc') return
+          await switchToDocView(p.file_path)
+          // switchToDocView resets docFocusedComment to null on its success
+          // path before returning, so this write is the final one. On its
+          // early-bail path (a competing view-switch raced in during the lazy
+          // import) this leaves a stale id — benign, nothing reads
+          // docFocusedComment while activeView !== 'doc', and the next
+          // switchToDocView/closeDocView clears it.
+          docFocusedComment = p.comment_id
+          return // doc-mode navigation is terminal — skip the diff-view path.
+        }
+      } catch { /* best-effort */ }
+      if (inlineMode || mutating || activeView === 'merge' || activeView === 'doc') return
     }
     pendingNavScroll = null
     switchToLogView()
@@ -2396,6 +2433,35 @@
     const { path } = pendingNavScroll
     pendingNavScroll = null
     requestAnimationFrame(() => diffPanelRef?.scrollToFile(path))
+  })
+
+  // Focus heartbeat — POST /api/focus on cursor/view change so an agent
+  // polling GET /api/focus sees what the human is currently looking at.
+  // Debounced 500ms so rapid j/k coalesces to one POST. setFocus is
+  // fire-and-forget (swallows errors, never touches state) — no untrack needed.
+  let focusTimer: ReturnType<typeof setTimeout> | undefined
+  $effect(() => {
+    const payload = {
+      change_id: selectedRevision?.commit?.change_id,
+      commit_id: selectedRevision?.commit?.commit_id,
+      // Drawers layer over the log view (oplogOpen/evologOpen are booleans,
+      // not activeView values) but ARE what the user is looking at — report
+      // them so an agent steering a review knows. Backend whitelists both.
+      active_view: oplogOpen ? 'oplog' : evologOpen ? 'evolog' : activeView,
+      doc_file_path: activeView === 'doc' ? (docFilePath ?? undefined) : undefined,
+    }
+    // Debounced report on change + low-frequency heartbeat while visible.
+    // The heartbeat is what makes `updated_at` a real liveness signal: a user
+    // reading one diff for 60s without moving the cursor produces no view
+    // changes; without the heartbeat an agent would conclude "tab closed."
+    focusTimer = setTimeout(() => { void api.setFocus(payload) }, 500)
+    const heartbeat = setInterval(() => {
+      if (document.visibilityState === 'visible') void api.setFocus(payload)
+    }, 20_000)
+    return () => {
+      clearTimeout(focusTimer)
+      clearInterval(heartbeat)
+    }
   })
 
   let sseConnected = $state(true)

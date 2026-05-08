@@ -565,6 +565,10 @@ type navigateRequest struct {
 	ChangeID string `json:"change_id,omitempty"`
 	FilePath string `json:"file_path,omitempty"`
 	Line     int    `json:"line,omitempty"`
+	// CommentID is passed through to the frontend untouched — the server has
+	// no view of the comment store's positions; the frontend resolves the id
+	// to a scroll target against its loaded annotation/doc-comment stores.
+	CommentID string `json:"comment_id,omitempty"`
 }
 
 // handleNavigate broadcasts a one-shot navigation hint to connected SSE
@@ -582,14 +586,14 @@ func (s *Server) handleNavigate(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.ChangeID == "" && req.FilePath == "" {
-		s.writeError(w, http.StatusBadRequest, "change_id or file_path required")
+	if req.ChangeID == "" && req.FilePath == "" && req.CommentID == "" {
+		s.writeError(w, http.StatusBadRequest, "change_id, file_path, or comment_id required")
 		return
 	}
 	// Cap before broadcast — payload is copied into every subscriber's chan
 	// buffer; an oversized field is a cheap amplification vector. 4k is far
 	// beyond any real change_id (~12 chars) or repo-relative path.
-	if len(req.ChangeID) > 256 || len(req.FilePath) > 4096 {
+	if len(req.ChangeID) > 256 || len(req.FilePath) > 4096 || len(req.CommentID) > 256 {
 		s.writeError(w, http.StatusBadRequest, "field too long")
 		return
 	}
@@ -1244,7 +1248,6 @@ type bookmarkRemoteRequest struct {
 type gitFlagsRequest struct {
 	Flags []string `json:"flags,omitempty"`
 }
-
 
 func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
 	var req gitFlagsRequest

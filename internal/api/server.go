@@ -31,12 +31,12 @@ type Server struct {
 	// "empty filter = what?" is visible. Empty if unset (jj uses its
 	// built-in default). main.go reads via ConfigGet at tab-open.
 	ConfiguredLogRevset string
-	Hostname      string // display hostname for tab title (local os.Hostname or SSH host); main.go sets
-	RepoPath      string // display repo path for tab title (RepoDir or SSH remote path); main.go sets
-	SSHHost       string // full user@host spec for --remote mode (empty in local mode); feeds {host} placeholder
-	SelfBinary    string // os.Executable() — for --apply-hunks re-entry; empty in tests/SSH mode
-	cachedOp string // last known op-id, refreshed after mutations
-	cachedMu sync.RWMutex
+	Hostname            string // display hostname for tab title (local os.Hostname or SSH host); main.go sets
+	RepoPath            string // display repo path for tab title (RepoDir or SSH remote path); main.go sets
+	SSHHost             string // full user@host spec for --remote mode (empty in local mode); feeds {host} placeholder
+	SelfBinary          string // os.Executable() — for --apply-hunks re-entry; empty in tests/SSH mode
+	cachedOp            string // last known op-id, refreshed after mutations
+	cachedMu            sync.RWMutex
 
 	// repoStore is the resolved .jj/repo directory (follows the secondary-
 	// workspace pointer file). sync.Once is fine here — os.Stat/ReadFile on a
@@ -70,6 +70,12 @@ type Server struct {
 	jjVerOK           bool
 	jjVersionResolved bool
 	jjVersionMu       sync.Mutex
+
+	// focus is the frontend's most recent view report (see focus.go). Zero
+	// value = frontend hasn't reported yet. Per-tab by construction (one
+	// Server per tab); no cross-tab coordination.
+	focus   FocusState
+	focusMu sync.Mutex
 }
 
 // hasLocalFS reports whether this Server can read the repo filesystem directly
@@ -209,6 +215,8 @@ func (s *Server) routes() {
 	reg("GET /api/agent", s.handleAgentDocs)
 	reg("GET /api/capabilities", s.handleCapabilities)
 	reg("POST /api/navigate", s.handleNavigate)
+	reg("GET /api/focus", s.handleFocusGet)
+	reg("POST /api/focus", s.handleFocusSet)
 	// Index for cold agent discovery — probing the bare /api path yields a
 	// pointer to the doc instead of a 404.
 	reg("GET /api", func(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +229,7 @@ func (s *Server) routes() {
 		})
 	})
 
-  // handle file edits
+	// handle file edits
 	reg("POST /api/file-write", s.handleFileWrite)
 
 	reg("POST /api/git/push", s.handleGitPush)

@@ -167,11 +167,26 @@ function notifyStaleWC(stale: boolean) {
 }
 
 // Agent-driven navigate subscribers. POST /api/navigate → SSE `nav` event with
-// {change_id?, file_path?, line?}. App scrolls the human's view there.
-export interface NavigatePayload { change_id?: string; file_path?: string; line?: number }
+// {change_id?, file_path?, line?, comment_id?}. App scrolls the human's view
+// there. comment_id resolves to a {file_path, line} client-side via the
+// annotation/doc-comment stores when present (the agent only knows the id).
+export interface NavigatePayload { change_id?: string; file_path?: string; line?: number; comment_id?: string }
 const navigateCallbacks = new Set<(p: NavigatePayload) => void>()
 function notifyNavigate(p: NavigatePayload) {
   for (const cb of navigateCallbacks) cb(p)
+}
+
+// Human focus heartbeat. POST /api/focus on navigation so an agent polling
+// GET /api/focus knows what the user is currently looking at. Best-effort
+// telemetry — never load-bearing, never throws.
+export interface FocusState {
+  change_id?: string
+  commit_id?: string
+  active_view?: string
+  doc_file_path?: string
+  // ms epoch, server-stamped. Always present in responses (Go field has no
+  // omitempty); optional here only so the same type covers POST request bodies.
+  updated_at?: number
 }
 
 // Poll-failure subscribers. Server's watcher broadcasts `pollfail` with an
@@ -1190,6 +1205,15 @@ export const api = {
     remove: (path: string, id: string) =>
       request<void>(`/api/doc-comments?path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
+
+  // Focus heartbeat — best-effort telemetry for agent steering. Fire-and-forget;
+  // a failed POST is invisible to the user (the agent just sees stale focus).
+  setFocus: async (state: Partial<FocusState>): Promise<void> => {
+    try { await post<void>('/api/focus', state) } catch { /* best-effort */ }
+  },
+
+  getFocus: () =>
+    request<FocusState>('/api/focus'),
 }
 
 // Test-only exports for cache inspection/reset

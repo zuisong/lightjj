@@ -27,6 +27,11 @@ export interface DiffFile {
   // restoring the source, turning the rename into a delete.
   sourcePath?: string
   hunks: DiffHunk[]
+  // True when the file has 0 hunks and the header carries a binary marker
+  // (jj-style "Binary file differs" or git-style "Binary files a/x and b/x
+  // differ"). Detected once at parse time so DiffFileView can render a
+  // placeholder instead of an empty body.
+  isBinary: boolean
 }
 
 export function expandTabs(s: string, width = 4): string {
@@ -46,6 +51,9 @@ export function expandTabs(s: string, width = 4): string {
   return out
 }
 
+// Multiline so the marker matches as its own header line, not mid-string.
+const BINARY_MARKER_RE = /^(?:Binary files? .* differ|Binary file differs)$/m
+
 export function parseDiffContent(raw: string): DiffFile[] {
   if (!raw) return []
 
@@ -57,7 +65,7 @@ export function parseDiffContent(raw: string): DiffFile[] {
   for (const line of lines) {
     if (line.startsWith('diff --git') || line.startsWith('=== ') || line.startsWith('Modified ') || line.startsWith('Added ') || line.startsWith('Deleted ') || line.startsWith('Copied ') || line.startsWith('Renamed ')) {
       // jj uses different diff headers than git
-      currentFile = { header: line, filePath: '', hunks: [] }
+      currentFile = { header: line, filePath: '', hunks: [], isBinary: false }
       files.push(currentFile)
       currentHunk = null
     } else if (line.startsWith('@@')) {
@@ -72,7 +80,7 @@ export function parseDiffContent(raw: string): DiffFile[] {
       if (currentFile) {
         currentFile.hunks.push(currentHunk)
       } else {
-        currentFile = { header: '(unknown file)', filePath: '(unknown file)', hunks: [currentHunk] }
+        currentFile = { header: '(unknown file)', filePath: '(unknown file)', hunks: [currentHunk], isBinary: false }
         files.push(currentFile)
       }
     } else if (line.startsWith('---') || line.startsWith('+++')) {
@@ -110,6 +118,13 @@ export function parseDiffContent(raw: string): DiffFile[] {
   for (const file of files) {
     if (!file.filePath) {
       file.filePath = filePathFromHeader(file.header)
+    }
+    // Binary detection: 0 hunks + a binary marker in the (now fully-assembled)
+    // header. Covers jj-style "Binary file differs" and git-style
+    // "Binary files a/x and b/x differ". Run once here so consumers never
+    // re-scan the header text.
+    if (file.hunks.length === 0 && BINARY_MARKER_RE.test(file.header)) {
+      file.isBinary = true
     }
     // Reconcile newCount with actual parsed lines. context-expand.ts uses
     // newStart+newCount for gap boundaries; a header/content mismatch
