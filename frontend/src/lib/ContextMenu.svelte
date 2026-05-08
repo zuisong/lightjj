@@ -185,7 +185,7 @@
     z-index: 200;
     padding: 4px;
     outline: none;
-    animation: ctx-enter 0.12s ease-out;
+    animation: ctx-enter var(--anim-duration) ease-out;
   }
 
   .ctx-item {
@@ -203,7 +203,7 @@
     font-size: var(--font-size);
     cursor: pointer;
     text-align: left;
-    transition: background 0.08s ease;
+    transition: background var(--anim-duration) var(--anim-ease);
   }
 
   .ctx-item:hover:not(.ctx-item-disabled),

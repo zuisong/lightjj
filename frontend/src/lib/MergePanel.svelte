@@ -773,7 +773,7 @@
     font-family: inherit;
     font-size: var(--font-size);
     line-height: 1;
-    transition: background 120ms ease;
+    transition: background var(--anim-duration) var(--anim-ease);
   }
   .merge-nav-btn:hover { background: var(--surface1); }
 
@@ -790,7 +790,7 @@
   }
 
   /* System .btn + the merge-panel signature lift-on-hover. */
-  .merge-toolbar :global(.btn) { transition: transform 80ms ease; }
+  .merge-toolbar :global(.btn) { transition: transform var(--anim-duration) var(--anim-ease); }
   .merge-toolbar :global(.btn:hover:not(:disabled)) { transform: translateY(-1px); }
   .merge-toolbar :global(.btn:active:not(:disabled)) { transform: translateY(0); }
   .merge-btn-ours {
@@ -903,7 +903,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 120ms ease, opacity 150ms ease;
+    transition: background var(--anim-duration) var(--anim-ease), opacity var(--anim-duration) var(--anim-ease);
     /* No transition on translateY — instant scroll tracking. */
   }
   .merge-arrow-ours {

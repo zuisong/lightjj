@@ -321,7 +321,7 @@
   }
 
   .modal-input {
-    transition: max-height 0.12s ease, padding 0.12s ease, opacity 0.12s ease;
+    transition: max-height var(--anim-duration) var(--anim-ease), padding var(--anim-duration) var(--anim-ease), opacity var(--anim-duration) var(--anim-ease);
     max-height: 40px;
   }
 
@@ -387,7 +387,7 @@
 
   .bm-confirm {
     color: var(--red);
-    animation: bm-pulse 0.15s ease;
+    animation: bm-pulse var(--anim-duration) ease;
   }
 
   .bm-confirm b { font-weight: 600; }

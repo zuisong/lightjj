@@ -647,7 +647,7 @@
     border-top: 3px solid var(--surface1);
     /* Subtle lift — columns are CHOICES, not just data rows. */
     box-shadow: 0 1px 3px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.02);
-    transition: border-color 120ms ease;
+    transition: border-color var(--anim-duration) var(--anim-ease);
   }
   .version-col.col-live { border-top-color: var(--green); }
   /* diff-selector from/to markers — corner indicator dots, not noisy full-
@@ -740,7 +740,7 @@
     background: var(--surface1); border: 1px solid var(--surface2); color: var(--text);
     border-radius: 4px; cursor: pointer;
     font-size: var(--fs-sm); font-weight: 700; letter-spacing: 0.02em;
-    transition: background 100ms ease, transform 80ms ease;
+    transition: background var(--anim-duration) var(--anim-ease), transform var(--anim-duration) var(--anim-ease);
   }
   .keep-btn.keep-live {
     background: color-mix(in srgb, var(--green) 12%, var(--surface1));
@@ -859,7 +859,7 @@
     background: var(--surface1); color: var(--text);
     border: 1px solid var(--surface2); border-radius: 4px; cursor: pointer;
     letter-spacing: 0.01em;
-    transition: background 100ms ease, transform 80ms ease;
+    transition: background var(--anim-duration) var(--anim-ease), transform var(--anim-duration) var(--anim-ease);
   }
   .conf-high .strategy-apply {
     background: var(--green); color: var(--crust); border-color: var(--green);
@@ -878,7 +878,7 @@
     padding: 3px 10px; font-size: var(--fs-xs); font-weight: 500;
     background: transparent; color: var(--subtext0);
     border: 1px solid var(--surface2); border-radius: 12px; cursor: pointer;
-    transition: background 100ms ease, color 100ms ease;
+    transition: background var(--anim-duration) var(--anim-ease), color var(--anim-duration) var(--anim-ease);
   }
   .strategy-pill:hover:not(:disabled) { background: var(--surface1); color: var(--text); }
   .strategy-pill:disabled { opacity: 0.4; cursor: not-allowed; }

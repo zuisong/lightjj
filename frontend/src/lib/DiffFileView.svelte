@@ -1424,7 +1424,7 @@
     font-weight: 600;
     flex-shrink: 0;
     white-space: nowrap;
-    transition: all 0.12s var(--anim-ease);
+    transition: all var(--anim-duration) var(--anim-ease);
   }
   .resolve-btn:hover {
     background: var(--bg-selected);

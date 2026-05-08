@@ -403,7 +403,7 @@
             {/if}
             {#if entry.commit.divergent}
               <button class="alert-badge alert-badge-click" title="Resolve divergence"
-                onclick={(e) => { e.stopPropagation(); onresolvedivergence(entry.commit.change_id) }}
+                onclick={(e) => { e.stopPropagation(); onselect(line.entryIndex); onresolvedivergence(entry.commit.change_id) }}
               >divergent</button>
             {/if}
             {#if entry.commit.conflicted}
@@ -650,7 +650,7 @@
     user-select: none;
     -webkit-user-select: none;
     /* Transition on base class so fade-OUT also animates (when .refreshing removed) */
-    transition: opacity 0.15s ease;
+    transition: opacity var(--anim-duration) var(--anim-ease);
   }
 
   .revision-list ::selection {
@@ -688,7 +688,7 @@
     -webkit-tap-highlight-color: transparent;
     overflow: hidden;
     position: relative;
-    transition: box-shadow 50ms var(--anim-ease);
+    transition: box-shadow var(--anim-duration) var(--anim-ease);
   }
 
   /* .hovered is JS-managed (hoveredIndex state, mousemove-driven) — see

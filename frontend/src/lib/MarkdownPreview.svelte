@@ -387,7 +387,7 @@
     backdrop-filter: blur(6px);
     font-size: var(--fs-sm);
     opacity: 0.75;
-    transition: opacity 120ms ease;
+    transition: opacity var(--anim-duration) var(--anim-ease);
     z-index: 1;
   }
   .md-toc:hover { opacity: 1; }
@@ -412,7 +412,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: border-color 80ms ease, color 80ms ease;
+    transition: border-color var(--anim-duration) var(--anim-ease), color var(--anim-duration) var(--anim-ease);
   }
   .md-toc-item:hover {
     color: var(--text);
@@ -452,7 +452,7 @@
     margin: 0 -8px 12px 8px;
     z-index: 1;
     opacity: 0.6;
-    transition: opacity 120ms ease;
+    transition: opacity var(--anim-duration) var(--anim-ease);
   }
   .md-toc-tab:hover { opacity: 1; }
   .md-toc-tab button {

@@ -67,7 +67,7 @@
     font-size: var(--font-size);
     resize: vertical;
     outline: none;
-    transition: border-color 0.15s ease;
+    transition: border-color var(--anim-duration) var(--anim-ease);
   }
 
   .desc-editor textarea:focus {

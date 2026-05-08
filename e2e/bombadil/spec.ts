@@ -26,11 +26,15 @@ export * from "@antithesishq/bombadil/defaults/properties";
 
 // Modal/panel overlays. `.panel` alone is too broad (DiffPanel,
 // RevisionGraph are permanent .panel elements); the overlays we care about
-// are dialogs + the slide-in/drawer panels that sit above the log view.
+// are dialogs + the slide-in/drawer panels + full-screen takeovers that
+// sit above (or replace) the log view. `.doc-view` is the ProseMirror
+// doc-mode editor (Escape closes it via App's `docEscape`); `.sym-card` is
+// the ⌘+hover symbol-peek card (position:fixed, z-index:80 — a stuck one
+// is a trap exactly like a modal). noModalTraps covers all of these.
 const modalOpen = extract((s) =>
   s.document.querySelector(
     '[role="dialog"], .divergence-panel, .evolog-panel, .oplog-panel, ' +
-    '.fh-root, .ctx-menu'
+    '.fh-root, .ctx-menu, .doc-view, .sym-card'
   ) !== null
 );
 
@@ -59,7 +63,9 @@ const rowHeights = extract((s) =>
 
 // StatusBar mode indicator — lets us gate "inline mode active" without
 // parsing App.svelte's internal state. `.mode-badge` only renders when
-// rebase/squash/split is active (StatusBar's {#if} gates).
+// rebase/squash/split is active (StatusBar's {#if} gates). It's StatusBar-
+// only now — RevisionGraph's per-row "<< from >>"/"<< into >>" role markers
+// use `.role-marker` (renamed v1.25.0 to kill the old name collision).
 const inlineModeActive = extract((s) =>
   s.document.querySelector(".mode-badge") !== null
 );
@@ -232,7 +238,7 @@ const press = (code: number) => ({ PressKey: { code } } as const);
 export const navKeys = actions(() => [
   press(KEY.j), press(KEY.k),
   press(KEY.LBRACKET), press(KEY.RBRACKET),
-  press(KEY.n1), press(KEY.n2),  // log / branches view
+  press(KEY.n1), press(KEY.n2), press(KEY.n3),  // log / branches / merge view
   press(KEY.n4), press(KEY.n5),  // oplog / evolog drawers
   press(KEY.SPACE),              // check/uncheck
   press(KEY.m),                  // markdown preview
@@ -290,13 +296,24 @@ export const clickRows = clicks("row", rowCenters);
 const dismissCenters = centers(".dismiss, .welcome-dismiss");
 export const clickDismiss = clicks("dismiss", dismissCenters);
 
-// Panel-entry buttons — the reachability layer. `.divergent-btn` opens
-// DivergencePanel (RevisionHeader, only renders when selected rev is
-// divergent), `.alert-badge` marks divergent/conflict rows so clicking it
-// selects that row first. Together they make the 2-step nav→open chain
-// reachable in a random walk.
-const triggerCenters = centers(".divergent-btn, .alert-badge");
+// Panel-entry buttons — the reachability layer for noModalTraps on
+// DivergencePanel. `.alert-badge-click` is the per-row "Resolve divergence"
+// button (RevisionGraph; only renders on divergent rows — the fixture has
+// one). Clicking it opens DivergencePanel directly: v1.25.0 moved the
+// trigger from RevisionHeader (`.divergent-btn`, now gone) into the graph
+// row, so the old nav-first 2-step chain is no longer needed. The bare
+// `.alert-badge` (no `-click`) is a display-only conflict label `<span>`,
+// deliberately excluded — clicking it does nothing, just wastes budget.
+const triggerCenters = centers(".alert-badge-click");
 export const clickTriggers = clicks("trigger", triggerCenters);
+
+// Not yet in the action pool: doc-mode entry (the "Doc" button in
+// DiffFileView's header has no stable test selector — just `.btn.btn-sm`)
+// and symbol-peek (⌘+hover an identifier — Bombadil's `PressKey: {code}`
+// carries no modifier flags). So modalOpen's `.doc-view` / `.sym-card` arms
+// of noModalTraps are currently only exercised if a future generator gets
+// added or Bombadil grows modifier support. The properties stay correct
+// (vacuously true until reached); the gap is reachability, not soundness.
 
 // Text inputs — reachability for focusEscapable. Without this the property
 // is vacuous (no action focuses an input). .revset-input is the v1.12.1

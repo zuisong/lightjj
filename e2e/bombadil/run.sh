@@ -60,14 +60,21 @@ HEADLESS_FLAG="--headless"
 
 # `chromiumoxide::handler WS Invalid message` warnings are benign — newer
 # CDP events the bundled chromiumoxide doesn't recognize; actions still fire.
-# Headless action rate is ~0.3/s (screenshot-capture-bound); time-windowed
-# `eventually(...).within(10,"seconds")` properties get ~3 actions per window.
-# Prefer step-count windows or HEADED=1 for liveness checks.
+# Headless throughput is screenshot-capture-bound — observed ~3-5 actions in
+# 60s on a loaded machine (worse under contention), so the time-windowed
+# `eventually(...).within(N,"seconds")` properties effectively get 0-1
+# actions per window. `--device-scale-factor 1` halves screenshot pixel
+# area vs the default 2 (one fewer thing the capture has to chew on);
+# HEADED=1 is ~60× faster but produces blank screenshots in the bundled
+# Chromium (known — see e2e/bombadil notes). For real liveness coverage,
+# either crank DURATION way up or wait for `bombadil test` to grow a
+# step-count flag.
 timeout "${DURATION}s" bombadil test \
   "http://localhost:$PORT" \
   "$HERE/spec.ts" \
   --output-path "$OUT" \
   --exit-on-violation \
+  --device-scale-factor 1 \
   $HEADLESS_FLAG \
   ${BOMBADIL_FLAGS:-} \
   || true  # timeout exits 124; violations exit nonzero — both expected

@@ -171,15 +171,33 @@
 
   // Smart views — preset chips below the revset input. Click → applyRevsetExample.
   // Module-const: zero reactive deps, viewLabel loop adds no tracking.
+  // Ordered scope-narrow → scope-broad (WIP ⊂ My work ⊂ Default ⊂ All), then
+  // the two triage filters, then the dynamic PRs chip (rendered after this
+  // list). desc is the human-readable half of the tooltip; the revset is
+  // appended on a second line so power users can copy/learn the syntax.
   const STATIC_PRESETS = [
+    { key: 'wip',       label: 'WIP',       revset: 'trunk()..@',
+      desc: 'Your current stack — commits between trunk and the working copy' },
+    { key: 'mine',      label: 'My work',   revset: 'mine() & mutable()',
+      desc: 'All mutable commits you authored, across stacks' },
     // jj's built-in default (what you get with no revsets.log config).
     // Config-independent — useful when a custom revsets.log uses mine() and
     // a bot-authored commit holding your bookmark drops out.
-    { key: 'all',       label: 'All',       revset: 'present(@) | ancestors(immutable_heads().., 2) | present(trunk())' },
-    { key: 'mine',      label: 'My work',   revset: 'mine() & mutable()' },
-    { key: 'wip',       label: 'WIP',       revset: 'trunk()..@' },
-    { key: 'conflicts', label: 'Conflicts', revset: 'conflicts()' },
-    { key: 'divergent', label: 'Divergent', revset: '(divergent() & mutable())::' },
+    { key: 'default',   label: 'Default',   revset: 'present(@) | ancestors(immutable_heads().., 2) | present(trunk())',
+      desc: "jj's built-in log view (trunk + working copy + recent heads), ignoring any custom revsets.log" },
+    // ~ root() drops the virtual root commit. Bounded by the backend's 500-row
+    // limit; all() is set enumeration (no per-commit predicate) so it stays
+    // fast even on huge histories.
+    { key: 'all',       label: 'All',       revset: 'all() ~ root()',
+      desc: 'Every visible commit (most recent 500)' },
+    // & mutable() is a 60× speedup on large repos (conflicts() alone is
+    // O(commits×tree-check) — see internal/jj/commands.go ConflictList for the
+    // same gate on the backend). Semantically lossless: an immutable conflict
+    // can't be resolved anyway.
+    { key: 'conflicts', label: 'Conflicts', revset: 'conflicts() & mutable()',
+      desc: 'Mutable commits with unresolved merge conflicts' },
+    { key: 'divergent', label: 'Divergent', revset: '(divergent() & mutable())::',
+      desc: 'Divergent changes (same change_id, different commit_ids) and their descendants' },
   ] as const
 
   // The only dynamic preset. Empty list → '' (chip hidden by {#if}, never
@@ -2749,23 +2767,26 @@
                `revisions.some(conflicted)` would see only what's LOADED
                (circularly hides the chip that would find them). -->
           <div class="preset-chips">
-            {#snippet chip(revset: string, label: string, count?: number)}
+            {#snippet chip(revset: string, label: string, desc: string, count?: number)}
               {@const active = revsetFilter === revset}
               <!-- Active chip → toggle off. Re-applying the same revset would
                    fire handleRevsetSubmit → diff.reset + clearChecks + reload,
                    wiping nav position for a no-op. -->
+              <!-- title: human description first, raw revset second (\n is the
+                   only multiline native tooltips support) — the description is
+                   what most users need; the revset is for learning the syntax. -->
               <button
                 class="preset-chip"
                 class:active={active}
                 onclick={() => applyRevsetExample(active ? '' : revset)}
-                title={revset}
+                title={`${desc}\n${revset}`}
               >{label}{#if count !== undefined} <span class="chip-count">{count}</span>{/if}</button>
             {/snippet}
             {#each STATIC_PRESETS as p (p.key)}
-              {@render chip(p.revset, p.label)}
+              {@render chip(p.revset, p.label, p.desc)}
             {/each}
             {#if pullRequests.length > 0}
-              {@render chip(prsRevset, 'PRs', pullRequests.length)}
+              {@render chip(prsRevset, 'PRs', 'Open pull requests and their stacks', pullRequests.length)}
             {/if}
           </div>
           <RevisionGraph
@@ -3228,7 +3249,7 @@
     font-family: inherit;
     font-size: var(--fs-md);
     outline: none;
-    transition: border-color 0.15s ease;
+    transition: border-color var(--anim-duration) var(--anim-ease);
   }
 
   .revset-input:focus {
@@ -3257,7 +3278,7 @@
     color: var(--subtext0);
     border: 1px solid transparent;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all var(--anim-duration) var(--anim-ease);
   }
   .preset-chip:hover { background: var(--surface1); color: var(--text); }
   .preset-chip.active { border-color: var(--amber); color: var(--amber); background: var(--surface0); }
@@ -3439,9 +3460,9 @@
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: #ef5350;
+    background: var(--red);
     border: 1.5px solid var(--crust);
-    box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.3);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 30%, transparent);
     z-index: 1;
     pointer-events: none;
   }

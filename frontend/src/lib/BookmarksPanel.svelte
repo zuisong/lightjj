@@ -942,7 +942,7 @@
 
   .bp-confirm {
     color: var(--red);
-    animation: bp-pulse 0.15s ease;
+    animation: bp-pulse var(--anim-duration) ease;
   }
 
   .bp-confirm b { font-weight: 600; }
