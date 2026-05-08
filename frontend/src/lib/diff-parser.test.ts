@@ -345,6 +345,122 @@ rename to src/new.go`
   })
 })
 
+// Real `jj diff --tool :git` output captured from a scratch repo. Covers the
+// extended-header / metadata-line shapes that the jj-style "Modified regular
+// file" tests above don't reach. These are what production actually parses
+// (handlers.go always passes --tool :git).
+describe('parseDiffContent — :git extended headers', () => {
+  it('drops "\\ No newline at end of file" marker (not a content line)', () => {
+    // Mis-parsing this as context inflates newCount → context-expand inserts
+    // a phantom gap row.
+    const raw = `diff --git a/no-newline.txt b/no-newline.txt
+index e64015c0c3..26e4ff4f04 100644
+--- a/no-newline.txt
++++ b/no-newline.txt
+@@ -1,3 +1,3 @@
+ line1
+-line2
++MODIFIED
+ line3
+\\ No newline at end of file`
+    const f = parseDiffContent(raw)[0]
+    expect(f.filePath).toBe('no-newline.txt')
+    expect(f.hunks[0].lines).toHaveLength(4)
+    expect(f.hunks[0].newCount).toBe(3) // line1, MODIFIED, line3 — NOT 4
+    expect(f.hunks[0].lines.map(l => l.type)).toEqual(['context', 'remove', 'add', 'context'])
+  })
+
+  it('mode-change-only: old/new mode lines, no hunks', () => {
+    const raw = `diff --git a/mode.sh b/mode.sh
+old mode 100644
+new mode 100755`
+    const f = parseDiffContent(raw)[0]
+    expect(f.filePath).toBe('mode.sh')
+    expect(f.hunks).toHaveLength(0)
+    expect(f.header).toContain('old mode 100644')
+    expect(f.header).toContain('new mode 100755')
+  })
+
+  it('git-style binary marker (different from jj-style "Binary file differs")', () => {
+    const raw = `diff --git a/image.bin b/image.bin
+index f6aa613aa0..e99cea4cf6 100644
+Binary files a/image.bin and b/image.bin differ`
+    const f = parseDiffContent(raw)[0]
+    expect(f.filePath).toBe('image.bin')
+    expect(f.hunks).toHaveLength(0)
+    expect(f.header).toContain('Binary files a/image.bin and b/image.bin differ')
+  })
+
+  it('new file: new file mode + --- /dev/null', () => {
+    const raw = `diff --git a/newfile.txt b/newfile.txt
+new file mode 100644
+index 0000000000..03a0d6dfaf
+--- /dev/null
++++ b/newfile.txt
+@@ -0,0 +1,1 @@
++NEW`
+    const f = parseDiffContent(raw)[0]
+    expect(f.filePath).toBe('newfile.txt')
+    expect(f.header).toContain('new file mode 100644')
+    expect(f.header).toContain('--- /dev/null')
+    expect(f.hunks[0].lines).toEqual([{ type: 'add', content: '+NEW' }])
+  })
+
+  it('deleted file: deleted file mode + +++ /dev/null', () => {
+    const raw = `diff --git a/deleted.txt b/deleted.txt
+deleted file mode 100644
+index ce01362503..0000000000
+--- a/deleted.txt
++++ /dev/null
+@@ -1,1 +0,0 @@
+-hello`
+    const f = parseDiffContent(raw)[0]
+    expect(f.filePath).toBe('deleted.txt')
+    expect(f.header).toContain('deleted file mode 100644')
+    expect(f.header).toContain('+++ /dev/null')
+    expect(f.hunks[0].lines).toEqual([{ type: 'remove', content: '-hello' }])
+  })
+
+  it('hunk header with trailing function context', () => {
+    // jj :git includes the surrounding line after the second @@; the regex
+    // is start-anchored only so the trailer is ignored for newStart/newCount.
+    const raw = `diff --git a/f.go b/f.go
+--- a/f.go
++++ b/f.go
+@@ -47,2 +47,2 @@ func Fragment(node, context) {
+-old
++new`
+    const h = parseDiffContent(raw)[0].hunks[0]
+    expect(h.newStart).toBe(47)
+    expect(h.newCount).toBe(1)
+    expect(h.header).toBe('@@ -47,2 +47,2 @@ func Fragment(node, context) {')
+  })
+
+  it('UTF-8 path (jj emits raw, not C-quoted)', () => {
+    const raw = `diff --git a/üñî.txt b/üñî.txt
+index ce01362503..14be0d41c6 100644
+--- a/üñî.txt
++++ b/üñî.txt
+@@ -1,1 +1,1 @@
+-hello
++hello2`
+    expect(parseDiffContent(raw)[0].filePath).toBe('üñî.txt')
+  })
+
+  it('index line attaches to header (not swallowed into hunk)', () => {
+    const raw = `diff --git a/f.txt b/f.txt
+index abc123..def456 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1 +1 @@
+-a
++b`
+    const f = parseDiffContent(raw)[0]
+    expect(f.header).toContain('index abc123..def456 100644')
+    expect(f.hunks[0].lines).toHaveLength(2)
+  })
+})
+
 describe('newSideAddedLines', () => {
   const hunk = (newStart: number, types: ('add' | 'remove' | 'context')[]) => ({
     header: '@@', oldStart: 1, newStart, newCount: 0,

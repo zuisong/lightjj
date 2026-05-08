@@ -83,6 +83,10 @@ export function parseDiffContent(raw: string): DiffFile[] {
     } else if (currentFile && line.startsWith('rename from ')) {
       currentFile.sourcePath = line.slice('rename from '.length)
       currentFile.header += '\n' + line
+    } else if (line.startsWith('\\')) {
+      // `\ No newline at end of file` — metadata, not a content line. Would
+      // otherwise fall into the hunk branch as a context line and inflate
+      // newCount → wrong context-expand gap boundaries.
     } else if (currentHunk) {
       // Expand tabs in the SOURCE portion (after the +/-/space marker) for
       // display. CSS tab stops are measured from the block's content edge, so
