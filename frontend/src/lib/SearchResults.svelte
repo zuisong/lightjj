@@ -11,6 +11,7 @@
   let { matches, currentIdx, fileCount, onjump }: Props = $props()
 
   let listEl: HTMLDivElement | undefined = $state(undefined)
+  let hoveredIdx = $state(-1)
 
   // Cap rendering — beyond this, ↑/↓ nav is the way (the inline highlight
   // still covers all matches; this is just the jump list).
@@ -55,13 +56,19 @@
     {matches.length} {matches.length === 1 ? 'match' : 'matches'} in {fileCount} {fileCount === 1 ? 'file' : 'files'}
     {#if matches.length > RENDER_CAP}<span class="sr-cap">· showing first {RENDER_CAP}</span>{/if}
   </div>
-  <div class="sr-list" bind:this={listEl} role="listbox" tabindex="-1" aria-label="Search results">
+  <div class="sr-list" bind:this={listEl} role="listbox" tabindex="-1" aria-label="Search results"
+    onmousemove={(e) => {
+      const t = (e.target as Element).closest('[data-idx]')
+      hoveredIdx = t ? Number(t.getAttribute('data-idx')) : -1
+    }}
+    onmouseleave={() => hoveredIdx = -1}>
     {#each shown as m, i (i)}
       {@const [pre, hit, post, lead, trail] = snippet(m)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div
         class="sr-row"
         class:sr-current={i === currentIdx}
+        class:hovered={i === hoveredIdx}
         data-idx={i}
         role="option"
         tabindex="-1"
@@ -118,7 +125,7 @@
     cursor: pointer;
     user-select: none;
   }
-  .sr-row:hover { background: var(--surface0); }
+  .sr-row.hovered { background: var(--surface0); }
   .sr-current {
     border-left-color: var(--amber);
     background: var(--surface0);

@@ -16,6 +16,7 @@
   let { entries, loading, error = '', onrefresh, onclose, onopundo, onoprestore, oncontextmenu }: Props = $props()
 
   let selectedIdx = $state(-1)
+  let hoveredIdx = $state(-1)
   let contentEl: HTMLElement | undefined
 
   // Single-op expansion — `jj op show` output, displayed verbatim below the
@@ -107,7 +108,12 @@
     </div>
   </div>
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div class="oplog-content" role="listbox" tabindex="-1" bind:this={contentEl} onkeydown={handleKeydown}>
+  <div class="oplog-content" role="listbox" tabindex="-1" bind:this={contentEl} onkeydown={handleKeydown}
+    onmousemove={(e) => {
+      const t = (e.target as Element).closest('[data-idx]')
+      hoveredIdx = t ? Number(t.getAttribute('data-idx')) : -1
+    }}
+    onmouseleave={() => hoveredIdx = -1}>
     {#if loading}
       <div class="empty-state">
         <div class="spinner"></div>
@@ -125,6 +131,8 @@
           class="oplog-entry"
           class:oplog-current={op.is_current}
           class:selected={selectedIdx === i}
+          class:hovered={hoveredIdx === i}
+          data-idx={i}
           onclick={() => { selectedIdx = i }}
           ondblclick={() => { selectedIdx = i; toggleExpand(op) }}
           oncontextmenu={(e) => { e.preventDefault(); selectedIdx = i; openMenuFor(op, e.clientX, e.clientY) }}
@@ -181,7 +189,7 @@
     border-bottom: 1px solid var(--border-hunk-header);
   }
 
-  .oplog-entry:hover {
+  .oplog-entry.hovered {
     background: var(--bg-hover);
   }
 

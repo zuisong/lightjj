@@ -111,10 +111,6 @@ When adding a derived var, put it in the `:root` block as `color-mix(in srgb, va
 | `.placeholder-text` | Dimmed italic "(no description)" |
 | `.nav-hint` | `<kbd>` badge for keyboard shortcuts |
 
-### Known collisions (deferred)
-
-`StatusBar .mode-badge` and `RevisionGraph .mode-badge` share a class name with different semantics (amber-filled vs base+modifiers). Rename one before any global extraction.
-
 ---
 
 ## Conflicts: Both sides red

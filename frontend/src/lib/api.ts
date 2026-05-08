@@ -75,6 +75,10 @@ export interface Annotation {
    *  See review.ts fromAnnotation. */
   resolution?: 'addressed' | 'wontfix'
   resolvedAtCommitId?: string
+  /** Who posted this. Absent = the user ("you"). Agents POST a stable name
+   *  (e.g. their harness) so CommentCard renders the ⟐ prefix and the
+   *  hideAuthor filter can target them. Same contract as DocComment.author. */
+  author?: string
 }
 
 // Doc-mode comment — per-filePath, range-anchored via content-addressed Anchor

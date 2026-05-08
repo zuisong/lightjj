@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"time"
 )
 
 // annMu serializes read-modify-write across POST/DELETE handlers. Without it,
@@ -46,9 +47,46 @@ type Annotation struct {
 	// can't. fromAnnotation prefers this over Status when present.
 	Resolution         string `json:"resolution,omitempty"`
 	ResolvedAtCommitId string `json:"resolvedAtCommitId,omitempty"`
+	// Author distinguishes agent-posted from user-posted comments. Absent =
+	// "you" (the user). Agents should set a stable name so the frontend can
+	// render the ⟐ prefix and offer "Hide author". Mirrors DocComment.Author —
+	// without this the field was silently DROPPED on the unmarshal→marshal
+	// round-trip (typed struct, not RawMessage; see comment on the type).
+	Author string `json:"author,omitempty"`
 }
 
 func (a Annotation) GetID() string { return a.ID }
+
+// mergeAnnotation upserts ann into items, preserving an existing record's
+// status/resolution/resolvedAtCommitId when ann omits them, and its createdAt
+// when ann's was server-stamped. Mirrors mergeDocComment — the agent_api.md
+// "Review loop" tells agents to re-POST with the same id to amend a comment
+// and to poll resolution for the human's accept/reject; without this merge a
+// re-POST that omits the resolution fields (which the agent has no reason to
+// echo back) would silently wipe the human's decision. Returns the post-merge
+// ann so the HTTP response reflects what was actually stored.
+func mergeAnnotation(items []Annotation, ann Annotation, stamped bool) ([]Annotation, Annotation) {
+	for i := range items {
+		if items[i].ID == ann.ID {
+			if ann.Resolution == "" {
+				ann.Resolution = items[i].Resolution
+				ann.ResolvedAtCommitId = items[i].ResolvedAtCommitId
+			}
+			// Status is a coarser legacy flag that tracks Resolution (the
+			// frontend's resolveAs writes both). Preserve it under the same
+			// condition so the pair stays consistent — preserving one without
+			// the other would render an "open" card with a wontfix tag.
+			if ann.Status == "" {
+				ann.Status = items[i].Status
+			}
+			if stamped {
+				ann.CreatedAt = items[i].CreatedAt
+			}
+			break
+		}
+	}
+	return upsertByID(items, ann), ann
+}
 
 // changeId is embedded in a filesystem path — restrict to jj's charset
 // (lowercase alphanum for change_ids, hex for commit_ids if used as fallback).
@@ -102,6 +140,17 @@ func (s *Server) handleAnnotationsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Server-stamp createdAt when omitted, matching doc_comments.go. The
+	// frontend store always sends one, but the agent_api.md POST example is
+	// the first producer that doesn't — without this stamp, agent annotations
+	// render as "56y" in CommentCard's relativeTime (epoch 0 falls through its
+	// nullish guard).
+	stamped := false
+	if ann.CreatedAt == 0 {
+		ann.CreatedAt = time.Now().UnixMilli()
+		stamped = true
+	}
+
 	annMu.Lock()
 	defer annMu.Unlock()
 
@@ -110,7 +159,7 @@ func (s *Server) handleAnnotationsPost(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	anns = upsertByID(anns, ann)
+	anns, ann = mergeAnnotation(anns, ann, stamped)
 
 	path, _ := annotationsPath(ann.ChangeId) // validated via readAnnotations
 	if err := atomicWriteJSON(path, anns); err != nil {

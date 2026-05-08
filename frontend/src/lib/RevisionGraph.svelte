@@ -387,19 +387,19 @@
             {@const isSquashTarget = squash.active && selectedIndex === line.entryIndex && !isSquashSource}
             {@const isSplitSource = split.active && line.eid === split.revision}
             {#if isRebaseSource}
-              <span class="mode-badge badge-source">&lt;&lt; {sourceModeLabel[rebase.sourceMode]} &gt;&gt;</span>
+              <span class="role-marker badge-source">&lt;&lt; {sourceModeLabel[rebase.sourceMode]} &gt;&gt;</span>
             {/if}
             {#if isRebaseTarget}
-              <span class="mode-badge badge-target">&lt;&lt; {targetModeLabel[rebase.targetMode]} &gt;&gt;</span>
+              <span class="role-marker badge-target">&lt;&lt; {targetModeLabel[rebase.targetMode]} &gt;&gt;</span>
             {/if}
             {#if isSquashSource}
-              <span class="mode-badge badge-source">&lt;&lt; from &gt;&gt;</span>
+              <span class="role-marker badge-source">&lt;&lt; from &gt;&gt;</span>
             {/if}
             {#if isSquashTarget}
-              <span class="mode-badge badge-target">&lt;&lt; into &gt;&gt;</span>
+              <span class="role-marker badge-target">&lt;&lt; into &gt;&gt;</span>
             {/if}
             {#if isSplitSource}
-              <span class="mode-badge badge-source">&lt;&lt; {split.review ? 'review' : 'split'} &gt;&gt;</span>
+              <span class="role-marker badge-source">&lt;&lt; {split.review ? 'review' : 'split'} &gt;&gt;</span>
             {/if}
             {#if entry.commit.divergent}
               <button class="alert-badge alert-badge-click" title="Resolve divergence"
@@ -970,7 +970,7 @@
     color: var(--text);
   }
 
-  .mode-badge {
+  .role-marker {
     font-size: var(--fs-xs);
     font-weight: 700;
     padding: 0 4px;

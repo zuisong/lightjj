@@ -90,8 +90,6 @@ describe('App.svelte interactions', () => {
 
     await press('R')
     await waitFor(() => qs('.statusbar.rebase-active') !== null)
-    // Scoped — RevisionGraph also renders .mode-badge for source/dest markers
-    // (the documented .mode-badge name collision in CLAUDE.md).
     expect(qs('.statusbar .mode-badge')?.textContent).toBe('rebase')
 
     // inlineNav.rebase routes j/k → selectRevision (destination cursor): j

@@ -66,6 +66,7 @@ export function fromAnnotation(a: Annotation): Review {
       commitId: a.createdAtCommitId,
     },
     body: a.comment,
+    author: a.author,
     createdAt: a.createdAt,
     severity: a.severity,
     kind: 'note',

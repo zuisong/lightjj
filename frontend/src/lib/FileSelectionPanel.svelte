@@ -218,10 +218,6 @@
     transition: background-color var(--anim-duration) var(--anim-ease);
   }
 
-  .file-select-row:hover:not(.file-select-active) {
-    background: var(--bg-hover);
-  }
-
   .file-select-row.file-select-active {
     background: var(--surface0);
   }

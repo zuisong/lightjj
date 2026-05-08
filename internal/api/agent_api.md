@@ -197,6 +197,51 @@ the entire array before writing any (all-or-nothing):
 `400` with `comments[N].anchor.selection required` if any entry is invalid; in
 that case nothing is written.
 
+## Diff annotations
+
+Doc-comments anchor on rendered prose; **annotations** anchor on a diff line.
+Use them when reviewing a code change rather than a markdown document. They
+live in a separate per-`changeId` store and use **camelCase** params (this
+endpoint predates the snake_case convention used by `navigate`/`focus`).
+
+```
+GET  <base>/api/annotations?changeId=<change_id>
+POST <base>/api/annotations
+DELETE <base>/api/annotations?changeId=<change_id>&id=<id>
+```
+
+POST body — upserted by `id` (re-POST same `id` to edit; new `id` to add):
+
+```jsonc
+{
+  "id": "a1b2c3",                    // your UUID — pick once, reuse to update
+  "changeId": "wqnwkozp",
+  "filePath": "src/handlers.go",
+  "lineNum": 42,                     // 1-based; 0 = whole-file
+  "side": "new",                     // "new" (default) | "old" — comment on a deleted line
+  "lineContent": "func main() {",    // snapshot — used for re-anchor after rewrite
+  "comment": "missing error check",
+  "severity": "suggestion",          // must-fix | suggestion | question | nitpick | reviewed
+  "author": "agent-name",            // optional but RECOMMENDED — see below
+  "createdAtCommitId": "abc123",     // commit_id when posted — re-anchor baseline
+  "createdAt": 1746543600000         // ms epoch; server-stamped if omitted
+}
+```
+
+`severity` is a closed vocabulary — values outside the list above store fine
+but render with no color and are filtered out of the per-severity chip bar.
+A re-POST with an existing `id` preserves the stored `resolution`, `status`,
+`resolvedAtCommitId`, and `createdAt` when you omit them — amending the body
+won't wipe the user's accept/reject.
+
+`author` distinguishes agent-posted from user-posted. The UI renders agent
+comments with a `⟐` prefix and offers "Hide author"; without it your comments
+are indistinguishable from the user's own and you can't filter on re-read.
+Same contract as `DocComment.author`.
+
+Responses on read-back have `resolution` (`"addressed"` | `"wontfix"` | absent)
+and `status` set when the user resolves them — same poll loop as doc-comments.
+
 ## Steer the user's view
 
 ```

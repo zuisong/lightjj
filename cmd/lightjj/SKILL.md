@@ -57,7 +57,8 @@ lightjj api GET '/tab/0/api/file-show?revision=@&path=docs/DESIGN.md'
 # What is the user looking at right now? Read this FIRST — it's the difference
 # between narrating a review and spraying comments past the user's cursor.
 # Returns {change_id, commit_id, active_view, doc_file_path, updated_at}.
-# Stale if updated_at is >30s old (browser closed or not focused).
+# Stale if updated_at is >60s old (browser closed or not focused) — the
+# frontend heartbeats every 20s while the tab is visible.
 lightjj api GET /tab/0/api/focus
 
 # Read the current revision graph (commit metadata, descriptions, bookmarks)
@@ -70,16 +71,51 @@ lightjj api GET '/tab/0/api/file-show?revision=@&path=src/main.go'
 lightjj api GET '/tab/0/api/doc-comments?path=docs/DESIGN.md'
 
 # Post a doc-mode comment (range-anchored on rendered text — see /api/agent
-# for the anchor schema)
+# for the anchor schema). Set "author" so the UI marks it as agent-posted.
 lightjj api POST /tab/0/api/doc-comments @comment.json
 
 # Steer the user's view to a file/line, or to a comment by id
-lightjj api POST /tab/0/api/navigate '{"path":"src/main.go","line":42}'
+lightjj api POST /tab/0/api/navigate '{"file_path":"src/main.go","line":42}'
 lightjj api POST /tab/0/api/navigate '{"change_id":"xyzabc","comment_id":"a1b2c3"}'
 
-# Read inline review comments (annotations) on a change
-lightjj api GET '/tab/0/api/annotations?change_id=xyzabc'
+# Read inline review comments (annotations) on a change. Note: camelCase param.
+lightjj api GET '/tab/0/api/annotations?changeId=xyzabc'
+
+# Post a diff-line review comment. Same store the user's Alt+click writes to.
+# severity: must-fix | suggestion | question | nitpick | reviewed
+lightjj api POST /tab/0/api/annotations '{"id":"a1","changeId":"xyzabc",
+  "filePath":"src/main.go","lineNum":42,"lineContent":"func main() {",
+  "comment":"missing error check","severity":"suggestion","author":"agent-name"}'
 ```
+
+## Review loop
+
+A review is multi-turn — the user reads your comments, accepts some, marks
+others won't-fix, and may post their own. Be a good participant:
+
+1. **Set `author` on everything you post.** Both `/api/annotations` and
+   `/api/doc-comments` take an `author` field. Use a stable name (your harness
+   or model name). The UI renders agent comments with a ⟐ prefix and lets the
+   user hide-by-author. Without it, your comments look like the user's own and
+   you can't tell yours apart on re-read.
+
+2. **Read before writing.** GET the existing comments for the file/change
+   before posting. The store upserts by `id` — a re-POST with a fresh UUID is
+   a duplicate, not an update. To update, re-POST with the *same* `id`.
+
+3. **Re-read after the user reviews.** Poll `/api/annotations?changeId=...` or
+   `/api/doc-comments?path=...` and check `resolution` on the comments you
+   posted. `"addressed"` = accepted, `"wontfix"` = rejected, absent = still
+   open. There is no "review finished" signal — poll until your ids resolve,
+   or agree a convention with the user.
+
+4. **Respect won't-fix.** Don't re-post a finding the user marked
+   `resolution: "wontfix"`. They saw it and decided.
+
+5. **Don't write `/api/focus`.** It's the frontend's report of what the user
+   is looking at — POSTing to it forges that report and lies to yourself on
+   the next read. Use `/api/navigate` to *steer* the user; `/api/focus` to
+   *read* where they are.
 
 ## Multiple sessions / repos
 
@@ -119,3 +155,6 @@ but won't auto-match — its repo dir is a remote path. Use `--addr`.
   unprefixed path falls through to the SPA. Use `/tab/0/api/...`.
 - **HTTP 400 `Content-Type must be application/json`** — only happens with
   `curl`; `lightjj api` sets it automatically when a body is present.
+- **HTTP 400 `changeId required`** — `/api/annotations` uses camelCase query
+  params (`changeId`, `id`); `/api/navigate` uses snake_case body fields
+  (`change_id`, `file_path`). They predate each other — check `/api/agent`.

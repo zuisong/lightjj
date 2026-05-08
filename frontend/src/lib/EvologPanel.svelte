@@ -18,6 +18,7 @@
   let { entries, loading, selectedRevision, height, onrefresh, onclose, onrestoreversion, oncontextmenu }: Props = $props()
 
   let selectedIdx: number = $state(-1)
+  let hoveredIdx = $state(-1)
   let entryListEl: HTMLDivElement | undefined = $state()
 
   // Diff arrives inline with each entry (rebase-safe inter_diff from the backend
@@ -99,7 +100,12 @@
   </div>
 
   <div class="evolog-body">
-    <div class="entry-list" role="listbox" tabindex="-1" bind:this={entryListEl} onkeydown={handleKeydown}>
+    <div class="entry-list" role="listbox" tabindex="-1" bind:this={entryListEl} onkeydown={handleKeydown}
+      onmousemove={(e) => {
+        const t = (e.target as Element).closest('[data-idx]')
+        hoveredIdx = t ? Number(t.getAttribute('data-idx')) : -1
+      }}
+      onmouseleave={() => hoveredIdx = -1}>
       {#if loading && entries.length === 0}
         <div class="empty-state">
           <div class="spinner"></div>
@@ -113,8 +119,10 @@
           <button
             class="evolog-entry"
             class:selected={i === selectedIdx}
+            class:hovered={i === hoveredIdx}
             class:current={i === 0}
             class:origin={entry.predecessor_ids.length === 0}
+            data-idx={i}
             onclick={() => selectEntry(i)}
             oncontextmenu={(e) => handleEntryContextMenu(e, entry, i)}
           >
@@ -214,7 +222,7 @@
     text-align: left;
   }
 
-  .evolog-entry:hover:not(.selected) {
+  .evolog-entry.hovered:not(.selected) {
     background: var(--bg-hover);
   }
 

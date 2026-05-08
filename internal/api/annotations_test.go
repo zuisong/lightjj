@@ -67,6 +67,81 @@ func TestAnnotations_ResolutionRoundTrips(t *testing.T) {
 	assert.Equal(t, "resolved", anns[0].Status)
 }
 
+// TestAnnotations_AuthorRoundTrips locks the Author field's presence on the
+// typed struct. Before this field existed, an agent's `"author":"agent-name"`
+// was silently dropped on unmarshal→marshal — the POST returned 200, the GET
+// returned the annotation, the field was just gone. Same bug class as the
+// Vite-no-typecheck `.get`/`.list` swallow: no error, just a silent dropout
+// at a layer boundary.
+func TestAnnotations_AuthorRoundTrips(t *testing.T) {
+	srv := newAnnotationsServer(t)
+	ann := Annotation{ID: "a1", ChangeId: "abc", FilePath: "f.go", LineNum: 7, Comment: "check this", Author: "agent-name"}
+	body, _ := json.Marshal(ann)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, jsonPost("/api/annotations", body))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/annotations?changeId=abc", nil))
+	var anns []Annotation
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &anns))
+	require.Len(t, anns, 1)
+	assert.Equal(t, "agent-name", anns[0].Author)
+}
+
+// TestAnnotations_RePostPreservesResolution locks the merge-on-upsert behavior
+// added in mergeAnnotation. The agent_api.md "Review loop" tells agents to
+// re-POST with the same id to amend a comment — without this merge, that
+// re-POST (which omits resolution/status because the agent has no reason to
+// echo them back) would silently wipe the user's accept/reject. Mirrors
+// TestDocComments_RePostPreservesResolution.
+func TestAnnotations_RePostPreservesResolution(t *testing.T) {
+	srv := newAnnotationsServer(t)
+	post := func(a Annotation) Annotation {
+		t.Helper()
+		body, _ := json.Marshal(a)
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, jsonPost("/api/annotations", body))
+		require.Equal(t, http.StatusOK, w.Code)
+		var got Annotation
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+		return got
+	}
+	get := func() []Annotation {
+		t.Helper()
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/annotations?changeId=abc", nil))
+		var anns []Annotation
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &anns))
+		return anns
+	}
+
+	// 1. Agent posts with no createdAt — server stamps one.
+	first := post(Annotation{ID: "a1", ChangeId: "abc", FilePath: "f.go", LineNum: 7, Comment: "check this", Author: "agent-name"})
+	require.NotZero(t, first.CreatedAt, "server must stamp createdAt when omitted")
+
+	// 2. User resolves it (frontend sends both Status and Resolution).
+	post(Annotation{ID: "a1", ChangeId: "abc", FilePath: "f.go", LineNum: 7, Comment: "check this",
+		Author: "agent-name", Status: "resolved", Resolution: "wontfix", ResolvedAtCommitId: "deadbeef", CreatedAt: first.CreatedAt})
+
+	// 3. Agent re-POSTs to amend the body, omitting resolution/status/createdAt
+	//    (it has no reason to echo them — it doesn't know the user resolved it).
+	resp := post(Annotation{ID: "a1", ChangeId: "abc", FilePath: "f.go", LineNum: 7, Comment: "check this — actually nvm", Author: "agent-name"})
+
+	// The response AND the stored record must preserve the user's decision and
+	// the original createdAt — the agent just amended the body.
+	assert.Equal(t, "wontfix", resp.Resolution, "re-POST must not wipe the user's resolution")
+	assert.Equal(t, "resolved", resp.Status)
+	assert.Equal(t, "deadbeef", resp.ResolvedAtCommitId)
+	assert.Equal(t, first.CreatedAt, resp.CreatedAt, "re-POST without createdAt must preserve original timestamp")
+	assert.Equal(t, "check this — actually nvm", resp.Comment, "the body amendment must apply")
+
+	stored := get()
+	require.Len(t, stored, 1)
+	assert.Equal(t, "wontfix", stored[0].Resolution)
+	assert.Equal(t, "check this — actually nvm", stored[0].Comment)
+}
+
 func TestAnnotations_CRUD(t *testing.T) {
 	srv := newAnnotationsServer(t)
 
