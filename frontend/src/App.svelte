@@ -364,9 +364,14 @@
     const base = agentBaseURL()
     const port = window.location.port || '80'
     const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname)
+    // tabPath is "/tab/N" — the part of the base URL the CLI needs (it
+    // discovers host:port itself). Lead with `lightjj api` (works in
+    // curl-denylisted harnesses, auto-discovers the port); curl as fallback.
+    const tabPath = base.slice(base.indexOf('/tab/'))
+    const docPath = `${tabPath}/api/doc-comments?path=${encodeURIComponent(docFilePath)}`
     return {
-      url: `lightjj doc API: fetch ${base}/api/agent for usage. This file: GET/POST ${base}/api/doc-comments?path=${encodeURIComponent(docFilePath)}`,
-      remote: local ? `ssh -R 8080:localhost:${port} user@agent-host  # then base = http://localhost:8080${base.slice(base.indexOf('/tab/'))}` : '',
+      url: `lightjj doc API. Run \`lightjj api GET ${tabPath}/api/agent\` for the contract. This file: \`lightjj api GET '${docPath}'\` (or curl ${base}/api/doc-comments?path=${encodeURIComponent(docFilePath)} if lightjj isn't on PATH).`,
+      remote: local ? `ssh -R 8080:localhost:${port} user@agent-host  # then: lightjj api --addr 127.0.0.1:8080 GET ${tabPath}/api/agent` : '',
     }
   })
   // Add-comment bubble state. AnnotationBubble is annotation-coupled (severity

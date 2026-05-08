@@ -31,6 +31,16 @@ Last shipped: **2026-04-20** v1.20.1 — trim configTemplate teaching comments; 
 - [ ] **`jj workspace forget` / `rename`** (Small) — context-menu on workspace dropdown entries. Forget needs a confirm (it abandons the workspace's `@` commit if non-empty).
 - [ ] **Per-workspace stale indicator in dropdown** (Medium) — show ⚠ next to stale workspaces. Needs a per-workspace probe (`jj log -r @ --ignore-working-copy` in each workspace dir, check for stale error) or a `WorkspaceRef.is_stale()` template method if jj adds one.
 
+- [ ] **Symbol hover: filter context to comment lines** (Small) — `parseRgJSON` returns raw `rg -B6` (whatever 6 lines precede). For Go this is usually the doc comment; for TS/py the preceding lines are often unrelated (closing brace of previous decl). Per-language `commentPrefix` in `symbolDefPattern`'s table → trim `Context` to the trailing run that matches.
+- [ ] **Symbol hover: revision-aware lookup** (Medium) — `handleSymbol` rg's the working copy regardless of which revision DiffPanel is showing. For code review ("what does this do *now*") that's right; for archaeology it shows today's def of a symbol that may have moved. Revision-aware path: `jj file list -r X --type L` → tmpdir of `jj file show` outputs → rg the tmpdir. Cost: O(files) subprocess calls; only worth it gated on `diffTarget.commitId !== workingCopyCommitId`.
+- [ ] **Symbol hover: extend `symbolDefPattern` table** (Trivial) — currently go/ts/js/py/rust. Swift/zig/protobuf/bash entries are one regex + one `langToRgType` line each. Svelte needs `--type-add 'svelte:*.svelte'` since rg doesn't ship the type.
+- [ ] **Symbol hover: wire second DiffFileView render path** (Trivial) — `DiffPanel.svelte` ~line 1745 has a second `<DiffFileView>` instance (conflict-file path) that doesn't pass `{symbolHover}`. One prop.
+- [ ] **Conflict resolution from DiffFileView** (Medium) — DiffFileView renders conflict A/B badges but resolution requires switching to `⧉ Merge`. The primitives exist (`conflict-extract.ts:reconstructSides` builds blocks at parse time, `merge-surgery.ts:planTake/planTakeBoth` are the choose ops); wiring them into the conflict-block render is a "take ours / theirs / both" inline button row that calls `api.fileWrite` for `@` or `api.mergeResolve` otherwise — same backend split MergePanel uses.
+
+- [ ] **`lightjj api`: multi-tab discovery** (Medium) — session file holds one `RepoDir` (the launch tab); a lightjj instance with additional tabs/workspaces isn't discoverable from inside a non-launch tab's repo. Add `tabs: [{path}]` array to `sessionInfo`, written on tab create/close (data already flows through `writePersistedTabs`); `discoverSession` matches against any tab path. Until then the zero-match error lists running addrs so the user can `--addr`. See [docs/design-notes/api-cli.md](docs/design-notes/api-cli.md) §Known gap.
+- [ ] **`lightjj api`: per-session bearer token** (Small) — closes the `pidAlive` TOCTOU (port freed and rebound by another local process between alive-check and connect). Server writes a random token to the `0600` session file at startup, validates it on every request; CLI reads it from the same file it discovers `addr` from. Out of scope for v1 because it's a server-side change with its own backward-compat surface.
+- [ ] **MCP server over `lightjj api`** (Low) — a `lightjj mcp-stdio` subcommand speaking JSON-RPC 2.0 over stdin/stdout, wrapping `doAPIRequest`. First-class tool channel for harnesses that support MCP; orthogonal to bash denylists entirely. Defer until demand — `lightjj api` covers the bash path.
+
 ## Advanced features (roadmap 2.0)
 
 - [ ] **N-way (3+) conflict handling in merge mode** (Medium) — `reconstructSides()` returns null for >2 sides → "unsupported" message. Queue is earliest-first (option c shipped — propagation roots auto-selected, downstream copies dimmed with ↑ hint). `jj resolve --tool` errors before invoking the tool for irreducible N-way, so the only remaining option is (a) sequential 2-at-a-time frontend orchestration.
@@ -39,7 +49,7 @@ Last shipped: **2026-04-20** v1.20.1 — trim configTemplate teaching comments; 
 - [ ] **Search across revisions** (Medium) — `jj log -r 'description(glob:"*query*")'` or tree-grep. Needs design.
 - [ ] **SSH remote repo browser** (Low) — discover repos on remote host, open as tabs.
 - [ ] **Drag-and-drop rebase** (Low) — drag revision onto destination. Inline keyboard rebase already covers the CUJ.
-- [ ] **LSP-in-FileEditor** (Complex) — hover/goto in the inline editor. Depends on the LSP running relative to the repo root.
+- [ ] **LSP-in-FileEditor** (Complex) — hover/goto in the inline editor. Tier-1 rg-backed `GET /api/symbol` (symbol.go) already covers heuristic go-to-def in the diff view; this entry is the Tier-3 upgrade (real `gopls`/`tsserver` over JSON-RPC, type-aware hover). FileEditor side is `@codemirror/view`'s `hoverTooltip` (already installed). The hard part is multi-revision semantics — LSP servers want a real FS, DiffPanel shows commit X's content.
 
 ## Known non-goals
 

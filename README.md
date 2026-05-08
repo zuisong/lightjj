@@ -26,7 +26,8 @@ A fast, powerful UI for Jujutsu VCS didn't exist, so I built one! In addition to
 - **Op log & evolog** — full operation history with undo/restore, per-revision evolution with inter-diffs
 - **File history** — right-click any diff line, two-cursor compare (j/k + Space to pin), scoped to mutable for speed
 - **Inline annotations** — per-line review comments keyed by `change_id`; auto-re-anchor on rewrite; export markdown/JSON
-- **Doc mode** — open any `.md` as a ProseMirror document (`Doc` button in the file header). View/Edit toggle, mermaid blocks render with a per-block source toggle, content-addressed comments that survive edits. Coding agents can `POST` suggestions and steer your view (`/api/navigate`) over plain HTTP — auto-discovered via the session file, `GET /api/agent` documents the schema. Accept/Reject inline; Save commits back to `@` with stale-detection.
+- **Doc mode** — open any `.md` as a ProseMirror document (`Doc` button in the file header). View/Edit toggle, mermaid blocks render with a per-block source toggle, content-addressed comments that survive edits. Coding agents can `POST` suggestions and steer your view (`/api/navigate`) over plain HTTP. Accept/Reject inline; Save commits back to `@` with stale-detection.
+- **Agent CLI** — `lightjj api METHOD PATH [BODY]` makes the same HTTP request your browser does, from the same binary. Auto-discovers the running instance by repo dir (no port-hunting), validates the destination is loopback, sets `Content-Type` correctly. Built for harnesses that denylist `curl`. `lightjj sessions` lists running instances; `lightjj api GET /tab/0/api/agent` returns the API contract. **`lightjj skill install`** drops a SKILL.md into `~/.claude/skills/lightjj/` so Claude Code (and similar harnesses) discover the API automatically — no copy-pasting hints. See [docs/design-notes/api-cli.md](docs/design-notes/api-cli.md).
 - **Stale-WC detection** — concurrent CLI op left the working copy stale? Warning bar with one-click recovery
 - **Themes** — 7 hand-tuned builtins + 486 derived from Ghostty's palette set; `t` toggles dark/light, full picker in Cmd+K
 
@@ -62,6 +63,16 @@ lightjj -R /path/to/repo           # explicit repo path
 lightjj --addr localhost:8080      # custom listen address
 lightjj --no-browser               # don't auto-open browser
 ```
+
+**Agent integration** — point a coding agent at the running instance:
+
+```bash
+lightjj skill install              # install ~/.claude/skills/lightjj/SKILL.md (one-time)
+lightjj sessions                   # list running instances
+lightjj api GET /tab/0/api/agent   # the API contract — what an agent reads first
+```
+
+`lightjj skill install` teaches Claude Code (and any harness that scans `~/.claude/skills/`) about the API automatically. Without it, click the **Agent hint** button in doc-mode and paste the snippet into your agent. `lightjj skill` (no args) prints the SKILL.md to stdout so you can vendor it into a project's `.claude/skills/`.
 
 **Remote repos** — run on the remote and port-forward, or use SSH proxy mode:
 

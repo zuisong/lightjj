@@ -7,6 +7,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/chronologos/lightjj/internal/jj"
 	"github.com/chronologos/lightjj/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,11 @@ import (
 func TestAgentDocRoutesRegistered(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	defer runner.Verify()
+	// The probe loop below issues a bare GET per discovered path. Most routes
+	// 400/405 before touching jj (missing required params or wrong method), but
+	// /api/log has no required params — the doc's `lightjj api GET /tab/0/api/log`
+	// example pulls it into the probe set, so allow the resulting jj call.
+	runner.Allow(jj.LogGraph("", 500)).SetOutput([]byte(""))
 	srv := newTestServer(runner)
 
 	w := httptest.NewRecorder()
@@ -49,4 +55,20 @@ func TestAgentDocRoutesRegistered(t *testing.T) {
 		assert.NotEqual(t, http.StatusNotFound, w.Code,
 			"agent_api.md references %q but no route is registered for it", p)
 	}
+}
+
+// TestAgentDocMentionsCLI guards the "Reaching the server" section against
+// drifting away from the `lightjj api` CLI as the primary access path. The
+// curl/jq fallback recipe is allowed to remain, but the doc must continue to
+// teach the CLI form first.
+func TestAgentDocMentionsCLI(t *testing.T) {
+	runner := testutil.NewMockRunner(t)
+	defer runner.Verify()
+	srv := newTestServer(runner)
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/agent", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "lightjj api",
+		"agent_api.md must teach the `lightjj api` CLI as the primary access path")
 }

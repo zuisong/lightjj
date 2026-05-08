@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,23 +27,32 @@ type sessionInfo struct {
 	StartedAt int64  `json:"started_at"`
 }
 
-// sessionDir resolves the runtime sessions directory: $XDG_RUNTIME_DIR/lightjj/sessions
-// where set (Linux desktop), else os.TempDir()/lightjj-<uid>/sessions. Created
-// 0700 so other local users can't read the port (which grants API control).
-//
-// On the TempDir fallback, the base path is verified to be a real directory
-// owned by us — sticky /tmp lets any user pre-create /tmp/lightjj-<victim-uid>
-// and plant a sessions/<pid>.json symlink, which os.WriteFile would follow.
-// XDG_RUNTIME_DIR is already user-owned by spec, so the check is skipped there.
-func sessionDir() (string, error) {
-	var base string
-	verify := false
+// resolveSessionPaths computes the session base+dir paths and whether ownership
+// must be verified, without touching the filesystem (only os.Getenv/os.TempDir).
+// $XDG_RUNTIME_DIR/lightjj/sessions where set (Linux desktop), else
+// os.TempDir()/lightjj-<uid>/sessions. The TempDir fallback requires
+// ownership verification: sticky /tmp lets any user pre-create
+// /tmp/lightjj-<victim-uid> and plant a sessions/<pid>.json symlink, which
+// os.WriteFile would follow. XDG_RUNTIME_DIR is already user-owned by spec, so
+// the check is skipped there on the WRITE path (matches historical behavior;
+// the read path re-verifies unconditionally — see sessionDirReadOnly).
+func resolveSessionPaths() (base, dir string, verify bool) {
 	if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" {
 		base = filepath.Join(x, "lightjj")
 	} else {
 		base = filepath.Join(os.TempDir(), fmt.Sprintf("lightjj-%d", os.Getuid()))
 		verify = true
 	}
+	dir = filepath.Join(base, "sessions")
+	return base, dir, verify
+}
+
+// sessionDir resolves and creates the runtime sessions directory (writer path).
+// Created 0700 so other local users can't read the port (which grants API
+// control). Verifies base BEFORE MkdirAll (pre-existing symlink) and base+dir
+// AFTER (umask widening, pre-planted sessions/).
+func sessionDir() (string, error) {
+	base, dir, verify := resolveSessionPaths()
 	// Verify base BEFORE MkdirAll so a pre-existing symlink isn't followed into
 	// attacker-controlled space. ENOENT → fine, we create it.
 	if verify {
@@ -50,7 +60,6 @@ func sessionDir() (string, error) {
 			return "", err
 		}
 	}
-	dir := filepath.Join(base, "sessions")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -65,6 +74,96 @@ func sessionDir() (string, error) {
 		}
 	}
 	return dir, nil
+}
+
+// sessionDirReadOnly resolves the runtime sessions directory without creating
+// it. Used by `lightjj api` and `lightjj sessions` — a read-only command must
+// not create directories.
+//
+// Verification is UNCONDITIONAL here — including on the XDG_RUNTIME_DIR path
+// the writer skips. The XDG spec guarantees user-ownership but the guarantee
+// is enforced by systemd-logind, not the kernel; a stray
+// `export XDG_RUNTIME_DIR=...` in a Dockerfile or rc file silently disables
+// it. The read path directs traffic (a successful read produces an addr the
+// CLI connects to), so it must not inherit the writer's optimization. Cost is
+// two Lstat syscalls. ENOENT propagates so callers can distinguish "lightjj
+// not running" from a perms problem.
+//
+// Verify-to-readDir window: the dir is verified by path, then re-opened by
+// os.ReadDir in a separate syscall. On the TempDir path the sticky bit on /tmp
+// prevents cross-uid replacement of the verified base; on the XDG path the
+// directory is user-owned. Same-uid replacement is in scope for the threat
+// model but unchanged from the writer's behavior. The pidAlive→connect TOCTOU
+// (api-cli.md Security §3) is the larger gap; both close with a per-session
+// bearer token (BACKLOG.md).
+func sessionDirReadOnly() (string, error) {
+	base, dir, _ := resolveSessionPaths()
+	if err := verifyOwnedDir(base); err != nil {
+		return "", err
+	}
+	if err := verifyOwnedDir(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// maxSessionFileSize caps how much of a session JSON file readSessions will
+// parse. Legitimate files are ~150 bytes; an oversized file is corruption or a
+// planted DoS.
+const maxSessionFileSize = 4096
+
+// readSessions reads and parses all <pid>.json files in dir. Skips files that
+// are oversized (> maxSessionFileSize), unparseable, or schema-invalid (no PID).
+// Does NOT filter by pidAlive — callers decide. Does NOT sweep. Returns an
+// empty slice (not nil) if dir is missing or has no entries.
+func readSessions(dir string) ([]sessionInfo, error) {
+	out := []sessionInfo{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return out, nil
+		}
+		return out, err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		// Open once, fstat the open fd, read with a hard cap. Lstat-then-
+		// ReadFile leaves a window where the file is swapped for a FIFO (read
+		// hangs) or grown past the cap (read fully) — open+fstat closes both
+		// (f.Stat() on a FIFO fd reports ModeNamedPipe; LimitReader caps).
+		// Symlink-swap is NOT closed here (os.Open follows symlinks, and so
+		// does os.ReadFile) — that's gated by verifyOwnedDir on the parent,
+		// which restricts the dir to same-uid writers who could read the
+		// target directly anyway. The fd-based check is a hardening, not the
+		// trust boundary.
+		f, err := os.Open(full)
+		if err != nil {
+			continue
+		}
+		fi, err := f.Stat()
+		if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxSessionFileSize {
+			f.Close()
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(f, maxSessionFileSize+1))
+		f.Close()
+		if err != nil || int64(len(data)) > maxSessionFileSize {
+			continue
+		}
+		var s sessionInfo
+		if err := json.Unmarshal(data, &s); err != nil {
+			continue
+		}
+		if s.PID <= 0 || s.Addr == "" {
+			continue // schema-invalid
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // verifyOwnedDir checks that path is a real directory (not a symlink) with no
@@ -86,7 +185,8 @@ func verifyOwnedDir(path string) error {
 }
 
 // pidAlive: signal-0 probe. nil or EPERM ⇒ alive; ESRCH ⇒ dead.
-func pidAlive(pid int) bool {
+// Package-level var so tests can stub it (api_cmd_test.go).
+var pidAlive = func(pid int) bool {
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return false

@@ -8,7 +8,63 @@ This page is served at `GET /api/agent`. A minimal JSON index is at `GET /api`.
 
 ## Reaching the server
 
-A running lightjj writes `{pid, addr, port, repo_dir, mode, started_at}` to
+Automation harnesses often denylist `curl` / `wget` in their shell sandbox.
+`lightjj api METHOD PATH [BODY]` makes the same HTTP request via the lightjj
+binary itself — already on PATH wherever lightjj is running, and it discovers
+the right local instance for your cwd automatically:
+
+```sh
+lightjj api GET /tab/0/api/log
+```
+
+- **METHOD** — `GET | POST | PUT | DELETE | PATCH` (case-insensitive).
+- **PATH** — verbatim URL path including any query string and the `/tab/{N}`
+  prefix. Nothing is auto-prefixed.
+- **BODY** — optional. A literal JSON string, `@file` to read from a file, or
+  `-` to read from stdin. Sets `Content-Type: application/json` automatically.
+- **`--addr host:port`** — bypass discovery. Use for SSH-tunnel endpoints or
+  to disambiguate when several lightjj instances are running. Loopback only.
+- **`lightjj sessions`** — lists running instances (PID, addr, mode, repo) so
+  you can pick an `--addr`.
+
+The response body always goes to **stdout** — even on 4xx/5xx, so it can be
+piped to `jq`. Status and discovery errors go to **stderr**. Exit codes:
+`0` HTTP 2xx, `1` discovery/connection error, `2` usage error,
+`4` HTTP 4xx (request was wrong, don't retry), `5` HTTP 5xx (server error,
+maybe retry).
+
+**Quote query strings.** A bare `&` backgrounds the shell command:
+
+```sh
+lightjj api GET '/tab/0/api/file-show?revision=@&path=docs/DESIGN.md'
+```
+
+**Always include the `/tab/{N}/` prefix.** Nearly every route is tab-scoped:
+`<base> = /tab/{N}`. Tab 0 is the repo lightjj was launched in;
+`GET /tabs` lists open tabs with their paths if you need a different one.
+`GET <base>/api/capabilities` returns `{api_version, jj_version, actions:
+[...]}` so you can probe for endpoint availability instead of 404-handling.
+The only root-mounted routes are `GET|POST /tabs`, `DELETE /tabs/{id}`, and
+`GET|POST /api/config` (and `/api/config/raw`). An unprefixed `/api/...` path
+falls through to the SPA catch-all and returns **HTML, not a 404** — if you
+get HTML back, you forgot the `/tab/{N}/` prefix.
+
+lightjj only accepts requests with `Host: localhost` (DNS-rebinding
+protection). If running on a different machine, use an SSH tunnel that keeps
+the Host header local, then pass the tunnel port via `--addr`:
+
+```sh
+# On the machine running lightjj (forward to the remote host):
+ssh -R 8080:localhost:<lightjj-port> user@remote-host
+# On the remote host:
+lightjj api --addr localhost:8080 GET /tab/0/api/log
+```
+
+### Fallback: raw HTTP (no `lightjj` on PATH)
+
+If the `lightjj` binary isn't available in your sandbox, discover the server
+address from the session file directly. A running lightjj writes
+`{pid, addr, port, repo_dir, mode, started_at}` to
 `$XDG_RUNTIME_DIR/lightjj/sessions/<pid>.json` (or
 `$TMPDIR/lightjj-<uid>/sessions/<pid>.json` where `$XDG_RUNTIME_DIR` is unset
 — macOS, most servers). To find the instance for the repo you're working in:
@@ -26,24 +82,9 @@ lightjj refuses to *write* into a dir it doesn't own, but a planted file would
 otherwise redirect your traffic. Unix only; on Windows fall back to the
 `Agent hint` button in the doc-mode UI which shows the URL directly.
 
-All routes are tab-scoped: `<base> = http://<addr>/tab/{N}`. Tab 0 is the repo
-lightjj was launched in; `GET http://<addr>/tabs` lists open tabs with their
-paths if you need a different one. `GET <base>/api/capabilities` returns
-`{api_version, jj_version, actions: [...]}` so you can probe for endpoint
-availability instead of 404-handling.
-
-lightjj only accepts requests with `Host: localhost` (DNS-rebinding
-protection). If the agent runs on a different machine, use an SSH tunnel that
-keeps the Host header local:
-
-```sh
-# On the laptop running lightjj (forward to the agent's host):
-ssh -R 8080:localhost:<lightjj-port> user@agent-host
-# Agent then uses <base> = http://localhost:8080/tab/0
-```
-
-The doc-mode UI's **Agent hint** button still shows the `<base>` URL for the
-open file if you prefer the manual route.
+When `curl`-ing, set `Content-Type: application/json` explicitly on POSTs;
+the server rejects bodies without it. The doc-mode UI's **Agent hint** button
+still shows the `<base>` URL for the open file if you prefer the manual route.
 
 ## Read the document
 

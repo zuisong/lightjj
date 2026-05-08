@@ -37,6 +37,23 @@ func resolvedVersion() string {
 }
 
 func main() {
+	// Subcommand dispatch — `lightjj api` / `lightjj sessions` / `lightjj
+	// skill` — before flag.Parse() so each owns its own FlagSet (`api --addr`
+	// ≠ server `--addr`). The existing `--apply-hunks` stays as a flag (jj
+	// invokes us with flags, not verbs — different caller, different
+	// contract). Verb match is case-sensitive; the flag.NArg() guard below
+	// catches typo'd verbs that would otherwise silently launch the server.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "api":
+			os.Exit(runAPISubcommand(os.Args[2:]))
+		case "sessions":
+			os.Exit(runSessionsSubcommand(os.Args[2:]))
+		case "skill":
+			os.Exit(runSkillSubcommand(os.Args[2:]))
+		}
+	}
+
 	repoDir := flag.String("R", "", "Path to jj repository (default: current directory)")
 	remote := flag.String("remote", "", "Remote repo as user@host:/path (SSH proxy mode)")
 	addr := flag.String("addr", "localhost:0", "Listen address (default: random port on localhost)")
@@ -70,6 +87,13 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	// Stray positional args: today the server ignores them, so a typo'd verb
+	// (`lightjj API`) silently launches the server. Error instead.
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "lightjj: unexpected argument %q (did you mean a subcommand? try `lightjj api` or `lightjj sessions`)\n", flag.Arg(0))
+		os.Exit(2)
 	}
 
 	var cmdRunner runner.CommandRunner
