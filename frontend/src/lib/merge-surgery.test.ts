@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
 import { Text, ChangeSet } from '@codemirror/state'
 import { planTake, planTakeBoth, remapBlock, initialTrackPos, type TrackedBlock } from './merge-surgery'
 import { diffBlocks } from './merge-diff'
@@ -698,5 +699,208 @@ describe('planTakeBoth — concatenate additive conflicts', () => {
     const tr: TrackedBlock = { from: 2, to: 7, source: 'theirs' }  // 'T1\nT2'
     const plan = planTakeBoth(tr, o, t, blk(2, 4, 2, 4))!
     expect(apply('A\nT1\nT2\nD', plan.change)).toBe('A\nO1\nO2\nT1\nT2\nD')
+  })
+})
+
+// ── Property tests (fast-check) ──────────────────────────────────────────────
+// Generalize the hand-picked it.each shapes above to hundreds of generated
+// ours/theirs pairs. This is the DATA-LOSS path: a separator-math bug in
+// planTake silently corrupts the file being resolved, and a parser bug in
+// reconstructSides drops a side. Pure functions over strings + @codemirror/state
+// — orthogonal to the Bombadil E2E tier, which can't efficiently reach this
+// math (it would have to navigate into merge mode, click the exact arrow on the
+// exact conflict shape, then visually diff the result). fast-check hits the
+// shape in microseconds.
+describe('merge-surgery — property sweep (fast-check)', () => {
+  // planTake picks leading-vs-trailing \n separators from CHARACTER OFFSETS. A
+  // blank line is zero-width, so "at a blank line" and "just past it" alias to
+  // the SAME offset → planTake's separator inference is unreliable whenever
+  // blank lines are involved (a reachable bug CLASS — fast-check found several
+  // shapes; see the KNOWN GAP pins below + BACKLOG.md "planTake blank-line
+  // separator gap"). So the strong take-all/round-trip invariants here use a
+  // NON-BLANK alphabet: a large, provably-correct domain (reorderings, multi-
+  // block, insertions, deletions of non-blank content). Blank-line separator
+  // behavior is covered by the targeted example tests above (the 90d818ca fixes,
+  // which pass) and pinned where it's currently wrong.
+  //
+  // Small alphabet (not fc.string) so LCS finds real common subsequences →
+  // diffBlocks emits MULTI-block shapes, not one giant replace. minLength 1
+  // mirrors String.split: a side is never a zero-length array in the pipeline.
+  const codeLine = fc.constantFrom('A', 'B', 'C', 'D', 'X', 'Y')
+  const codeLines = fc.array(codeLine, { minLength: 1, maxLength: 8 })
+
+  // Seed the center doc's tracked positions from theirs (MergePanel seeds the
+  // center with theirs; bFrom/bTo map directly via initialTrackPos).
+  const seedTrack = (theirsStr: string, blocks: ChangeBlock[]): TrackedBlock[] =>
+    blocks.map(b => ({ ...initialTrackPos(doc(theirsStr), b), source: 'theirs' as const }))
+
+  // Drive every block's take-arrow for `side`, remapping later blocks after
+  // each dispatch — exactly blockTracker.update()'s loop in MergePanel. Returns
+  // the threaded track[] so a round-trip can take the other side back from the
+  // post-take positions (NOT a fresh initialTrackPos, which uses theirs-coords).
+  const takeAll = (
+    startDoc: string,
+    startTrack: TrackedBlock[],
+    side: 'ours' | 'theirs',
+    srcLines: string[],
+    blocks: ChangeBlock[],
+  ): { docStr: string; track: TrackedBlock[] } => {
+    let docStr = startDoc
+    const track = startTrack.map(t => ({ ...t }))
+    for (let i = 0; i < blocks.length; i++) {
+      const plan = planTake(doc(docStr), track[i], side, srcLines, blocks[i])
+      if (!plan) continue  // idempotent skip (already this side)
+      const cs = ChangeSet.of(plan.change, docStr.length)
+      docStr = apply(docStr, plan.change)
+      track[i] = { ...plan.newTrack, source: side }
+      for (let j = i + 1; j < track.length; j++)
+        track[j] = { ...track[j], ...remapBlock(track[j], cs) }
+    }
+    return { docStr, track }
+  }
+
+  it('take-all-ours on theirs-seed produces EXACTLY ours (diffBlocks blocks)', () => {
+    fc.assert(fc.property(codeLines, codeLines, (ours, theirs) => {
+      const blocks = diffBlocks(ours, theirs)
+      const theirsStr = theirs.join('\n')
+      const { docStr } = takeAll(theirsStr, seedTrack(theirsStr, blocks), 'ours', ours, blocks)
+      expect(docStr).toBe(ours.join('\n'))
+    }), { numRuns: 300 })
+  })
+
+  it('ours→theirs round-trip is identity — no data loss across a full toggle', () => {
+    fc.assert(fc.property(codeLines, codeLines, (ours, theirs) => {
+      const blocks = diffBlocks(ours, theirs)
+      const theirsStr = theirs.join('\n')
+      const r1 = takeAll(theirsStr, seedTrack(theirsStr, blocks), 'ours', ours, blocks)
+      expect(r1.docStr).toBe(ours.join('\n'))           // midpoint = ours
+      const r2 = takeAll(r1.docStr, r1.track, 'theirs', theirs, blocks)
+      expect(r2.docStr).toBe(theirsStr)                  // endpoint = theirs
+    }), { numRuns: 300 })
+  })
+
+  // planTakeBoth keeps the blank-INCLUSIVE alphabet: it inserts a LITERAL '\n'
+  // between sides (no positional separator inference), so it's robust under
+  // blanks where planTake is not — a deliberate contrast.
+  it('planTakeBoth concatenates ours\\ntheirs for any two non-empty blocks', () => {
+    const blkArb = fc.array(fc.constantFrom('A', 'B', 'C', 'D', 'X', 'Y', ''), { minLength: 1, maxLength: 5 })
+    fc.assert(fc.property(blkArb, blkArb, (oursBlk, theirsBlk) => {
+      const theirsStr = theirsBlk.join('\n')
+      const tracked: TrackedBlock = { from: 0, to: theirsStr.length, source: 'theirs' }
+      const block = blk(1, oursBlk.length + 1, 1, theirsBlk.length + 1)
+      const plan = planTakeBoth(tracked, oursBlk, theirsBlk, block)!
+      expect(apply(theirsStr, plan.change)).toBe(oursBlk.join('\n') + '\n' + theirsStr)
+      // newTrack covers exactly the inserted bytes (no separator leakage).
+      expect(plan.newTrack).toEqual({ from: 0, to: plan.change.insert.length })
+    }), { numRuns: 200 })
+  })
+})
+
+// ── reconstructSides round-trip (fast-check) ─────────────────────────────────
+// The prerequisite the backlog flagged: a `serializeJjConflict` inverse so the
+// parser can be round-tripped. Builds jj Snapshot-style markers (the simplest
+// of jj's styles — explicit ours / base / theirs sections) and asserts the
+// parser recovers each side, the base, and one well-formed block. Markers are
+// exactly 7 chars and the alphabet has no 7-run lookalikes, so jj's escalation
+// path isn't exercised here (that has dedicated example tests above).
+describe('reconstructSides — serialize→parse round-trip (fast-check)', () => {
+  // Parser round-trip uses blanks (the parser handles them correctly). The
+  // end-to-end test below runs planTake, so it uses codeSeq (non-blank) to stay
+  // out of planTake's blank-line separator gap — see the property sweep above.
+  const lineArb = fc.constantFrom('A', 'B', 'C', 'D', 'X', 'Y', '')
+  const seqArb = (max: number) => fc.array(lineArb, { maxLength: max })
+  const codeSeq = (max: number) => fc.array(fc.constantFrom('A', 'B', 'C', 'D', 'X', 'Y'), { maxLength: max })
+
+  // The inverse of reconstructSides for Snapshot style:
+  //   <<<<<<<
+  //   +++++++ side1   ← ours
+  //   ------- base
+  //   +++++++ side2   ← theirs
+  //   >>>>>>>
+  // pre/post are shared context (out-of-region → pushed to all three sides).
+  const serialize = (pre: string[], ours: string[], base: string[], theirs: string[], post: string[]) => [
+    ...pre,
+    '<'.repeat(7),
+    '+'.repeat(7) + ' side1',
+    ...ours,
+    '-'.repeat(7) + ' base',
+    ...base,
+    '+'.repeat(7) + ' side2',
+    ...theirs,
+    '>'.repeat(7),
+    ...post,
+  ].join('\n')
+
+  it('recovers exact ours/theirs/base and one block for any side shapes', () => {
+    fc.assert(fc.property(
+      seqArb(3), seqArb(4), seqArb(4), seqArb(4), seqArb(3),
+      (pre, ours, base, theirs, post) => {
+        const sides = reconstructSides(serialize(pre, ours, base, theirs, post))
+        expect(sides).not.toBeNull()
+        expect(sides!.ours).toBe([...pre, ...ours, ...post].join('\n'))
+        expect(sides!.theirs).toBe([...pre, ...theirs, ...post].join('\n'))
+        expect(sides!.base).toBe([...pre, ...base, ...post].join('\n'))
+        expect(sides!.blocks).toEqual([{
+          aFrom: pre.length + 1, aTo: pre.length + ours.length + 1,
+          bFrom: pre.length + 1, bTo: pre.length + theirs.length + 1,
+        }])
+      },
+    ), { numRuns: 300 })
+  })
+
+  it('end-to-end: serialize → reconstruct → take-all-ours = ours (MergePanel pipeline)', () => {
+    const eq = (a: string[], b: string[]) => JSON.stringify(a) === JSON.stringify(b)
+    fc.assert(fc.property(
+      codeSeq(3), codeSeq(4), codeSeq(4), codeSeq(4), codeSeq(3),
+      (pre, ours, base, theirs, post) => {
+        // jj only emits a conflict region when both sides diverge from base AND
+        // from each other — identical or unchanged sides auto-resolve, so those
+        // marker shapes never reach the parser. Restricting to real conflicts.
+        fc.pre(!eq(ours, base) && !eq(theirs, base) && !eq(ours, theirs))
+        const sides = reconstructSides(serialize(pre, ours, base, theirs, post))!
+        const oursLines = sides.ours.split('\n')
+        // Replay every ours-arrow over the theirs-seed using the PARSER's blocks
+        // (region boundaries, not LCS) — must reproduce ours exactly.
+        let docStr = sides.theirs
+        let track: TrackedBlock[] = sides.blocks.map(b => ({
+          ...initialTrackPos(doc(docStr), b), source: 'theirs' as const,
+        }))
+        for (let i = 0; i < sides.blocks.length; i++) {
+          const plan = planTake(doc(docStr), track[i], 'ours', oursLines, sides.blocks[i])
+          if (!plan) continue
+          const cs = ChangeSet.of(plan.change, docStr.length)
+          docStr = apply(docStr, plan.change)
+          track[i] = { ...plan.newTrack, source: 'ours' }
+          for (let j = i + 1; j < track.length; j++)
+            track[j] = { ...track[j], ...remapBlock(track[j], cs) }
+        }
+        expect(docStr).toBe(sides.ours)
+      },
+    ), { numRuns: 500 })
+  })
+
+  // Pin the MINIMAL repro of the blank-line separator gap (fast-check, 2026-05)
+  // so a future fix is an intentional test change, not a silent regression — the
+  // divergence.test.ts "merge-parent gap" pattern. This is ONE instance of a
+  // broader class (the sweep above also found ["","A"]↔["A",""] reshuffles and
+  // trailing-blank shapes); see BACKLOG.md "planTake blank-line separator gap".
+  // Here: a real modify/delete conflict with a leading blank context line — base
+  // has a blank, ours changes it to 'A', theirs deletes it. The center seeds to
+  // "" and take-ours DROPS the shared blank.
+  it('KNOWN GAP: blank-line separator — take-ours drops a shared blank line', () => {
+    const sides = reconstructSides(serialize([''], ['A'], [''], [], []))!
+    expect(sides.ours).toBe('\nA')   // the CORRECT take-all-ours result
+    expect(sides.theirs).toBe('')    // center collapses to "" (the trap)
+    expect(sides.blocks).toEqual([{ aFrom: 2, aTo: 3, bFrom: 2, bTo: 2 }])
+
+    const oursLines = sides.ours.split('\n')
+    const track = sides.blocks.map(b => ({ ...initialTrackPos(doc(sides.theirs), b), source: 'theirs' as const }))
+    const plan = planTake(doc(sides.theirs), track[0], 'ours', oursLines, sides.blocks[0])!
+    const got = apply(sides.theirs, plan.change)
+    // BUG: should be '\nA' (sides.ours); planTake produces 'A' (blank dropped).
+    // "".split('\n') === [''] is one blank line, but planTake's doc.length===0
+    // branch treats it as zero lines. Flip this expectation when fixed.
+    expect(got).toBe('A')
+    expect(got).not.toBe(sides.ours)
   })
 })

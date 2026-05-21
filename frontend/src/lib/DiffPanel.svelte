@@ -765,6 +765,53 @@
     mergingPath = null
   }
 
+  /** Toggle split/unified. Switching to unified unmounts the inline FileEditor
+   *  (it only renders in the split branch), destroying CodeMirror's live buffer
+   *  — and editFileContents holds only the pre-edit original, NOT in-progress
+   *  edits, so they're lost, not recovered on toggle-back. Confirm first when
+   *  editing, mirroring startMerge's discard guard. (Conflict files became
+   *  editable via quickResolve/startMerge's N-way fallback, which newly exposes
+   *  this; non-conflict edits had it latently too.) */
+  function toggleSplitView() {
+    if (editingFiles.size > 0) {
+      const names = editingFiles.size === 1 ? [...editingFiles][0] : `${editingFiles.size} files`
+      if (!confirm(`Switch view and discard unsaved edits in ${names}?`)) return
+    }
+    splitView = !splitView
+  }
+
+  /** One-click whole-file resolve to ours/theirs WITHOUT the 3-pane editor —
+   *  the common "just take my/their side" case. Writes the full reconstructed
+   *  side (sides.ours/theirs), NOT planTake's incremental block surgery, so it
+   *  sidesteps planTake's blank-line separator gap entirely (see BACKLOG.md).
+   *  Reuses startMerge's fetch+reconstruct prologue and saveMerge's write path
+   *  (api.fileWrite to @, after fetchFileForEdit auto-jj-edits a non-@ target).
+   *  N-way / git-style / auto-resolved-race → fall back to the editor, same as
+   *  startMerge. */
+  async function quickResolve(path: string, side: 'ours' | 'theirs') {
+    const content = await fetchFileForEdit(path, 'Resolve')
+    if (content === undefined) return
+    const sides = reconstructSides(content)
+    if (!sides || sides.ours === sides.theirs) {
+      openFileEditor(path, content)
+      return
+    }
+    if (diffTarget?.kind !== 'single') return
+    const revId = diffTarget.changeId
+    editBusy.add(path)
+    editError = ''
+    try {
+      await api.fileWrite(path, side === 'ours' ? sides.ours : sides.theirs)
+      // j/k nav during the await → don't reload for the wrong revision.
+      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return
+      await onfilesaved?.()
+    } catch (e) {
+      editError = `Resolve failed: ${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      editBusy.delete(path)
+    }
+  }
+
   async function saveMerge(content: string) {
     const path = mergingPath
     if (!path || editBusy.has(path) || diffTarget?.kind !== 'single') return
@@ -1730,7 +1777,7 @@
       </div>
       <button
         class="btn btn-sm"
-        onclick={() => splitView = !splitView}
+        onclick={toggleSplitView}
         title={splitView ? 'Split view — click for unified' : 'Unified view — click for split'}
         aria-label={splitView ? 'Switch to unified view' : 'Switch to split view'}
       >{splitView ? '◫' : '≡'}</button>
@@ -1848,6 +1895,7 @@
             previewContent={previewContents.get(filePath)}
             previewRevision={diffTarget?.kind === 'single' ? diffTarget.changeId : previewCommitId}
             onmerge={canMutateFiles ? startMerge : undefined}
+            onresolveconflict={canMutateFiles ? quickResolve : undefined}
             ondiscard={canMutateFiles ? discardFile : undefined}
             onsavefile={saveFile}
             oncanceledit={cancelEdit}
@@ -1880,6 +1928,12 @@
         {#each conflictOnlyFiles as cf (cf.path)}
           {@const conflictFile = conflictFileDiffs.get(cf.path)}
           {#if conflictFile}
+            <!-- editing props (editBusy/editing/editContent/onsavefile/oncanceledit)
+                 mirror the main branch so the resolve/merge null-sides fallback
+                 (openFileEditor for N-way/git-style conflicts) actually renders here
+                 instead of dead-ending, and the quick-resolve buttons get editBusy
+                 feedback. onedit is intentionally omitted — conflict-only files open
+                 the editor only via that fallback, never a free Edit button. -->
             <DiffFileView
               file={conflictFile}
               fileStats={cf}
@@ -1892,6 +1946,12 @@
               ontoggle={toggleFile}
               onexpand={expandGap}
               onmerge={canMutateFiles ? startMerge : undefined}
+              onresolveconflict={canMutateFiles ? quickResolve : undefined}
+              editBusy={editBusy.has(cf.path)}
+              editing={editingFiles.has(cf.path)}
+              editContent={editFileContents.get(cf.path)}
+              onsavefile={saveFile}
+              oncanceledit={cancelEdit}
               searchMatches={matchesByFile.get(cf.path) ?? EMPTY_MATCHES}
               {currentMatchIdx}
               onlinecontext={openDiffLineContextMenu}

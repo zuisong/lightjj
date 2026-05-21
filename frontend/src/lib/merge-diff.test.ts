@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { diffBlocks } from './merge-diff'
+import fc from 'fast-check'
+import { diffBlocks, blocksToLineSets, type ChangeBlock } from './merge-diff'
+
+// Replace each block's b-range with its a-range, right-to-left so earlier
+// indices stay valid. The LINE-LEVEL inverse of "take all of a" — no char
+// offsets, so it's correct under blank lines (unlike planTake's separator math).
+const applyBlocks = (a: string[], b: string[], blocks: ChangeBlock[]): string[] => {
+  const result = b.slice()
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const blk = blocks[i]
+    result.splice(blk.bFrom - 1, blk.bTo - blk.bFrom, ...a.slice(blk.aFrom - 1, blk.aTo - 1))
+  }
+  return result
+}
 
 describe('diffBlocks', () => {
   it('identical → no blocks', () => {
@@ -63,13 +76,78 @@ describe('diffBlocks', () => {
     const ours = ['shared', 'OURS-A', 'OURS-B', 'mid', 'OURS-C', 'end']
     const theirs = ['shared', 'theirs-a', 'mid', 'theirs-c', 'theirs-d', 'end']
     const blocks = diffBlocks(ours, theirs)
-    // Apply each block (replace theirs[bFrom..bTo) with ours[aFrom..aTo))
-    // in reverse order so indices stay valid.
-    let result = theirs.slice()
-    for (const blk of [...blocks].reverse()) {
-      const oursSlice = ours.slice(blk.aFrom - 1, blk.aTo - 1)
-      result.splice(blk.bFrom - 1, blk.bTo - blk.bFrom, ...oursSlice)
-    }
-    expect(result).toEqual(ours)
+    expect(applyBlocks(ours, theirs, blocks)).toEqual(ours)
+  })
+})
+
+// ── diffBlocks — property sweep (fast-check) ─────────────────────────────────
+// Line-level invariants. Blanks INCLUDED: diffBlocks is offset-free (operates on
+// line arrays), so the blank-line bug that scopes the planTake sweep doesn't
+// apply here — these properties hold for any line content.
+describe('diffBlocks — property sweep (fast-check)', () => {
+  // Small alphabet (incl. '') so LCS finds real common subsequences → multi-
+  // block shapes, blank-line runs, reshuffles. minLength 0 covers the empty-side
+  // base cases (diffBlocks has dedicated m===0 / n===0 branches).
+  const linesArb = fc.array(fc.constantFrom('A', 'B', 'C', 'D', 'X', 'Y', ''), { maxLength: 8 })
+
+  it('reconstruction: applyBlocks(a, b, diffBlocks(a,b)) === a', () => {
+    // The keystone invariant — transitively proves blocks cover exactly the
+    // non-LCS regions (a stray differing line outside a block would survive).
+    fc.assert(fc.property(linesArb, linesArb, (a, b) => {
+      expect(applyBlocks(a, b, diffBlocks(a, b))).toEqual(a)
+    }), { numRuns: 500 })
+  })
+
+  it('blocks are ordered and non-overlapping in BOTH coordinate spaces', () => {
+    fc.assert(fc.property(linesArb, linesArb, (a, b) => {
+      const blocks = diffBlocks(a, b)
+      for (let i = 1; i < blocks.length; i++) {
+        // Strictly after the previous block ends (LCS line between them, so
+        // gap ≥ 1 — adjacent blocks would have been merged into one).
+        expect(blocks[i].bFrom).toBeGreaterThan(blocks[i - 1].bTo)
+        expect(blocks[i].aFrom).toBeGreaterThan(blocks[i - 1].aTo)
+      }
+    }), { numRuns: 300 })
+  })
+
+  it('every block is well-formed: in-bounds, non-inverted, ≥1 non-empty side', () => {
+    fc.assert(fc.property(linesArb, linesArb, (a, b) => {
+      for (const blk of diffBlocks(a, b)) {
+        expect(blk.aFrom).toBeGreaterThanOrEqual(1)
+        expect(blk.aTo).toBeLessThanOrEqual(a.length + 1)
+        expect(blk.bFrom).toBeGreaterThanOrEqual(1)
+        expect(blk.bTo).toBeLessThanOrEqual(b.length + 1)
+        expect(blk.aTo).toBeGreaterThanOrEqual(blk.aFrom)
+        expect(blk.bTo).toBeGreaterThanOrEqual(blk.bFrom)
+        // A block with both sides empty would be a no-op — the flush() guard
+        // (merge-diff.ts:55) drops those.
+        expect(blk.aTo - blk.aFrom + (blk.bTo - blk.bFrom)).toBeGreaterThan(0)
+      }
+    }), { numRuns: 300 })
+  })
+
+  it('blocksToLineSets = union of the block ranges', () => {
+    fc.assert(fc.property(linesArb, linesArb, (a, b) => {
+      const blocks = diffBlocks(a, b)
+      const { aOnly, bOnly } = blocksToLineSets(blocks)
+      const expA = new Set<number>()
+      const expB = new Set<number>()
+      for (const blk of blocks) {
+        for (let i = blk.aFrom; i < blk.aTo; i++) expA.add(i)
+        for (let i = blk.bFrom; i < blk.bTo; i++) expB.add(i)
+      }
+      expect([...aOnly].sort()).toEqual([...expA].sort())
+      expect([...bOnly].sort()).toEqual([...expB].sort())
+    }), { numRuns: 300 })
+  })
+
+  it('reconstruction holds in the reverse direction too (b from a)', () => {
+    // NOT block-count symmetry: when multiple equal-length common subsequences
+    // exist, LCS tie-breaking can split the regions differently each way (e.g.
+    // a=['D','','Y'], b=['A','D','Y','D',''] → 2 blocks one way, 3 the other).
+    // Reconstruction is the direction-independent invariant.
+    fc.assert(fc.property(linesArb, linesArb, (a, b) => {
+      expect(applyBlocks(b, a, diffBlocks(b, a))).toEqual(b)
+    }), { numRuns: 300 })
   })
 })

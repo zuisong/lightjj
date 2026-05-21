@@ -30,6 +30,9 @@
     /** gapIdx: which gap to reveal (original-diff index via gapMap). -1 = all. */
     onexpand?: (path: string, gapIdx: number) => void
     onmerge?: (file: string) => void
+    /** One-click whole-file resolve to ours/theirs (no 3-pane editor). Gated to
+     *  single-revision, mutable targets by the parent (same as onmerge). */
+    onresolveconflict?: (file: string, side: 'ours' | 'theirs') => void
     searchMatches?: { item: SearchMatch; index: number }[]
     currentMatchIdx?: number
     editing?: boolean
@@ -115,7 +118,7 @@
     lines: { lineNum: number | null, content: string, side?: DiffSide }[]
   }
 
-  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, onfilehistory, onopendoc, oncompare, annotationsForLine, annotationsForFile, annotationCount = 0, docCommentCount = 0, vis, onreviewresolve, onreviewdelete, composer, draftLine, onannotationclick, onreviewedtoggle, hunkReview = null, symbolHover }: Props = $props()
+  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, onresolveconflict, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, onfilehistory, onopendoc, oncompare, annotationsForLine, annotationsForFile, annotationCount = 0, docCommentCount = 0, vis, onreviewresolve, onreviewdelete, composer, draftLine, onannotationclick, onreviewedtoggle, hunkReview = null, symbolHover }: Props = $props()
 
   const lang = $derived(detectLanguage(file.filePath))
   function handleSymbolMove(e: PointerEvent) {
@@ -251,8 +254,14 @@
     })
   }
 
-  // Conflicted files force unified view — split view makes no sense when all lines are additions
-  let effectiveSplit = $derived(splitView && !isConflict)
+  // Conflicted files force unified view — split view makes no sense when all
+  // lines are additions. EXCEPT while editing: the FileEditor only mounts in
+  // the split branch (its bind:this is the sole editorRef binding), so a
+  // conflicted file opened for editing — the N-way/git-style fallback from
+  // quickResolve/startMerge, AND a plain Edit click — would otherwise render
+  // Save/Cancel with NO editing surface and a permanently-disabled Save
+  // (editorRef stays undefined). Allowing split when editing mounts the editor.
+  let effectiveSplit = $derived(splitView && (!isConflict || editing))
 
   // Memoized split-view data — depends only on file.hunks, not on
   // highlightedLines/wordDiffs which update frequently during rendering
@@ -709,6 +718,25 @@
         <span class="conflict-glyph" aria-hidden="true">⚡</span>
         {#if conflictData && conflictData.totalConflicts > 0}{conflictData.totalConflicts} conflict{conflictData.totalConflicts !== 1 ? 's' : ''}{:else}conflicted{/if}
       </span>
+      {#if onresolveconflict && !editing}
+        <!-- One-click whole-file resolve — skips the 3-pane editor for the
+             common "just take one side" case. Writes the full reconstructed
+             side (no planTake). N-way/unparseable falls back to the editor.
+             Gated on !editing: a resolve writes fresh content + reloads, but
+             the reset $effect is change_id-keyed and a resolve only bumps
+             commit_id — so an open editor's STALE buffer would survive and a
+             later Save would re-introduce the resolved-away conflict (matches
+             how Edit/Discard gate, and startMerge clears edit state on entry).
+             disabled={editBusy}: no dead-click window on slow/SSH writes. -->
+        <button class="resolve-btn resolve-quick" disabled={editBusy}
+          onclick={(e: MouseEvent) => { e.stopPropagation(); onresolveconflict(filePath, 'ours') }}
+          title="Resolve the whole file to your side (ours) — no merge editor needed"
+        >◀ Ours</button>
+        <button class="resolve-btn resolve-quick" disabled={editBusy}
+          onclick={(e: MouseEvent) => { e.stopPropagation(); onresolveconflict(filePath, 'theirs') }}
+          title="Resolve the whole file to their side (theirs) — no merge editor needed"
+        >Theirs ▶</button>
+      {/if}
       {#if onmerge}
         <!-- 3-pane merge editor. N-way conflicts: reconstructSides returns null
              → falls back to raw FileEditor (still the correct entry point). -->
@@ -1451,11 +1479,21 @@
     white-space: nowrap;
     transition: all var(--anim-duration) var(--anim-ease);
   }
-  .resolve-btn:hover {
+  .resolve-btn:hover:not(:disabled) {
     background: var(--bg-selected);
     border-color: var(--amber);
     color: var(--text);
     transform: translateY(-1px);
+  }
+  .resolve-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  /* Quick-resolve shortcuts sit left of the primary ⧉ Merge button. Lighter
+     padding marks them as one-click actions vs. the editor entry point. */
+  .resolve-quick {
+    padding: 3px 7px;
+    gap: 3px;
   }
 
   /* Letter badge: still used by per-side tabs in the conflict region display. */

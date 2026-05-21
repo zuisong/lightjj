@@ -7,6 +7,8 @@
 // changes without the caller needing $effect glue. Returned fields are
 // getters too — reading .items inside an $effect registers the right deps.
 
+import { tick } from 'svelte'
+
 export interface VirtualItem {
   index: number
   start: number
@@ -81,7 +83,6 @@ export async function holdViewport(
   fn: () => void,
   gen?: () => number,
 ): Promise<void> {
-  const { tick } = await import('svelte')
   const g0 = gen?.()
   const containerTop = scrollEl.getBoundingClientRect().top
   let anchor: Element | undefined

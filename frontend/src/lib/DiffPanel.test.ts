@@ -747,4 +747,159 @@ describe('DiffPanel', () => {
       expect(previewBtn(container)?.textContent).toBe('Source')
     })
   })
+
+  describe('quickResolve — one-click whole-file conflict resolution', () => {
+    const mockFileWrite = api.fileWrite as Mock
+    // jj Snapshot-style conflict: reconstructSides → ours="OURS", theirs="THEIRS".
+    const conflictContent = [
+      '<<<<<<<', '+++++++ s1', 'OURS', '------- base', 'BASE', '+++++++ s2', 'THEIRS', '>>>>>>>',
+    ].join('\n')
+    const quickBtn = (c: HTMLElement, label: string) =>
+      [...c.querySelectorAll('.resolve-quick')].find(b => b.textContent?.trim() === label) as HTMLButtonElement | undefined
+    const conflictProps = (o = {}) => props({ changedFiles: [mkFile('a.go', { conflict: true, conflict_sides: 2 })], ...o })
+
+    it('renders Ours/Theirs only for single mutable targets (not multi/immutable)', async () => {
+      const { container, rerender } = render(DiffPanel, { props: conflictProps() })
+      await settle()
+      expect(quickBtn(container, '◀ Ours')).toBeTruthy()
+      expect(quickBtn(container, 'Theirs ▶')).toBeTruthy()
+
+      // immutable → canMutateFiles false → buttons gone (only ⧉ Merge logic gated the same).
+      await rerender(conflictProps({ diffTarget: target('co-A', 'ch-A', { immutable: true }) }))
+      await settle()
+      expect(quickBtn(container, '◀ Ours')).toBeFalsy()
+    })
+
+    it('"◀ Ours" writes sides.ours and reloads (auto-jj-edits the non-@ target first)', async () => {
+      mockEdit.mockResolvedValue(undefined)
+      mockFileShow.mockResolvedValue({ content: conflictContent })
+      mockFileWrite.mockResolvedValue({ ok: true })
+      const onfilesaved = vi.fn()
+      const { container } = render(DiffPanel, { props: conflictProps({ onfilesaved }) })
+      await settle()
+
+      await fireEvent.click(quickBtn(container, '◀ Ours')!)
+      await settle()
+
+      expect(mockEdit).toHaveBeenCalledWith('ch-A')          // non-@ → jj edit first
+      expect(mockFileWrite).toHaveBeenCalledWith('a.go', 'OURS')
+      expect(onfilesaved).toHaveBeenCalled()
+    })
+
+    it('"Theirs ▶" writes sides.theirs; no jj edit when target is @', async () => {
+      mockFileShow.mockResolvedValue({ content: conflictContent })
+      mockFileWrite.mockResolvedValue({ ok: true })
+      const { container } = render(DiffPanel, {
+        props: conflictProps({ diffTarget: target('co-A', 'ch-A', { isWorkingCopy: true }) }),
+      })
+      await settle()
+
+      await fireEvent.click(quickBtn(container, 'Theirs ▶')!)
+      await settle()
+
+      expect(mockEdit).not.toHaveBeenCalled()                // already @
+      expect(mockFileWrite).toHaveBeenCalledWith('a.go', 'THEIRS')
+    })
+
+    it('hides resolve buttons while the file is open in the editor (bug_001 — no stale-buffer Save)', async () => {
+      // Data-loss guard: resolving writes fresh content + reloads, but the reset
+      // $effect is change_id-keyed and a resolve only bumps commit_id — so an
+      // open editor's stale conflict-marker buffer would survive and a later
+      // Save would re-introduce the resolved-away conflict. Gating on !editing
+      // makes that click impossible.
+      mockEdit.mockResolvedValue(undefined)
+      mockFileShow.mockResolvedValue({ content: conflictContent })
+      const { container } = render(DiffPanel, { props: conflictProps() })
+      await settle()
+      expect(quickBtn(container, '◀ Ours')).toBeTruthy()   // visible when not editing
+
+      await fireEvent.click(editBtn(container)!)            // open in inline editor
+      await settle()
+
+      expect(quickBtn(container, '◀ Ours')).toBeFalsy()
+      expect(quickBtn(container, 'Theirs ▶')).toBeFalsy()
+    })
+
+    it('unparseable conflict (N-way / git-style) → falls back to editor, no fileWrite', async () => {
+      mockEdit.mockResolvedValue(undefined)
+      // Git-style markers — reconstructSides returns null.
+      mockFileShow.mockResolvedValue({ content: '<<<<<<< ours\nA\n=======\nB\n>>>>>>> theirs\n' })
+      mockFileWrite.mockResolvedValue({ ok: true })
+      const { container } = render(DiffPanel, { props: conflictProps() })
+      await settle()
+
+      await fireEvent.click(quickBtn(container, '◀ Ours')!)
+      await settle()
+
+      expect(mockFileWrite).not.toHaveBeenCalled()           // no blind write of bad content
+    })
+
+    it('conflict-ONLY file: N-way fallback opens the inline editor, not a dead-end (bug_003)', async () => {
+      // conflicted.go is conflicted but absent from the diff (a.go is the diff) →
+      // renders in the thinner conflictOnlyFiles branch. Pre-fix, that branch
+      // omitted editing/editContent, so openFileEditor (the N-way fallback) set
+      // editingFiles but NO editor rendered — split flips, nothing appears.
+      mockEdit.mockResolvedValue(undefined)
+      // Git-style markers → reconstructSides null → fallback. Serves both the
+      // conflictFetch display-load and quickResolve's re-fetch.
+      mockFileShow.mockResolvedValue({ content: '<<<<<<< ours\nA\n=======\nB\n>>>>>>> theirs\n' })
+      mockFileWrite.mockResolvedValue({ ok: true })
+      const onfilesaved = vi.fn()
+      const { container } = render(DiffPanel, {
+        props: props({
+          diffTarget: target('co-A', 'ch-A', { isWorkingCopy: true }),
+          changedFiles: [mkFile('a.go'), mkFile('conflicted.go', { conflict: true, conflict_sides: 2 })],
+          onfilesaved,
+        }),
+      })
+      await settle()
+
+      const fileEl = container.querySelector('[data-file-path="conflicted.go"]') as HTMLElement
+      expect(fileEl).toBeTruthy()                              // conflict-only file rendered
+      const ours = [...fileEl.querySelectorAll('.resolve-quick')].find(b => b.textContent?.trim() === '◀ Ours') as HTMLButtonElement
+      expect(ours).toBeTruthy()
+
+      await fireEvent.click(ours)
+      await settle()
+
+      // Fallback: no blind write, and the actual EDITING SURFACE renders — not
+      // just the Save button. Asserting `.split-editor` (the editor column) is
+      // the real check: conflicted files force unified view (effectiveSplit =
+      // splitView && !isConflict), so before the effectiveSplit-includes-editing
+      // fix the editor column never mounted → editorRef undefined → Save
+      // permanently disabled. (The Save button alone gates on `editing`, so it
+      // appeared even when the surface was a dead-end — the false-confidence trap.)
+      expect(mockFileWrite).not.toHaveBeenCalled()
+      expect(fileEl.querySelector('.split-editor')).toBeTruthy()
+    })
+
+    it('split/unified toggle confirms before discarding in-progress edits (round-3 data-loss)', async () => {
+      // The editor mounts only in the split branch; toggling to unified unmounts
+      // it and destroys CodeMirror's live buffer (editFileContents holds only the
+      // pre-edit original). Guard mirrors startMerge's confirm-before-discard.
+      mockFileShow.mockResolvedValue({ content: 'line1\nline2\n' })
+      const { container } = render(DiffPanel, {
+        props: props({ diffTarget: target('co-A', 'ch-A', { isWorkingCopy: true }) }),
+      })
+      await settle()
+      await fireEvent.click(editBtn(container)!)            // open editor (splitView → true)
+      await settle()
+      expect(container.querySelector('.split-editor')).toBeTruthy()
+
+      // Decline the confirm → no toggle, editor (and its buffer) survive.
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const toggle = container.querySelector('[aria-label="Switch to unified view"]') as HTMLButtonElement
+      await fireEvent.click(toggle)
+      await settle()
+      expect(confirmSpy).toHaveBeenCalled()
+      expect(container.querySelector('.split-editor')).toBeTruthy()  // NOT unmounted
+
+      // Accept → toggle proceeds, editor unmounts (edits intentionally discarded).
+      confirmSpy.mockReturnValue(true)
+      await fireEvent.click(toggle)
+      await settle()
+      expect(container.querySelector('.split-editor')).toBeFalsy()
+      confirmSpy.mockRestore()
+    })
+  })
 })

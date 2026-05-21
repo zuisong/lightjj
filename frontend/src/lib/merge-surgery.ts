@@ -113,6 +113,19 @@ export function planTake(
       contentOff = 1
     }
     // doc.length === 0: empty doc, insert as-is — nothing to separate from.
+    // KNOWN GAP (fast-check, 2026-05) — the blank-line separator class. Two
+    // distinct conflicts produce IDENTICAL planTake inputs here yet need
+    // different output: `ours=['A'], theirs=[]` (deleted to empty file → 'A')
+    // vs `ours=['X',''], theirs=['']` (prepend before a shared blank → 'X\n').
+    // Both arrive as doc="", blk={1,2,1,1}, one-line insert — because MergeSides
+    // joins each side to a STRING, erasing []-vs-[''] before planTake runs. So
+    // this is provably unfixable here. Multi-block blank conflicts ALSO break
+    // (initialTrackPos collapses distinct insert points to the same offset on
+    // blank/empty docs → remapBlock tangles them). A complete fix needs BOTH:
+    // thread the line-array (or center line-count) so []-vs-[''] survives, AND
+    // a bias-carrying / distinct position model so collapsed offsets stay
+    // separable. Scoped sweep (non-blank) + pins below cover the rest. See
+    // BACKLOG.md "planTake blank-line separator gap".
   }
 
   // newFrom skips a leading \n separator; newTo ends at last content byte,
