@@ -3166,6 +3166,7 @@
     bind:open={bookmarkModalOpen}
     currentCommitId={selectedRevision?.commit.commit_id ?? null}
     filterBookmark={bookmarkModalFilter}
+    logOrder={revisions.map((r) => r.commit.commit_id)}
     onexecute={handleBookmarkOp}
     ontrackmenu={showTrackMenu}
   />

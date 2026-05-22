@@ -1,12 +1,18 @@
-// Generic frequency tracker. Stored server-side via config — `localhost:0`
+// Generic last-used tracker. Stored server-side via config — `localhost:0`
 // randomizes port every launch so the old localStorage storage was cold each
 // session. config.svelte.ts already persists to $XDG_CONFIG_HOME/lightjj/
 // config.json; piggybacking gets port-survival + the same 500ms debounce.
 //
+// Values are Date.now() timestamps (recency, not frequency) — "what did I
+// touch last" ages out naturally, where a frequency count lets a long-time
+// favourite (main) sit on top forever. Values persisted by the old
+// frequency-counter version read as ancient timestamps: they never rank as
+// recent and are evicted first, so no migration is needed.
+//
 // Usage: const history = recentActions('namespace')
-// history.record('key')   — increment count
-// history.count('key')    — get frequency (0 if never used)
-// history.clear()         — reset all counts
+// history.record('key')   — stamp key with the current time
+// history.snapshot()      — one-shot read of all last-used timestamps
+// history.clear()         — reset the namespace
 
 import { config } from './config.svelte'
 
@@ -27,17 +33,11 @@ export function recentActions(namespace: string) {
 
   return {
     record(key: string) {
-      const data = { ...bucket() }
-      data[key] = (data[key] ?? 0) + 1
-      write(data)
+      write({ ...bucket(), [key]: Date.now() })
     },
 
-    count(key: string): number {
-      return bucket()[key] ?? 0
-    },
-
-    /** One-shot read of all counts. Prefer this over count() in sort
-     *  comparators — count() re-reads the reactive source per call. */
+    /** One-shot read of all last-used timestamps. Prefer this over per-key
+     *  reads in sort comparators — the bucket is a reactive source. */
     snapshot(): Record<string, number> {
       return bucket()
     },

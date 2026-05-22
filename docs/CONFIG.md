@@ -25,7 +25,7 @@ The config file lives in your local config directory regardless of mode — only
 | `editorArgs` | `string[]` | `[]` | Open-in-editor command for local mode — see below |
 | `editorArgsRemote` | `string[]` | `[]` | Open-in-editor command for `--remote` mode — see below |
 | `remoteVisibility` | `{[repoPath]: {[remote]: {visible, hidden?}}}` | `{}` | Per-remote bookmark visibility in the revision graph, keyed by repo path so multi-repo tabs stay independent. `visible: true` adds that remote's bookmarks to the revset; `hidden: string[]` excludes specific bookmark names. |
-| `recentActions` | `{[namespace]: {[key]: count}}` | `{}` | Frequency counters for recency-sorting (e.g. bookmark modal). Namespaced per feature. Server-side so port changes and browser switches don't lose history. |
+| `recentActions` | `{[namespace]: {[key]: lastUsedMs}}` | `{}` | Last-used timestamps for recency-sorting (e.g. bookmark modal). Namespaced per feature. Server-side so port changes and browser switches don't lose history. |
 | `openTabs` | `[{path, mode}]` | `[]` | Open tabs to restore on launch. Managed by the UI (written on tab create/close). Tab 0 (the `-R` flag) is excluded — persisting it would fight a different `-R` on next launch. |
 
 ## Typography

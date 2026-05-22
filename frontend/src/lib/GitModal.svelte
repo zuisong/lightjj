@@ -3,12 +3,14 @@
   import { api, bookmarkPushFlags, type Bookmark } from './api'
   import { createLoader } from './loader.svelte'
   import { fuzzyMatch } from './fuzzy'
+  import { groupByWithIndex } from './group-by'
   import { scrollIdxIntoView } from './scroll-into-view'
 
   // Structured op — presentation decided in template, not here.
   // Raw command line is derived: `git ${type} ${flags.join(' ')}`
   interface GitOp {
     type: 'push' | 'fetch'
+    group: 'common' | 'bookmarks' | 'other'  // → section; emitted contiguously in this order
     title: string
     hotkey?: string    // single-char; rendered as kbd hint + wired into handleKeydown
     bookmark?: string  // → badge (mirrors RevisionGraph's .bookmark-badge)
@@ -16,6 +18,12 @@
     scope?: 'all' | 'deleted' | 'tracked' | 'all-remotes'  // → chip
     changeId?: string  // short form, for the --change entry
     flags: string[]
+  }
+
+  const GROUP_LABELS: Record<GitOp['group'], string> = {
+    common: 'Common',
+    bookmarks: 'Bookmarks',
+    other: 'Other',
   }
 
   interface Props {
@@ -49,6 +57,21 @@
     const ops: GitOp[] = []
     const r = ['--remote', remote]
 
+    // Common — everyday ops stay above the per-bookmark wall (one entry per
+    // local bookmark, can get long), so opening `g` lands on Fetch and the
+    // whole-repo pushes are visible without scrolling.
+    // Flagless fetch respects git.fetch config (jj's own default-resolution:
+    // configured list, else origin). Fork workflows set git.fetch =
+    // ["upstream","origin"]; forcing --remote <selected> here would silently
+    // drop upstream. The pill selector scopes PUSH ops only.
+    ops.push({ type: 'fetch', group: 'common', title: 'Fetch', hotkey: 'f', flags: [] })
+    if (changeId) {
+      const short = changeId.slice(0, 8)
+      ops.push({ type: 'push', group: 'common', title: 'Push current change', hotkey: 'c', changeId: short, flags: ['--change', changeId, ...r] })
+    }
+    ops.push({ type: 'push', group: 'common', title: 'Push tracking bookmarks in current revset', hotkey: 'p', flags: r })
+    ops.push({ type: 'push', group: 'common', title: 'Push all bookmarks (incl. new + deleted)', hotkey: 'a', scope: 'all', flags: ['--all', ...r] })
+
     // Bookmarks get 1-9 (first 9 only — beyond that, j/k is faster than scanning for a digit).
     // Bookmarks on the selected revision sort first so `g 1` pushes the one under your cursor.
     const local = bms.filter(bm => bm.local)
@@ -56,31 +79,18 @@
     let n = 0
     for (const bm of ordered) {
       n++
-      ops.push({ type: 'push', title: 'Push bookmark', bookmark: bm.name,
+      ops.push({ type: 'push', group: 'bookmarks', title: 'Push bookmark', bookmark: bm.name,
         here: here.has(bm.name),
         hotkey: n <= 9 ? String(n) : undefined,
         flags: bookmarkPushFlags(bm.name, remote) })
     }
 
-    ops.push({ type: 'push', title: 'Push tracking bookmarks in current revset', hotkey: 'p', flags: r })
-    ops.push({ type: 'push', title: 'Push all bookmarks (incl. new + deleted)', hotkey: 'a', scope: 'all', flags: ['--all', ...r] })
-
-    if (changeId) {
-      const short = changeId.slice(0, 8)
-      ops.push({ type: 'push', title: 'Push current change', hotkey: 'c', changeId: short, flags: ['--change', changeId, ...r] })
-    }
-
-    ops.push({ type: 'push', title: 'Push deleted bookmarks', hotkey: 'd', scope: 'deleted', flags: ['--deleted', ...r] })
-    ops.push({ type: 'push', title: 'Push tracked bookmarks (incl. deleted)', hotkey: 't', scope: 'tracked', flags: ['--tracked', ...r] })
-
-    // Flagless fetch respects git.fetch config (jj's own default-resolution:
-    // configured list, else origin). Fork workflows set git.fetch =
-    // ["upstream","origin"]; forcing --remote <selected> here would silently
-    // drop upstream. The pill selector scopes PUSH ops only.
-    ops.push({ type: 'fetch', title: 'Fetch', hotkey: 'f', flags: [] })
+    // Other — rarely-used scoped pushes + per-remote fetch variants.
+    ops.push({ type: 'push', group: 'other', title: 'Push deleted bookmarks', hotkey: 'd', scope: 'deleted', flags: ['--deleted', ...r] })
+    ops.push({ type: 'push', group: 'other', title: 'Push tracked bookmarks (incl. deleted)', hotkey: 't', scope: 'tracked', flags: ['--tracked', ...r] })
     if (allRemotes.length > 1) {
-      ops.push({ type: 'fetch', title: `Fetch from ${remote} only`, flags: r })
-      ops.push({ type: 'fetch', title: 'Fetch from all remotes', hotkey: 'F', scope: 'all-remotes', flags: ['--all-remotes'] })
+      ops.push({ type: 'fetch', group: 'other', title: `Fetch from ${remote} only`, flags: r })
+      ops.push({ type: 'fetch', group: 'other', title: 'Fetch from all remotes', hotkey: 'F', scope: 'all-remotes', flags: ['--all-remotes'] })
     }
 
     return ops
@@ -100,20 +110,15 @@
     )
   })
 
-  // Compute section boundaries for rendering headers
-  let sections = $derived.by(() => {
-    const result: { header: string; ops: { op: GitOp; globalIndex: number }[] }[] = []
-    let currentType = ''
-    for (let i = 0; i < filtered.length; i++) {
-      const op = filtered[i]
-      if (op.type !== currentType) {
-        currentType = op.type
-        result.push({ header: op.type === 'push' ? 'Push' : 'Fetch', ops: [] })
-      }
-      result[result.length - 1].ops.push({ op, globalIndex: i })
-    }
-    return result
-  })
+  // Section per op.group (common/bookmarks/other), not push/fetch — the type
+  // is already conveyed by the title color + raw command line. globalIndex
+  // keeps j/k + aria-activedescendant continuous across sections.
+  let sections = $derived(
+    Array.from(groupByWithIndex(filtered, op => op.group), ([group, ops]) => ({
+      header: GROUP_LABELS[group],
+      ops: ops.map(({ item, index }) => ({ op: item, globalIndex: index })),
+    }))
+  )
 
   let selected = $derived(filtered[index] as GitOp | undefined)
 

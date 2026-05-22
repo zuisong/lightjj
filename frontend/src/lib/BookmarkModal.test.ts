@@ -10,6 +10,7 @@ vi.mock('./api', () => ({
 
 import { api } from './api'
 import type { Bookmark } from './api'
+import { config } from './config.svelte'
 
 const mockBookmarks = api.bookmarks as ReturnType<typeof vi.fn>
 
@@ -60,6 +61,10 @@ function footer(): string {
 describe('BookmarkModal', () => {
   beforeEach(() => {
     mockBookmarks.mockReset()
+    // recentActions persists in the config singleton across tests in this
+    // file — earlier tests' record() calls would otherwise leak into the
+    // sort-priority assertions.
+    config.recentActions = {}
   })
 
   describe('rendering — one row per bookmark', () => {
@@ -108,6 +113,69 @@ describe('BookmarkModal', () => {
       await renderSettled(defaultProps())
       expect(footer()).toContain('untrack')
       expect(footer()).toContain('(upstream)')
+    })
+  })
+
+  describe('sort priority — conflict > recently used > nearby', () => {
+    const DAY = 24 * 60 * 60 * 1000
+
+    function names(): string[] {
+      return Array.from(items()).map(el => el.querySelector('.bm-name')?.textContent ?? '')
+    }
+
+    it('recently used bookmarks sort first, most recent on top', async () => {
+      mockBookmarks.mockResolvedValue([
+        makeBookmark({ name: 'alpha', commit_id: 'a1' }),
+        makeBookmark({ name: 'beta', commit_id: 'b1' }),
+        makeBookmark({ name: 'gamma', commit_id: 'c1' }),
+      ])
+      config.recentActions = { 'bookmark-modal': { beta: Date.now() - 1000, gamma: Date.now() - 5000 } }
+      await renderSettled(defaultProps())
+      expect(names()).toEqual(['beta', 'gamma', 'alpha'])
+    })
+
+    it('nearby bookmarks rank by row distance from the selected revision', async () => {
+      mockBookmarks.mockResolvedValue([
+        makeBookmark({ name: 'far', commit_id: 'r5' }),
+        makeBookmark({ name: 'close', commit_id: 'r2' }),
+        makeBookmark({ name: 'offlog', commit_id: 'zz' }),
+      ])
+      await renderSettled(defaultProps({
+        currentCommitId: 'r1',
+        logOrder: ['r0', 'r1', 'r2', 'r3', 'r4', 'r5'],
+      }))
+      expect(names()).toEqual(['close', 'far', 'offlog'])
+    })
+
+    it('entries older than the recent window do not outrank nearby bookmarks', async () => {
+      mockBookmarks.mockResolvedValue([
+        makeBookmark({ name: 'stale', commit_id: 'far' }),
+        makeBookmark({ name: 'near', commit_id: 'n1' }),
+      ])
+      config.recentActions = { 'bookmark-modal': { stale: Date.now() - 30 * DAY } }
+      await renderSettled(defaultProps({
+        currentCommitId: 'cur',
+        logOrder: ['n1', 'cur', 'x1', 'x2', 'far'],
+      }))
+      expect(names()).toEqual(['near', 'stale'])
+    })
+
+    it('conflicted bookmarks stay above recent and nearby ones', async () => {
+      mockBookmarks.mockResolvedValue([
+        makeBookmark({ name: 'recent', commit_id: 'r2' }),
+        makeBookmark({ name: 'broken', conflict: true, commit_id: '' }),
+      ])
+      config.recentActions = { 'bookmark-modal': { recent: Date.now() } }
+      await renderSettled(defaultProps({ currentCommitId: 'r1', logOrder: ['r1', 'r2'] }))
+      expect(names()).toEqual(['broken', 'recent'])
+    })
+
+    it('executing an op stamps the bookmark with a last-used timestamp', async () => {
+      mockBookmarks.mockResolvedValue([makeBookmark({ name: 'feat', commit_id: 'aaa' })])
+      const before = Date.now()
+      await renderSettled(defaultProps({ currentCommitId: 'other' }))
+      await fireEvent.keyDown(modal(), { key: 'Enter' })
+      expect(config.recentActions['bookmark-modal'].feat).toBeGreaterThanOrEqual(before)
     })
   })
 

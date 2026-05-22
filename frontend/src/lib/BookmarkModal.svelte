@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { api, type Bookmark } from './api'
   import { createLoader } from './loader.svelte'
   import { fuzzyMatch } from './fuzzy'
@@ -18,11 +18,13 @@
     open: boolean
     currentCommitId: string | null
     filterBookmark: string
+    /** commit_ids of the loaded log in display order — powers the "nearby" sort tier */
+    logOrder?: string[]
     onexecute: (op: BookmarkOp) => void
     ontrackmenu?: (bm: Bookmark, opts: TrackOption[], x: number, y: number) => void
   }
 
-  let { open = $bindable(false), currentCommitId, filterBookmark, onexecute, ontrackmenu }: Props = $props()
+  let { open = $bindable(false), currentCommitId, filterBookmark, logOrder = [], onexecute, ontrackmenu }: Props = $props()
 
   let query: string = $state('')
   let index: number = $state(0)
@@ -35,22 +37,49 @@
   const confirm = createConfirmGate<'d' | 'f' | 't'>()
   let armed = $derived(confirm.armed)
 
-  // Frequency-sort by bookmark name (not by action) — if you've been touching
-  // a bookmark you want it at the top regardless of which op you last used.
+  // Last-used recency by bookmark name (not by action) — if you've been
+  // touching a bookmark you want it at the top regardless of which op you
+  // last used. Namespace shared with BookmarkInput.
   const history = recentActions('bookmark-modal')
+
+  // Sort tiers for the no-query list: conflict > recently used > nearby.
+  // "Recent" = touched via this modal / BookmarkInput within the window;
+  // "nearby" = the bookmark's commit sits close to the selected revision in
+  // the loaded log (row distance as a graph-distance proxy; off-log = FAR).
+  const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+  // Finite (not Infinity) so the comparator never sees Infinity - Infinity = NaN.
+  const FAR = Number.MAX_SAFE_INTEGER
+
+  // Log row positions captured once per open — a background log refresh while
+  // the modal is up must not re-sort the list under the cursor (or under a
+  // half-armed d/f confirm). The open $effect untracks the reads so it
+  // doesn't re-fire (and reset query/index) on every log refresh.
+  let logRows: { byCommit: Map<string, number>; cur: number | undefined } = $state({ byCommit: new Map(), cur: undefined })
 
   let filtered = $derived.by(() => {
     if (!open) return []
     let list = bms.value
     if (filterBookmark) list = list.filter(b => b.name === filterBookmark)
     if (query) return list.filter(b => fuzzyMatch(query, b.name))
-    // No query: conflict > recency. Conflict-first mirrors BookmarksPanel's
-    // trouble-first syncPriority — if a bookmark is conflicted you opened this
-    // modal to resolve it. snapshot() is one JSON.parse; count() would be N.
-    const counts = history.snapshot()
+    // Conflict-first mirrors BookmarksPanel's trouble-first syncPriority — if
+    // a bookmark is conflicted you opened this modal to resolve it.
+    // snapshot()/destructure once: per-comparator reads would re-hit the
+    // reactive sources N·logN times.
+    const last = history.snapshot()
+    const { byCommit, cur } = logRows
+    const now = Date.now()
+    const recency = (bm: Bookmark) => {
+      const t = last[bm.name] ?? 0
+      return now - t < RECENT_WINDOW_MS ? t : 0
+    }
+    const distance = (bm: Bookmark) => {
+      const row = byCommit.get(bm.commit_id)
+      return row === undefined || cur === undefined ? FAR : Math.abs(row - cur)
+    }
     return [...list].sort((a, b) =>
       (+b.conflict - +a.conflict) ||
-      ((counts[b.name] ?? 0) - (counts[a.name] ?? 0))
+      (recency(b) - recency(a)) ||
+      (distance(a) - distance(b))
     )
   })
 
@@ -75,6 +104,9 @@
       query = ''
       index = 0
       confirm.disarm()
+      // Snapshot nearby-sort inputs (untracked — see logRows comment).
+      const byCommit = new Map(untrack(() => logOrder).map((id, i) => [id, i]))
+      logRows = { byCommit, cur: byCommit.get(untrack(() => currentCommitId) ?? '') }
       bms.load()
       // {#if open} hasn't mounted yet on this tick — modalEl is undefined.
       // tick() resolves after DOM flush. Same pattern as ContextMenu/AnnotationBubble.

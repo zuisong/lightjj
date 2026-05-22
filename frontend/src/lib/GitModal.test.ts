@@ -171,6 +171,26 @@ describe('GitModal', () => {
       expect(fetches).toEqual(['git fetch'])
     })
 
+    it('common ops sort above per-bookmark pushes, scoped/rare ops below', async () => {
+      mockBookmarks.mockResolvedValue([localBm('feat'), localBm('other')])
+      mockRemotes.mockResolvedValue(['origin', 'upstream'])
+      const { container } = render(GitModal, { props: defaultProps({ currentChangeId: 'abcdefghijklmnop' }) })
+
+      const cmds = await waitForCmds(container)
+      const firstBookmarkIdx = cmds.findIndex(c => c.includes('--bookmark'))
+      // Common: fetch + whole-repo pushes before the per-bookmark wall
+      expect(cmds.indexOf('git fetch')).toBeLessThan(firstBookmarkIdx)
+      expect(cmds.indexOf('git push --change abcdefghijklmnop --remote origin')).toBeLessThan(firstBookmarkIdx)
+      expect(cmds.indexOf('git push --remote origin')).toBeLessThan(firstBookmarkIdx)
+      expect(cmds.indexOf('git push --all --remote origin')).toBeLessThan(firstBookmarkIdx)
+      // Other: scoped pushes + per-remote fetch variants after the wall
+      expect(cmds.indexOf('git push --deleted --remote origin')).toBeGreaterThan(firstBookmarkIdx)
+      expect(cmds.indexOf('git fetch --all-remotes')).toBeGreaterThan(firstBookmarkIdx)
+
+      const headers = Array.from(container.querySelectorAll('.git-section-header')).map(h => h.textContent)
+      expect(headers).toEqual(['Common', 'Bookmarks', 'Other'])
+    })
+
     it('first remote used as default, not hardcoded origin', async () => {
       mockBookmarks.mockResolvedValue([])
       mockRemotes.mockResolvedValue(['github'])
@@ -264,7 +284,7 @@ describe('GitModal', () => {
       expect(items[1].classList.contains('git-item-active')).toBe(true)
     })
 
-    it('Enter executes selected op', async () => {
+    it('Enter executes selected op (index 0 = Fetch)', async () => {
       const onexecute = vi.fn()
       mockBookmarks.mockResolvedValue([])
       mockRemotes.mockResolvedValue(['origin'])
@@ -279,8 +299,8 @@ describe('GitModal', () => {
       await fireEvent.keyDown(modal, { key: 'Enter' })
 
       expect(onexecute).toHaveBeenCalledTimes(1)
-      expect(onexecute.mock.calls[0][0]).toBe('push')
-      expect(onexecute.mock.calls[0][1]).toEqual(['--remote', 'origin'])
+      expect(onexecute.mock.calls[0][0]).toBe('fetch')
+      expect(onexecute.mock.calls[0][1]).toEqual([])
     })
 
     it('hotkey fires op directly', async () => {

@@ -11,7 +11,7 @@
   let { open = $bindable(false), onsave }: Props = $props()
 
   // Shared namespace with BookmarkModal — setting a bookmark here bumps its
-  // rank in the `b` modal's frequency sort too.
+  // rank in the `b` modal's recently-used sort too.
   const history = recentActions('bookmark-modal')
 
   // Trunk-name pattern. jj's trunk() alias defaults to checking these against
@@ -31,15 +31,16 @@
     if (!open) return []
     if (value) return bookmarks.filter(b => fuzzyMatch(value, b.name)).slice(0, 8)
     // Empty input: surface conflicted bookmarks (why you'd open this dialog
-    // mid-conflict) then trunk names (common advance target). 5 is enough for
-    // an at-a-glance pick — more and you'd type to filter anyway.
+    // mid-conflict) then trunk names (common advance target), then most
+    // recently used. 5 is enough for an at-a-glance pick — more and you'd
+    // type to filter anyway.
     // +bool coercion: true→1, false→0; b-a for descending (trues first).
-    const counts = history.snapshot()
+    const last = history.snapshot()
     return [...bookmarks]
       .sort((a, b) =>
         (+b.conflict - +a.conflict) ||
         (+TRUNK_NAMES.has(b.name) - +TRUNK_NAMES.has(a.name)) ||
-        ((counts[b.name] ?? 0) - (counts[a.name] ?? 0))
+        ((last[b.name] ?? 0) - (last[a.name] ?? 0))
       )
       .slice(0, 5)
   })

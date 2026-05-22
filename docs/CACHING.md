@@ -38,7 +38,7 @@ stay valid across arbitrary operations.
 
 **Out of scope:** `config.svelte.ts` (user prefs, `/api/config` + localStorage
 write-through + `storage` event cross-tab sync) and `recent-actions.svelte.ts`
-(frequency counter, stored in `config.recentActions`) are preference stores,
+(last-used timestamps, stored in `config.recentActions`) are preference stores,
 not revision caches — no coherence relationship with commit_id/op-id.
 
 ---

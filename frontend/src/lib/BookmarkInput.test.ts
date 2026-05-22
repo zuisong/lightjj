@@ -16,7 +16,6 @@ const mockSnapshot = vi.fn<() => Record<string, number>>().mockReturnValue({})
 vi.mock('./recent-actions.svelte', () => ({
   recentActions: () => ({
     record: mockRecord,
-    count: (k: string) => mockSnapshot()[k] ?? 0,
     snapshot: mockSnapshot,
     clear: vi.fn(),
   }),
@@ -360,7 +359,7 @@ describe('BookmarkInput', () => {
       expect(onsave).toHaveBeenCalledWith('main')
     })
 
-    it('recency tier: higher frequency sorts above lower (both non-conflict non-trunk)', async () => {
+    it('recency tier: more recently used sorts above less recent (both non-conflict non-trunk)', async () => {
       mockSnapshot.mockReturnValue({ 'used-often': 5, 'used-once': 1 })
       mockBookmarks.mockResolvedValue([
         makeBookmark('used-once'),
@@ -383,7 +382,7 @@ describe('BookmarkInput', () => {
       const input = container.querySelector('.bm-set-input') as HTMLInputElement
       await fireEvent.input(input, { target: { value: 'feat' } })
       await fireEvent.keyDown(input, { key: 'Enter' })
-      // record() fires before onsave — if onsave throws, frequency still updates.
+      // record() fires before onsave — if onsave throws, recency still updates.
       expect(mockRecord).toHaveBeenCalledWith('feat')
       expect(mockRecord.mock.invocationCallOrder[0])
         .toBeLessThan(onsave.mock.invocationCallOrder[0])

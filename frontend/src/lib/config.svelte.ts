@@ -57,7 +57,7 @@ interface Config {
   /** Authors whose review comments render as hidden/stub. Cross-repo by
    *  design (hiding a bot in one repo hides it everywhere). */
   hiddenCommentAuthors: string[]
-  /** Frequency counters keyed by namespace. Replaces the old localStorage-only
+  /** Last-used timestamps keyed by namespace. Replaces the old localStorage-only
    *  recent-actions — `localhost:0` randomizes port so localStorage was cold
    *  every launch. Server-side survives port changes (same config file). */
   recentActions: Record<string, Record<string, number>>
