@@ -29,8 +29,11 @@ if (!(DERIVED_CACHE_SIZE <= MAX_CACHE_SIZE)) {
 /** commit_id (or revset string) → highlight+word-diff output. */
 export const derivedCache = new Map<string, DerivedCacheEntry>()
 
-/** change_id → collapsed-file set. change_id-keyed so rewrites preserve UI state. */
-export const collapseStateCache = new Map<string, Set<string>>()
+/** Explicit per-file collapse intent (user choices only — the auto-collapse
+ *  predicate is re-evaluated live against whatever content is shown).
+ *  change_id-keyed so rewrites preserve UI state. */
+export type CollapseMemo = { collapsed: Set<string>; expanded: Set<string> }
+export const collapseStateCache = new Map<string, CollapseMemo>()
 
 /**
  * Raw diff text → parsed DiffFile[]. Keyed by text (not commit_id) so

@@ -8,6 +8,7 @@ Browser-based UI for Jujutsu (jj) version control. See [docs/ARCHITECTURE.md](do
 go test ./...                                        # Go tests
 go vet ./...                                         # static analysis
 cd frontend && pnpm install && pnpm run build        # build frontend
+cd frontend && pnpm run bench                        # diff perf benchmarks (see docs/design-notes/diff-perf-benchmarks.md)
 go build -tags embed ./cmd/lightjj                   # build binary (needs frontend build first; no tag = stub)
 
 # Dev mode: two terminals
@@ -115,6 +116,7 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     conflict-parser.ts     — jj conflict marker parser (diff-side label semantics)
     split-view.ts          — Side-by-side diff alignment
     word-diff.ts           — Word-level inline diff computation
+    perf-fixtures.ts       — Synthetic diff generators for diff-compute.bench.ts (`pnpm run bench`)
     languages.ts           — SINGLE language registry (one LANGUAGES entry per language)
     highlighter.ts         — Lezer highlightCode → tok-* spans + escapeHtml/escapeAttr
     markdown-render.ts     — marked (GFM) + DOMPurify renderMarkdown + gutter block stamping
@@ -189,7 +191,8 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
 - **Svelte 5 runes** — use `$state()`, `$derived()`, `$effect()`. No Svelte 4 stores.
 - **api.ts is the single API boundary** — all backend calls go through the `api` object in `src/lib/api.ts`. Don't use raw `fetch()` in components.
 - **Shared UI primitives in `theme.css`** — Don't redefine these per-component; the `.panel-header` pattern was copy-pasted 5× before consolidation. Component CSS adds only layout/positioning overrides.
-  - Typography: `--font-size` (config-settable base, default 13px) + derived `--fs-3xs/2xs/xs/sm/md/lg/xl` (additive offsets → 8/9/10/11/12/14/16 at default). **Never write `font-size: Npx`** — use the scale vars. `--font-ui`/`--font-mono` are config-overridable family stacks.
+  - Typography: `--font-size` (config-settable base, default 14px) + derived `--fs-3xs/2xs/xs/sm/md/lg/xl` (additive offsets → 9/10/11/12/13/15/17 at default). **Never write `font-size: Npx`** — use the scale vars. `--font-ui`/`--font-mono` are config-overridable family stacks.
+  - Dim/secondary **text** color: `--text-faint` (`color-mix(--text 45%, transparent)` — derived, so legible on every theme polarity). **Never use `--surface2` as a text `color`** — it's the gray ramp's darkest *border* step and collapses into the background in dark themes (issue #13). `--surface2` stays for `border-color`/dividers only.
   - Buttons: `.btn` (ghost), `.btn-sm` (compact), `.btn-primary` (filled amber), `.btn-danger` (red outline → fill on hover)
   - Toggle: `.seg`/`.seg-btn`/`.active` (segmented control)
   - Panel chrome: `.panel-header`, `.panel-title`
@@ -283,7 +286,8 @@ Performance and async-correctness rules, mostly distilled from profiling j/k key
 - **Store stable keys in `$derived` Maps; compute equality at render.**
 - **Fire-and-forget async in effects is fine** when it has its own error handling + generation counter.
 - **Skip word-diff for non-code files**; word diffs publish progressively per file.
-- **Auto-collapse large diffs** (>500-line file, >20k-char file, >2000 total lines).
+- **Auto-collapse large diffs** (>500-line file, >20k-char file, >2000 total lines) — collapse ≠ compute-skip; highlight/word-diff have separate per-file line caps.
+- **Collapse is decided pre-render (`isFileCollapsed`) and offscreen bodies defer their mount** — programmatic jumps to a file body must go through `revealFile()`, never just collapse-state writes.
 - **`content-visibility: auto` on `.diff-file`** for offscreen layout/paint skip.
 - **Diff parser uses the `b/` (destination) path** from `diff --git` headers.
 - **Every diff load goes through the navigator** (`loadDiffAndFiles`/`applyCacheHit`/`loadMulti` — multi-check included); never call `diff.load()` directly — it desyncs the `loadedTarget`/`diffContentKey`/`diff.value` triple.

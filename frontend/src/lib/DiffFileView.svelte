@@ -19,6 +19,12 @@
     file: DiffFile
     fileStats: FileChange | undefined
     isCollapsed: boolean
+    /** True = body not yet mounted: render an estimated-height placeholder
+     *  instead of the line DOM (header, file-level notes, and the composer
+     *  still render). The parent guarantees previewing/editing files are
+     *  never deferred; DiffPanel's revealFile/IntersectionObserver flips this
+     *  back as files approach the viewport or are jumped to. */
+    bodyDeferred?: boolean
     isExpanded: boolean
     /** Maps effective (post-merge) gap index → original gap index. Undefined =
      *  identity (no gaps revealed yet). See context-expand.ts. */
@@ -118,7 +124,7 @@
     lines: { lineNum: number | null, content: string, side?: DiffSide }[]
   }
 
-  let { file, fileStats, isCollapsed, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, onresolveconflict, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, onfilehistory, onopendoc, oncompare, annotationsForLine, annotationsForFile, annotationCount = 0, docCommentCount = 0, vis, onreviewresolve, onreviewdelete, composer, draftLine, onannotationclick, onreviewedtoggle, hunkReview = null, symbolHover }: Props = $props()
+  let { file, fileStats, isCollapsed, bodyDeferred = false, isExpanded, gapMap, splitView, highlightedLines, wordDiffs, ontoggle, onexpand, onmerge, onresolveconflict, searchMatches = [], currentMatchIdx = 0, editing = false, editContent, editBusy = false, onedit, onpreview, previewContent, previewRevision, ondiscard, onsavefile, oncanceledit, onlinecontext, oncontextmenu, onopenfile, onfilehistory, onopendoc, oncompare, annotationsForLine, annotationsForFile, annotationCount = 0, docCommentCount = 0, vis, onreviewresolve, onreviewdelete, composer, draftLine, onannotationclick, onreviewedtoggle, hunkReview = null, symbolHover }: Props = $props()
 
   const lang = $derived(detectLanguage(file.filePath))
   function handleSymbolMove(e: PointerEvent) {
@@ -149,6 +155,12 @@
   // because the hunk header element is deep in the unified-view each.
   let fileEl: HTMLElement | undefined = $state(undefined)
   $effect(() => {
+    // bodyDeferred + isCollapsed deps: when the cursor first lands on a
+    // deferred OR auto-collapsed file, the parent reveals it in the SAME
+    // flush our first run happens in (no [data-hunk] DOM yet) — re-running
+    // when the body actually appears is what makes that first move scroll.
+    void bodyDeferred
+    void isCollapsed
     if (!hunkReview?.cursor || hunkReview.cursor.path !== filePath) return
     const idx = hunkReview.cursor.idx
     fileEl?.querySelector(`[data-hunk="${idx}"]`)
@@ -191,6 +203,27 @@
   // Gutter marks for the markdown preview. Gated on previewContent so the
   // hunk walk doesn't run on every render of the (much hotter) source view.
   let addedLines = $derived(previewContent !== undefined ? newSideAddedLines(file.hunks) : undefined)
+
+  // Estimated body height (18px rows + ~24px hunk headers): used both for
+  // the content-visibility hint below and as the deferred-mount placeholder
+  // height, so the two never disagree about how much scroll space a
+  // not-yet-painted/not-yet-mounted body claims.
+  let bodyEstPx = $derived.by(() => {
+    let lines = 0
+    for (const h of file.hunks) lines += h.lines.length
+    return lines * 18 + file.hunks.length * 24
+  })
+  // content-visibility height hint: realistic per-file estimate instead of
+  // the flat 200px CSS fallback. The `auto` keyword still lets the browser
+  // remember the real height after first paint (split view and soft-wrap
+  // drift self-correct). Suppressed for collapsed/preview/editing/binary
+  // states where the body is tiny or unknown — a 90,000px hint against a
+  // ~30px collapsed header would be worse than the 200px default.
+  let intrinsicSize = $derived(
+    isCollapsed || editing || file.isBinary || previewContent !== undefined
+      ? null
+      : `auto ${bodyEstPx + 40}px`
+  )
 
   // Hidden context exists if there are lines before the first hunk or between
   // hunks. We can't know trailing lines (no total-line-count in diff headers)
@@ -617,7 +650,7 @@
 {/snippet}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="diff-file" data-file-path={filePath} bind:this={fileEl} class:hunk-reviewing={!!hunkReview} class:file-reviewed={reviewed} onpointermove={symbolHover ? handleSymbolMove : undefined} onpointerleave={symbolHover ? () => symbolHover.leave() : undefined}>
+<div class="diff-file" data-file-path={filePath} bind:this={fileEl} style:contain-intrinsic-size={intrinsicSize} class:hunk-reviewing={!!hunkReview} class:file-reviewed={reviewed} onpointermove={symbolHover ? handleSymbolMove : undefined} onpointerleave={symbolHover ? () => symbolHover.leave() : undefined}>
   <div
     class="diff-file-header"
     onclick={(e: MouseEvent) => {
@@ -753,6 +786,11 @@
   {/if}
   {#if file.isBinary && !isCollapsed}
     <div class="binary-placeholder placeholder-text">Binary file — not diffable</div>
+  {:else if !isCollapsed && bodyDeferred && previewContent === undefined && !editing}
+    <!-- Deferred body: estimated-height stand-in until DiffPanel mounts this
+         file (IntersectionObserver approach or programmatic revealFile).
+         Keeps line DOM creation off the navigation path for offscreen files. -->
+    <div class="diff-body-placeholder" style:height="{bodyEstPx}px" aria-hidden="true"></div>
   {:else if !isCollapsed}
     {#if previewContent !== undefined}
       {#if isImage && previewRevision}
@@ -945,6 +983,13 @@
     border-bottom: none;
   }
 
+  /* Deferred-mount stand-in: claims the estimated body height so the
+     scrollbar stays honest, costs nothing to lay out (contain: strict, no
+     children). Replaced by the real line DOM when DiffPanel mounts the file. */
+  .diff-body-placeholder {
+    contain: strict;
+  }
+
   /* One-line stand-in for binary files (no hunks). 18px line-height matches
      the diff row height; left padding aligns with the gutter column. */
   .binary-placeholder {
@@ -991,7 +1036,7 @@
   }
 
   .collapse-icon {
-    color: var(--surface2);
+    color: var(--text-faint);
     width: 12px;
     flex-shrink: 0;
     display: flex;
@@ -1125,7 +1170,7 @@
   }
 
   .file-dir {
-    color: var(--surface2);
+    color: var(--text-faint);
     font-weight: 400;
   }
 
@@ -1228,7 +1273,7 @@
     width: 100%;
     padding: 2px 12px;
     background: transparent;
-    color: var(--surface2);
+    color: var(--text-faint);
     border: none;
     border-top: 1px dashed var(--border-hunk-header);
     border-bottom: 1px dashed var(--border-hunk-header);
@@ -1242,7 +1287,7 @@
 
   .expand-dots {
     letter-spacing: 2px;
-    color: var(--surface2);
+    color: var(--text-faint);
     font-size: var(--fs-xs);
   }
 
@@ -1272,7 +1317,7 @@
   }
 
   .hunk-range {
-    color: var(--surface2);
+    color: var(--text-faint);
     font-size: var(--fs-xs);
     flex-shrink: 0;
   }
@@ -1318,11 +1363,10 @@
     min-width: 4ch;
     text-align: right;
     padding-right: 1ch;
-    color: var(--surface2);
+    color: var(--text-faint);
     user-select: none;
     -webkit-user-select: none;
     font-size: var(--fs-sm);
-    opacity: 0.5;
     border-right: 1px solid var(--line-gutter-border, transparent);
     margin-right: 1ch;
   }

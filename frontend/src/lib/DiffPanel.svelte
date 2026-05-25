@@ -133,7 +133,27 @@
     measureTabsOverflow()
   })
   let activeFilePath: string | null = $state(null)
-  let collapsedFiles = new SvelteSet<string>()
+  // Collapse + mount state (specs/pierre-diffs.md Phase 2). Collapse is a
+  // DERIVED decision — per-file precedence: userExpanded > userCollapsed >
+  // auto-collapse predicate (isFileCollapsed below) — so a freshly-arrived
+  // diff renders big files collapsed from the FIRST template pass. There is
+  // no post-render auto-collapse effect anymore: the old one transiently
+  // built and discarded every body, paying full DOM construction on every
+  // navigation. These two sets hold explicit user intent only.
+  let userCollapsed = new SvelteSet<string>()
+  let userExpanded = new SvelteSet<string>()
+  // Session-only expansion pins (NOT persisted to collapseStateCache): the
+  // sameChange branch pins what the user is currently reading so a snapshot
+  // that grows a file past a collapse threshold doesn't snap it shut — but
+  // that must not become durable "intent" that disables auto-collapse on
+  // every future visit. Cleared on identity change.
+  let pinnedExpanded = new SvelteSet<string>()
+  // Files whose BODY may render. Files outside eagerMountPaths render an
+  // estimated-height placeholder until the IntersectionObserver (or a
+  // programmatic revealFile) mounts them. Cleared on identity change;
+  // intentionally KEPT on sameChange refresh (snapshot/amend) so the user's
+  // place in the diff survives.
+  let mountedFiles = new SvelteSet<string>()
 
   // Full-context cache (lazy-fetched per file) + per-gap reveal sets.
   // expandedDiffs stores the --context 10000 fetch result; revealedGaps
@@ -435,11 +455,12 @@
         createdAtCommitId: diffTarget.commitId,
       })
       // Collapse only on confirmed check, and only if still on the same
-      // revision (nav during the await would have reset collapsedFiles).
+      // revision (nav during the await would have reset the collapse intent sets).
       // Uncheck does NOT auto-expand — surprise-expanding a 5k-line file
       // is worse than one extra click.
       if (changed && next && diffTarget?.kind === 'single' && diffTarget.changeId === cid) {
-        collapsedFiles.add(filePath)
+        userExpanded.delete(filePath)
+        userCollapsed.add(filePath)
       }
     } catch (e) {
       // Rollback in setReviewed already restored the checkbox; the visible
@@ -504,7 +525,7 @@
    *  (no per-hunk wrapper) — degrades to scrollToFile. */
   function scrollToHunk(path: string, hunkIdx: number) {
     vis.bumpScrollGen()
-    collapsedFiles.delete(path)
+    revealFile(path)
     requestAnimationFrame(() => {
       const fileEl = document.querySelector(`[data-file-path="${CSS.escape(path)}"]`)
       const target = fileEl?.querySelector(`[data-hunk="${hunkIdx}"]`) ?? fileEl
@@ -699,7 +720,7 @@
     // Edit wins over preview — DiffFileView's {#if previewContent} branch
     // precedes the FileEditor branch; a stale preview would hide the editor.
     if (previewContents.has(path)) closePreview(path)
-    collapsedFiles.delete(path)
+    revealFile(path)
     editFileContents = new Map(editFileContents).set(path, content)
     editingFiles.add(path)
   }
@@ -714,7 +735,7 @@
     if (previewContents.has(path)) return closePreview(path)
     const revId = previewCommitId
     if (!revId || editBusy.has(path)) return
-    collapsedFiles.delete(path)
+    revealFile(path)
     if (IMAGE_RE.test(path)) {
       previewContents = new Map(previewContents).set(path, '')
       return
@@ -969,31 +990,69 @@
     '.lock', '.map', '.min.js', '.min.css', '.bundle.js',
   ]
 
-  // Max total lines per file before skipping word diff (avoids blocking main thread)
-  const WORD_DIFF_LINE_LIMIT = 1000
-  // Auto-collapse files larger than this to prevent DOM flooding
+  // ── Size thresholds ──────────────────────────────────────────────────────
+  // Two independent groups — do NOT conflate them (specs/pierre-diffs.md §3):
+  // COLLAPSE thresholds decide what renders expanded by default (a reading
+  // preference + DOM-flood guard); COMPUTE caps decide what gets syntax
+  // highlighting / word-diff (runs even for collapsed files). A normal
+  // 600-line code file is over the 20k-char collapse limit but well within
+  // the compute caps — it auto-collapses, yet expands fully highlighted.
+  // Budget: ≤150ms main-thread block on navigation, ≤500ms on explicit
+  // actions (expand-all). Caps derive from the measured rates in
+  // docs/design-notes/diff-perf-benchmarks.md.
+
+  // COMPUTE: max lines per file before skipping word diff. LCS is cheap
+  // (~4ms for a 5k-line file, measured); MAX_TOKENS_FOR_LCS bails on
+  // pathological lines, this just bounds the outer walk.
+  const WORD_DIFF_LINE_LIMIT = 5000
+  // COMPUTE: per-file line cap for syntax highlighting. Lezer ≈23ms/1k lines
+  // and a single-hunk file (new file) parses in one sync chunk — 5k ≈ ~115ms,
+  // the largest block that stays inside the navigation budget on slower
+  // hardware. Per-line protection (minified one-liners) lives in
+  // highlightLines()'s >2000-char fallback, not here.
+  const HIGHLIGHT_SKIP_LINE_LIMIT = 5000
+  // COMPUTE: per-file char cap for highlighting — catches char-dense files
+  // (many 1-2k-char lines) the line cap and per-line guard both miss.
+  const HIGHLIGHT_SKIP_CHAR_LIMIT = 500_000
+  // COMPUTE: lines highlighted synchronously before the derivation yields
+  // between files (~70ms at the measured rate). Keeps an all-eligible huge
+  // diff from sync-blocking navigation now that compute caps are decoupled
+  // from collapse limits. Tradeoff: a yielded run can be aborted mid-flight
+  // by a context-expand update() — affected files stay plain until the next
+  // visit recomputes (same accepted behavior as word-diffs, which always
+  // yield between files).
+  const HIGHLIGHT_IMMEDIATE_LINES = 3000
+
+  // COLLAPSE: auto-collapse files larger than this to prevent DOM flooding
   const AUTO_COLLAPSE_LINE_LIMIT = 500
-  // Auto-collapse ALL files when total lines exceed this. Catches the
-  // "many moderate files" case (e.g. 20 files × 100 lines) that per-file
+  // COLLAPSE: auto-collapse ALL files when total lines exceed this. Catches
+  // the "many moderate files" case (e.g. 20 files × 100 lines) that per-file
   // AUTO_COLLAPSE_LINE_LIMIT misses. Collapsed files render header-only
   // (~1 DOM subtree vs ~lines×2 nodes each). Expand-all is one click.
   const AUTO_COLLAPSE_TOTAL_LINES = 2000
-  // Above this, don't even render file headers — show a single placeholder.
-  // Bundle-churn diffs (1.4MB) with 20+ files make j/k sluggish even with
-  // all headers collapsed; N file-header subtrees is still N mount work.
-  const HIDE_DIFF_TOTAL_LINES = 1000
-  // Per-file char limit — catches huge one-liners (minified JS, lock files
-  // with one 800k-char line). Line-count triggers miss these entirely.
-  // ~100 screen-widths of content is the threshold.
+  // Extreme fallback: above this, don't render anything until "Show anyway".
+  // With collapse decided BEFORE first render (isFileCollapsed) and bodies
+  // deferred behind placeholders (isBodyDeferred), navigation onto a big diff
+  // mounts headers + a few near-viewport bodies only — so this gate exists
+  // for pathological diffs (parse size, header count in the hundreds), not
+  // normal large changes. History: 1000 when collapsed files paid full
+  // compute; 5000 while auto-collapse was still applied post-render
+  // (transient body build-and-discard); 50k once both were fixed.
+  const HIDE_DIFF_TOTAL_LINES = 50_000
+  // Companion file-count gate: hundreds of changed files = hundreds of header
+  // subtrees + file-tab buttons regardless of how few lines each has.
+  const HIDE_DIFF_FILE_LIMIT = 300
+  // COLLAPSE: per-file char limit — catches huge one-liners (minified JS,
+  // lock files with one 800k-char line) that line-count triggers miss.
+  // Collapse only — does NOT gate highlight/word-diff anymore.
   const AUTO_COLLAPSE_CHAR_LIMIT = 20_000
 
   function fileLineCount(file: DiffFile): number {
     return file.hunks.reduce((sum, h) => sum + h.lines.length, 0)
   }
 
-  // isOversize() is called 3× per file per navigation (wordDiffs.skip,
-  // highlights.skip, auto-collapse). DiffFile objects have stable identity
-  // within a nav (parseDiffCached) → WeakMap memo avoids the redundant walks.
+  // DiffFile objects have stable identity within a nav (parseDiffCached) →
+  // WeakMap memo avoids redundant char walks across effect re-runs.
   const charCountMemo = new WeakMap<DiffFile, number>()
   function fileCharCount(file: DiffFile): number {
     const cached = charCountMemo.get(file)
@@ -1004,20 +1063,31 @@
     return n
   }
 
-  // Shared threshold for skipping both word-diff AND highlighting. These run
-  // synchronously over all files (highlights has immediateBudget:Infinity) —
-  // a single 800k-char line freezes the UI for Lezer parse + LCS both, even
-  // when the file is collapsed in the UI. Collapsed ≠ skipped compute.
+  // COLLAPSE-only oversize check (used by the autoCollapsed() predicate).
+  // Highlight has its own, much larger char cap (HIGHLIGHT_SKIP_CHAR_LIMIT);
+  // minified one-liners are additionally caught per-line inside
+  // highlightLines() (>2000-char fallback) and per-line in word-diff
+  // (MAX_TOKENS_FOR_LCS), so a normal multi-hundred-line code file keeps its
+  // highlighting even though it auto-collapses.
   function isOversize(file: DiffFile): boolean {
     return fileCharCount(file) > AUTO_COLLAPSE_CHAR_LIMIT
   }
 
   function shouldSkipWordDiff(file: DiffFile): boolean {
-    // Suffix check first — cheap, and most oversize files are .min.js anyway.
+    // Suffix check first — cheap, and most machine-generated files carry one.
     const lower = file.filePath.toLowerCase()
     if (SKIP_WORD_DIFF_SUFFIXES.some(suffix => lower.endsWith(suffix))) return true
-    if (fileLineCount(file) > WORD_DIFF_LINE_LIMIT) return true
-    return isOversize(file)
+    return fileLineCount(file) > WORD_DIFF_LINE_LIMIT
+  }
+
+  function shouldSkipHighlight(file: DiffFile): boolean {
+    // Line cap bounds the single-hunk parse; the char cap catches char-DENSE
+    // files (thousands of 1-2k-char generated lines) that stay under both the
+    // line cap and highlightLines' per-line >2000-char fallback yet would
+    // hand Lezer megabytes of input. ~500k chars ≈ a 7-8k-line normal file —
+    // far above anything a human reads with colors.
+    return fileLineCount(file) > HIGHLIGHT_SKIP_LINE_LIMIT
+      || fileCharCount(file) > HIGHLIGHT_SKIP_CHAR_LIMIT
   }
 
   // Per-file word diff maps. Each file's entry is a Map from "hunkIdx" to
@@ -1060,14 +1130,15 @@
 
   const highlights = createDiffDerivation({
     compute: highlightFile,
-    // skip oversize files: Lezer parse of a single 800k-char line is ~sec;
-    // the file is auto-collapsed anyway (no visual benefit). If user expands,
-    // they see unhighlighted content — correct tradeoff.
-    skip: isOversize,
-    // Sync compute + immediateBudget:Infinity → run() never awaits → fully
-    // synchronous loop. The outer setTimeout(0) at the effect below provides
-    // paint-first; run() itself has zero scheduling overhead.
-    immediateBudget: Infinity,
+    // Per-file line cap only (HIGHLIGHT_SKIP_LINE_LIMIT). Char-based skipping
+    // moved out of the compute path — minified single-line content already
+    // falls back to escaped plain text inside highlightLines().
+    skip: shouldSkipHighlight,
+    // First ~HIGHLIGHT_IMMEDIATE_LINES highlight synchronously (visible files
+    // get colors in the same deferred tick), then run() yields between files
+    // so an all-eligible huge diff can't sync-block navigation. The outer
+    // setTimeout(0) at the effect below still provides paint-first.
+    immediateBudget: HIGHLIGHT_IMMEDIATE_LINES,
     readMemo: readDerived('highlights'),
     writeMemo: writeDerived('highlights'),
   })
@@ -1245,12 +1316,20 @@
   let lastActiveRevId: string | undefined = undefined
   let lastCollapseCacheKey: string | null = null
 
-  // size === 0 is a meaningful choice ("expanded everything") — delete the
-  // prior entry so revisit doesn't restore stale collapsed files.
+  // Persist explicit intent whenever any exists; delete the entry when the
+  // user made no choices (pure auto-collapse default). NOTE: do NOT consult
+  // parsedDiff here — by the time this runs inside the reset effect the
+  // template props may already hold the INCOMING revision (cache-hit nav and
+  // tests update diffTarget+diffContent in one flush), so any "effectively
+  // collapsed right now?" check would be answered against the wrong diff.
+  // Contract change vs the pre-derived code: an explicit expand of a big file
+  // now survives revisits even when nothing else is collapsed (intent is
+  // intent); previously that case was deliberately dropped.
   function saveCollapseState() {
     if (!lastCollapseCacheKey) return
-    if (collapsedFiles.size > 0) {
-      lruSet(collapseStateCache, lastCollapseCacheKey, new Set(collapsedFiles), COLLAPSE_CACHE_SIZE)
+    if (userCollapsed.size > 0 || userExpanded.size > 0) {
+      lruSet(collapseStateCache, lastCollapseCacheKey,
+        { collapsed: new Set(userCollapsed), expanded: new Set(userExpanded) }, COLLAPSE_CACHE_SIZE)
     } else {
       collapseStateCache.delete(lastCollapseCacheKey)
     }
@@ -1276,13 +1355,16 @@
     if (sameChange) {
       // Snapshot/amend/describe rewrote @ under us — same change, new commit_id.
       // Preserve view state (collapse/expand/edit/compare/search/preview-open);
-      // only re-fetch preview content. suppressNextAutoCollapse: parsedDiff
-      // reloads → auto-collapse $effect re-fires → would re-collapse a >500-line
-      // .md the user is reading (saveCollapseState deleted the cache entry at
-      // size===0, so the restore path can't suppress it). scrollTop captured
-      // HERE (pre-await, pre-diffContent-arrival) so the restore covers the
-      // whole snapshot cycle, not just the previewContents write.
-      suppressNextAutoCollapse = true
+      // only re-fetch preview content. Pin currently-expanded files as
+      // explicit expands so a file the user is reading doesn't snap shut if
+      // the edit pushed it over a collapse threshold (parsedDiff here is
+      // still the OUTGOING content — exactly what the user was viewing).
+      // mountedFiles is intentionally left alone: their place survives.
+      // scrollTop captured HERE (pre-await, pre-diffContent-arrival) so the
+      // restore covers the whole snapshot cycle, not just the preview write.
+      for (const f of untrack(() => parsedDiff)) {
+        if (!isFileCollapsed(f)) pinnedExpanded.add(f.filePath)
+      }
       // Edit may push totalDiffLines over HIDE_DIFF_TOTAL_LINES; user was
       // already viewing the content, so keep showing it.
       forceShowLargeDiff = true
@@ -1301,9 +1383,12 @@
       return
     }
 
-    suppressNextAutoCollapse = false
     forceShowLargeDiff = false
-    collapsedFiles.clear()
+    userCollapsed.clear()
+    userExpanded.clear()
+    pinnedExpanded.clear()
+    mountedFiles.clear()
+    mountQueue.length = 0
     resetExpandState()
     editingFiles.clear()
     editFileContents = new Map()
@@ -1325,21 +1410,17 @@
     panelContentEl?.classList.add('skip-transitions')
     requestAnimationFrame(() => panelContentEl?.classList.remove('skip-transitions'))
 
-    // Restore collapse state for the INCOMING diff
+    // Restore explicit collapse intent for the INCOMING diff. No suppression
+    // flag needed anymore: the auto-collapse predicate is consulted live and
+    // explicit intent (userExpanded/userCollapsed) overrides it per file.
     const saved = lastCollapseCacheKey ? collapseStateCache.get(lastCollapseCacheKey) : null
     if (saved) {
-      for (const path of saved) collapsedFiles.add(path)
-      // Suppress auto-collapse — user's manual choices are in the cache.
-      // Boolean flag, NOT lastAutoCollapseDiff=diffContent: diffTarget (=
-      // nav.loadedTarget) is set SYNC at navigate, diffContent lags during
-      // fetch. On cache-miss nav (describe → new commit_id → diff miss, same
-      // change_id → collapse hit), this effect fires with diffContent=OLD;
-      // capturing it would let auto-collapse stomp the restore when NEW arrives.
-      suppressNextAutoCollapse = true
+      for (const path of saved.collapsed) userCollapsed.add(path)
+      for (const path of saved.expanded) userExpanded.add(path)
     }
   })
 
-  // Total diff line count — drives both the auto-collapse effect and the
+  // Total diff line count — drives both the autoCollapsed() predicate and the
   // hide-entirely gate. Derived so it's stable for the template check.
   let totalDiffLines = $derived.by(() => {
     let n = 0
@@ -1353,35 +1434,156 @@
   let forceShowLargeDiff = $state(false)
   // searchOpen declared with the search cluster below — forward ref is safe
   // ($state hoists) but moving that block here would scatter search state.
-  let diffHidden = $derived(totalDiffLines > HIDE_DIFF_TOTAL_LINES && !forceShowLargeDiff && !searchOpen)
+  // File-count condition: derived collapse + deferred mounting bound the
+  // per-LINE cost, but a diff touching many hundreds of files still mounts
+  // one header subtree + file-tab button per file — that's what the count
+  // guard catches (the original "bundle churn" case).
+  let diffHidden = $derived(
+    (totalDiffLines > HIDE_DIFF_TOTAL_LINES || parsedDiff.length > HIDE_DIFF_FILE_LIMIT)
+    && !forceShowLargeDiff && !searchOpen)
 
-  // Auto-collapse large files to prevent DOM flooding
-  let lastAutoCollapseDiff = ''
-  let suppressNextAutoCollapse = false
+  // ── Derived collapse + deferred body mounting (specs/pierre-diffs.md §Phase 2) ──
+  // Auto-collapse never applies to a file being previewed/edited (live check —
+  // stronger than the old pinned-at-collapse-time defense).
+  function autoCollapsed(file: DiffFile): boolean {
+    if (previewContents.has(file.filePath) || editingFiles.has(file.filePath)) return false
+    if (fileLineCount(file) > AUTO_COLLAPSE_LINE_LIMIT || isOversize(file)) return true
+    return totalDiffLines > AUTO_COLLAPSE_TOTAL_LINES
+  }
+  // Precedence: explicit intent (expand, then collapse) > session pin > auto.
+  // Pins sit BELOW userCollapsed so an explicit collapse click still works on
+  // a pinned file; they sit ABOVE auto so reveals/snapshot-pins keep a big
+  // file open for the session without becoming durable intent.
+  function isFileCollapsed(file: DiffFile): boolean {
+    if (userExpanded.has(file.filePath)) return false
+    if (userCollapsed.has(file.filePath)) return true
+    if (pinnedExpanded.has(file.filePath)) return false
+    return autoCollapsed(file)
+  }
+  // Conflict-only files (not in parsedDiff) are never auto-collapsed —
+  // explicit intent only. Mirrors the pre-derived behavior.
+  function isConflictFileCollapsed(path: string): boolean {
+    return userExpanded.has(path) ? false : userCollapsed.has(path)
+  }
+
+  // Bodies of files past this many cumulative diff lines from the top mount
+  // lazily: they render an estimated-height placeholder until the observer
+  // below (or a programmatic revealFile) mounts them. ~600 lines ≈ a dozen
+  // viewports of immediate content ≈ ≤50ms of highlighted DOM. Counted over
+  // ALL files (collapsed included) so the set is stable per parsedDiff —
+  // depending on collapse state here would let an already-rendered body fall
+  // back to a placeholder when the user expands an earlier file.
+  const EAGER_MOUNT_LINES = 600
+  let eagerMountPaths = $derived.by(() => {
+    const out = new Set<string>()
+    let lines = 0
+    for (const f of parsedDiff) {
+      out.add(f.filePath)
+      lines += fileLineCount(f)
+      if (lines >= EAGER_MOUNT_LINES && out.size >= 2) break
+    }
+    return out
+  })
+  function isBodyDeferred(path: string): boolean {
+    if (mountedFiles.has(path) || eagerMountPaths.has(path)) return false
+    // Bodies that must exist regardless of scroll position.
+    if (editingFiles.has(path) || previewContents.has(path)) return false
+    return true
+  }
+
+  /** Make a file's body visible AND mounted — the one hook every programmatic
+   *  jump goes through (search, hunk/annotation nav, editor/preview/merge
+   *  open, file-tab click). Reveals are SESSION-ONLY (pinnedExpanded), never
+   *  persisted intent — stepping `]` through an auto-collapsed 5k-line file
+   *  must not keep it expanded on every future visit. An existing explicit
+   *  collapse is cleared (the user just asked to look inside this file). */
+  function revealFile(path: string) {
+    userCollapsed.delete(path)
+    pinnedExpanded.add(path)
+    mountedFiles.add(path)
+  }
+
+  // Mount pump: the observer can report many placeholders at once (fast
+  // scroll, expand-all then scroll). Mount one per frame; mounting ABOVE the
+  // viewport is wrapped in holdViewport so the line under the user's eye
+  // doesn't shift (WebKit has no native scroll anchoring).
+  let mountQueue: string[] = []
+  let mountPumping = false
+  function queueMount(path: string) {
+    if (mountedFiles.has(path) || mountQueue.includes(path)) return
+    mountQueue.push(path)
+    if (!mountPumping) { mountPumping = true; requestAnimationFrame(pumpMounts) }
+  }
+  function pumpMounts() {
+    const path = mountQueue.shift()
+    if (path === undefined) { mountPumping = false; return }
+    const container = panelContentEl
+    const el = container?.querySelector(`[data-file-path="${CSS.escape(path)}"]`)
+    const above = !!el && !!container
+      && el.getBoundingClientRect().bottom < container.getBoundingClientRect().top
+    if (above && container) {
+      // gen = vis.scrollGen so an explicit jump (scrollToHunk/scrollToFile/
+      // scrollToMatch bump it) wins over this compensation — otherwise the
+      // instant scrollTop write would cancel an in-flight smooth scroll.
+      holdViewport(container, '.diff-file', () => mountedFiles.add(path), () => vis.scrollGen)
+    } else {
+      mountedFiles.add(path)
+    }
+    requestAnimationFrame(pumpMounts)
+  }
+
+  // Deferred-mount observer — watches placeholder bodies and queues them as
+  // they come within ±2 viewports. Same rAF re-query pattern as the
+  // activeFilePath observer below; rebuilt whenever the placeholder set
+  // changes (diff change or a mount completing).
   $effect(() => {
-    if (!diffContent || diffContent === lastAutoCollapseDiff) return
-    lastAutoCollapseDiff = diffContent
-    if (suppressNextAutoCollapse) {
-      suppressNextAutoCollapse = false
-      return
-    }
-    // Never auto-collapse a file the user is actively previewing/editing —
-    // defense against any path where suppressNextAutoCollapse loses the race
-    // (e.g. HMR, double-SSE, or a future caller forgetting to set it).
-    const pinned = (p: string) =>
-      untrack(() => previewContents).has(p) || untrack(() => editingFiles).has(p)
-    for (const file of parsedDiff) {
-      if (pinned(file.filePath)) continue
-      if (fileLineCount(file) > AUTO_COLLAPSE_LINE_LIMIT || isOversize(file)) {
-        collapsedFiles.add(file.filePath)
-      }
-    }
-    // Many-moderate-files flooding: collapse everything, let user expand.
-    if (totalDiffLines > AUTO_COLLAPSE_TOTAL_LINES) {
-      for (const file of parsedDiff) {
-        if (!pinned(file.filePath)) collapsedFiles.add(file.filePath)
-      }
-    }
+    const container = panelContentEl
+    // Re-attach whenever the placeholder population can change: new diff,
+    // a mount completing, or collapse intent flipping (expand-all/toggle is
+    // what CREATES placeholders for previously-collapsed files — without
+    // these deps the observer from nav time, built when every file was
+    // collapsed and no placeholder existed, never sees them).
+    void parsedDiff
+    void mountedFiles.size
+    void eagerMountPaths
+    void userExpanded.size
+    void userCollapsed.size
+    // "Show anyway" / search-open un-hides a >gate diff whose placeholders
+    // didn't exist on the previous run — without this dep they'd never be
+    // observed and would stay blank forever.
+    void diffHidden
+    // Merge mode replaces the whole diff subtree ({#if mergeSides && mergingPath});
+    // closing it recreates every placeholder element — re-attach or they'd
+    // never be observed again.
+    void mergingPath
+    if (!container) return
+    let observer: IntersectionObserver | null = null
+    const raf = requestAnimationFrame(() => {
+      const placeholders = container.querySelectorAll('.diff-body-placeholder')
+      if (placeholders.length === 0) return
+      observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const path = entry.target.closest('[data-file-path]')?.getAttribute('data-file-path')
+          if (path) queueMount(path)
+        }
+      }, { root: container, rootMargin: '200% 0px 200% 0px', threshold: 0 })
+      // Observe the parent .diff-file, not the placeholder itself:
+      // content-visibility:auto skips layout of an offscreen file's CONTENTS,
+      // so the placeholder child may have no box and intersect far later than
+      // the intended ±2-viewport margin. The parent always has a box (the
+      // intrinsic-size estimate). queueMount dedups via mountedFiles.
+      placeholders.forEach(p => observer!.observe(p.closest('[data-file-path]') ?? p))
+    })
+    return () => { cancelAnimationFrame(raf); observer?.disconnect() }
+  })
+
+  // Hunk-review cursor can land in a deferred OR auto-collapsed file — reveal
+  // it (session pin + mount) so the cursor ring / checkboxes / scrollIntoView
+  // have DOM to land on.
+  $effect(() => {
+    const path = hunkReview?.cursor?.path
+    if (path) revealFile(path)
   })
 
   // --- Expand context ---
@@ -1430,26 +1632,39 @@
 
   // --- Collapse helpers ---
   function toggleFile(path: string) {
-    if (collapsedFiles.has(path)) {
-      collapsedFiles.delete(path)
+    const file = parsedDiff.find(f => f.filePath === path)
+    const collapsed = file ? isFileCollapsed(file) : isConflictFileCollapsed(path)
+    if (collapsed) {
+      userCollapsed.delete(path)
+      userExpanded.add(path)
+      mountedFiles.add(path) // user asked to see it — mount immediately
     } else {
-      collapsedFiles.add(path)
+      userExpanded.delete(path)
+      userCollapsed.add(path)
     }
   }
 
   function collapseAll() {
-    collapsedFiles.clear()
-    for (const f of parsedDiff) collapsedFiles.add(f.filePath)
-    for (const cf of conflictOnlyFiles) collapsedFiles.add(cf.path)
+    userExpanded.clear()
+    // Skip files with an open inline editor — collapsing unmounts FileEditor
+    // and silently discards the unsaved CM6 buffer (same loss toggleSplitView
+    // and startMerge confirm against).
+    for (const f of parsedDiff) { if (!editingFiles.has(f.filePath)) userCollapsed.add(f.filePath) }
+    for (const cf of conflictOnlyFiles) { if (!editingFiles.has(cf.path)) userCollapsed.add(cf.path) }
   }
 
   function expandAll() {
-    collapsedFiles.clear()
+    userCollapsed.clear()
+    for (const f of parsedDiff) userExpanded.add(f.filePath)
+    for (const cf of conflictOnlyFiles) userExpanded.add(cf.path)
+    // Bodies still mount lazily (placeholder + observer) — expand-all stays
+    // O(visible), not O(total diff size).
   }
 
   export function scrollToFile(path: string, opts: { expand?: boolean; smooth?: boolean } = {}) {
     const { expand = true, smooth = true } = opts
-    if (expand) collapsedFiles.delete(path)
+    vis.bumpScrollGen() // let this jump win over pending placeholder-mount scroll corrections
+    if (expand) revealFile(path)
     requestAnimationFrame(() => {
       const el = document.querySelector(`[data-file-path="${CSS.escape(path)}"]`)
       el?.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' })
@@ -1482,9 +1697,10 @@
     void togglePreview(activeFilePath)
   }
 
-  // Reset collapsed files when diff changes significantly (e.g., multi-select)
+  // Reset collapse intent when diff changes significantly (e.g., multi-select)
   export function resetCollapsed() {
-    collapsedFiles.clear()
+    userCollapsed.clear()
+    userExpanded.clear()
     if (lastCollapseCacheKey) collapseStateCache.delete(lastCollapseCacheKey)
   }
 
@@ -1636,7 +1852,8 @@
   async function scrollToMatch() {
     const match = searchMatches[currentMatchIdx]
     if (!match) return
-    collapsedFiles.delete(match.filePath)
+    vis.bumpScrollGen() // jump wins over pending placeholder-mount scroll corrections
+    revealFile(match.filePath)
     // Preview hides diff lines → search marks don't exist in DOM. Close it
     // so the match is visible (same auto-reveal intent as the collapse delete).
     if (previewContents.has(match.filePath)) closePreview(match.filePath)
@@ -1773,12 +1990,12 @@
     </div>
   {/if}
   {#if parsedDiff.length > 0}
-    <!-- Derived from RENDERED files, not collapsedFiles.size — the set can hold
-         stale paths (sameChange rewrite drops a file; collapseStateCache restore
-         after a rebase). size>0 with only stale entries would stick the button
-         on "Expand all" while every visible file is already expanded. -->
-    {@const anyCollapsed = parsedDiff.some(f => collapsedFiles.has(f.filePath))
-      || conflictOnlyFiles.some(cf => collapsedFiles.has(cf.path))}
+    <!-- Derived from RENDERED files via the live collapse decision — intent
+         sets can hold stale paths (sameChange rewrite drops a file; cache
+         restore after a rebase) which must not stick the button on
+         "Expand all" while every visible file is already expanded. -->
+    {@const anyCollapsed = parsedDiff.some(f => isFileCollapsed(f))
+      || conflictOnlyFiles.some(cf => isConflictFileCollapsed(cf.path))}
     <div class="diff-toolbar">
       <div class="diff-toolbar-left">
         <button
@@ -1891,7 +2108,8 @@
           <DiffFileView
             file={effectiveFile}
             fileStats={fileStatsMap.get(filePath)}
-            isCollapsed={collapsedFiles.has(filePath)}
+            isCollapsed={isFileCollapsed(file)}
+            bodyDeferred={isBodyDeferred(filePath)}
             isExpanded={allRevealed}
             gapMap={expanded?.gapMap}
             splitView={hunkReview ? false : splitView}
@@ -1953,7 +2171,7 @@
             <DiffFileView
               file={conflictFile}
               fileStats={cf}
-              isCollapsed={collapsedFiles.has(cf.path)}
+              isCollapsed={isConflictFileCollapsed(cf.path)}
               isExpanded={false}
               {splitView}
               {symbolHover}
@@ -2080,7 +2298,7 @@
   }
 
   .file-list-label {
-    color: var(--surface2);
+    color: var(--text-faint);
     font-size: var(--fs-xs);
     font-weight: 600;
     text-transform: uppercase;
@@ -2335,7 +2553,7 @@
     justify-content: center;
     gap: 8px;
     padding: 48px 24px;
-    color: var(--surface2);
+    color: var(--text-faint);
     font-size: var(--font-size);
   }
 

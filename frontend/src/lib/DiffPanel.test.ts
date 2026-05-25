@@ -25,7 +25,7 @@ vi.mock('./api', async (importOriginal) => {
 
 import DiffPanel from './DiffPanel.svelte'
 import { api, type DiffTarget, type FileChange } from './api'
-import { clearDiffCaches } from './diff-cache'
+import { clearDiffCaches, derivedCache } from './diff-cache'
 import { createCommentVisibility } from './comment-visibility.svelte'
 
 const mockEdit = api.edit as Mock
@@ -548,12 +548,191 @@ describe('DiffPanel', () => {
     })
   })
 
+  describe('compute caps decoupled from collapse limits', () => {
+    // COLLAPSE thresholds (chars/lines) and COMPUTE caps (highlight/word-diff)
+    // are independent: a normal multi-hundred-line code file trips the 20k-char
+    // collapse limit but must still get syntax highlighting when expanded.
+    // Regression guard for the old conflation where isOversize() also fed
+    // highlights.skip — those files rendered plain forever after expand.
+    const manyLineFile = (path: string, lines: number, pad = '') =>
+      `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -0,0 +1,${lines} @@\n` +
+      Array.from({ length: lines }, (_, i) => `+var v${i} = ${i} // ${pad}`).join('\n') + '\n'
+
+    it('>20k-char normal-line file: auto-collapses but expands HIGHLIGHTED', async () => {
+      // 700 lines × ~50 chars ≈ 35k chars: over the collapse char limit,
+      // well under the 5000-line highlight cap.
+      const diff = manyLineFile('big.go', 700, 'padding padding padding padding')
+      const { container } = render(DiffPanel, {
+        props: props({ diffContent: diff, changedFiles: [mkFile('big.go', { additions: 700 })] }),
+      })
+      await settle()
+      const file = container.querySelector('[data-file-path="big.go"]')!
+      expect(file.querySelector('.diff-line')).toBeNull() // auto-collapsed (char limit)
+
+      await fireEvent.click(file.querySelector('.diff-file-header')!)
+      await settle()
+      expect(file.querySelector('.diff-line')).not.toBeNull() // expanded
+      expect(file.querySelector('.diff-line.highlighted')).not.toBeNull() // compute NOT skipped
+    })
+
+    it('>5000-line file skips highlighting (memo contract) and renders header-only, no transient body', async () => {
+      // 5103 total lines: under the (now extreme) hide gate, so the file list
+      // renders — but huge.go is auto-collapsed by the DERIVED decision, so
+      // its body is never built (the old post-render auto-collapse effect
+      // would have transiently created ~5k .diff-line divs here, which in
+      // jsdom blows straight past the test timeout — speed IS the regression
+      // signal). Highlight skip asserted via the derivedCache memo (the
+      // observable contract for what got highlighted).
+      const diff = manyLineFile('small.go', 3) + manyLineFile('huge.go', 5100)
+      const { container } = render(DiffPanel, {
+        props: props({
+          diffContent: diff,
+          changedFiles: [mkFile('small.go', { additions: 3 }), mkFile('huge.go', { additions: 5100 })],
+        }),
+      })
+      await settle()
+      const huge = container.querySelector('[data-file-path="huge.go"]')
+      expect(huge).not.toBeNull()                            // file list rendered (not hidden)
+      expect(huge!.querySelector('.diff-line')).toBeNull()   // collapsed from the first render
+      const entry = derivedCache.get('co-A')
+      expect(entry?.highlights.has('small.go')).toBe(true)   // under the line cap → highlighted
+      expect(entry?.highlights.has('huge.go')).toBe(false)   // over the line cap → skipped
+    })
+
+    it('>500k-char file skips highlighting via the char cap even when far under the line cap', async () => {
+      // 30 lines × 17k chars ≈ 510k chars: minified-bundle shape. The line cap
+      // (5000) never fires; only HIGHLIGHT_SKIP_CHAR_LIMIT protects the main
+      // thread here. .go extension so a detected language is what gets skipped
+      // (a no-language file would "pass" without exercising the cap).
+      const fatLine = 'x'.repeat(17_000)
+      const fatDiff = `diff --git a/fat.go b/fat.go\n--- a/fat.go\n+++ b/fat.go\n@@ -0,0 +1,30 @@\n` +
+        Array.from({ length: 30 }, () => `+${fatLine}`).join('\n') + '\n'
+      const { container } = render(DiffPanel, {
+        props: props({
+          diffContent: tinyDiff('small.go') + fatDiff,
+          changedFiles: [mkFile('small.go'), mkFile('fat.go', { additions: 30 })],
+        }),
+      })
+      await settle()
+      expect(container.querySelector('[data-file-path="fat.go"]')).not.toBeNull()
+      const entry = derivedCache.get('co-A')
+      expect(entry?.highlights.has('small.go')).toBe(true)   // sibling proves the run happened
+      expect(entry?.highlights.has('fat.go')).toBe(false)    // char cap → skipped
+    })
+  })
+
+  describe('deferred body mounting', () => {
+    // Files past the eager window (~600 cumulative lines) render an
+    // estimated-height placeholder instead of line DOM until revealed.
+    const tenFiles = () => {
+      let diff = ''
+      const changed: FileChange[] = []
+      for (let i = 0; i < 10; i++) {
+        const path = `src/f${i}.go`
+        diff += `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -0,0 +1,100 @@\n` +
+          Array.from({ length: 100 }, (_, n) => `+var v${n} = ${n}`).join('\n') + '\n'
+        changed.push(mkFile(path, { additions: 100 }))
+      }
+      return { diff, changed }
+    }
+
+    it('files beyond the eager window render a placeholder; near files render bodies', async () => {
+      const { diff, changed } = tenFiles()
+      const { container } = render(DiffPanel, {
+        props: props({ diffContent: diff, changedFiles: changed }),
+      })
+      await settle()
+      const first = container.querySelector('[data-file-path="src/f0.go"]')!
+      const far = container.querySelector('[data-file-path="src/f9.go"]')!
+      expect(first.querySelector('.diff-line')).not.toBeNull()          // eager: real body
+      expect(far.querySelector('.diff-line')).toBeNull()                // deferred: no line DOM
+      expect(far.querySelector('.diff-body-placeholder')).not.toBeNull()
+      // Placeholder claims the estimated height (100 lines × 18 + 1 hunk × 24).
+      expect((far.querySelector('.diff-body-placeholder') as HTMLElement).style.height).toBe('1824px')
+    })
+
+    it('scrollToFile force-mounts a deferred file (the programmatic-jump contract)', async () => {
+      const { diff, changed } = tenFiles()
+      const { container, component } = render(DiffPanel, {
+        props: props({ diffContent: diff, changedFiles: changed }),
+      })
+      await settle()
+      expect(container.querySelector('[data-file-path="src/f9.go"] .diff-line')).toBeNull()
+      component.scrollToFile('src/f9.go', { smooth: false })
+      await settle()
+      const far = container.querySelector('[data-file-path="src/f9.go"]')!
+      expect(far.querySelector('.diff-body-placeholder')).toBeNull()
+      expect(far.querySelector('.diff-line')).not.toBeNull()
+    })
+
+    it('search Enter on a match in a deferred far file reveals AND mounts it (scrollToMatch path)', async () => {
+      // The needle exists only in the last file, which sits past the eager
+      // window and renders as a placeholder. searchMatches walks the parsed
+      // model (mount-independent); jumping to the match must go through
+      // revealFile so the body actually exists to scroll to.
+      let diff = ''
+      const changed: FileChange[] = []
+      for (let i = 0; i < 10; i++) {
+        const path = `src/f${i}.go`
+        diff += `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -0,0 +1,100 @@\n` +
+          Array.from({ length: 100 }, (_, n) =>
+            i === 9 && n === 50 ? '+var needle_zz = 50' : `+var v${n} = ${n}`).join('\n') + '\n'
+        changed.push(mkFile(path, { additions: 100 }))
+      }
+      const { container, component } = render(DiffPanel, {
+        props: props({ diffContent: diff, changedFiles: changed }),
+      })
+      await settle()
+      const far = () => container.querySelector('[data-file-path="src/f9.go"]')!
+      expect(far().querySelector('.diff-body-placeholder')).not.toBeNull() // deferred
+
+      component.openSearch()
+      await settle()
+      const input = container.querySelector('.search-input') as HTMLInputElement
+      await fireEvent.input(input, { target: { value: 'needle_zz' } })
+      await settle()
+      await fireEvent.keyDown(input, { key: 'Enter' })
+      await settle()
+
+      expect(far().querySelector('.diff-body-placeholder')).toBeNull()
+      expect(far().querySelector('.diff-line')).not.toBeNull()
+      expect(far().querySelector('[data-search-match-current="true"]')).not.toBeNull()
+    })
+  })
+
+  describe('hide gate — file-count limit', () => {
+    it('>300 files hides the diff with an opt-in; "Show anyway" renders it', async () => {
+      // 301 one-line files: total lines (~301) is nowhere near the 50k line
+      // gate, so this isolates the HIDE_DIFF_FILE_LIMIT branch (per-file
+      // header/tab cost is what that guard bounds).
+      let diff = ''
+      const changed: FileChange[] = []
+      for (let i = 0; i < 301; i++) {
+        const p = `f${i}.go`
+        diff += tinyDiff(p)
+        changed.push(mkFile(p))
+      }
+      const { container } = render(DiffPanel, {
+        props: props({ diffContent: diff, changedFiles: changed }),
+      })
+      await settle()
+      expect(container.querySelector('[data-file-path="f0.go"]')).toBeNull() // nothing rendered
+      const show = [...container.querySelectorAll('button')]
+        .find(b => b.textContent === 'Show anyway') as HTMLButtonElement
+      expect(show).toBeDefined()
+
+      await fireEvent.click(show)
+      await settle()
+      expect(container.querySelector('[data-file-path="f0.go"]')).not.toBeNull()
+      expect(container.querySelector('[data-file-path="f300.go"]')).not.toBeNull()
+    })
+  })
+
   describe('auto-collapse suppression on cache restore', () => {
     // Cache-restore path (reset effect :569-573) sets lastAutoCollapseDiff
-    // → auto-collapse effect bails (diffContent === lastAutoCollapseDiff).
-    // Contract: if collapsedFiles.size > 0 at nav-time, your manual state
-    // sticks on return. (size == 0 → nothing saved → auto-collapse reasserts,
-    // which is correct: a big file is still big.)
+    // Contract: explicit collapse/expand choices are change_id-keyed and
+    // stick on return; files the user never touched follow the live
+    // auto-collapse predicate (a big file is still big).
     it('restoring saved collapse state suppresses auto-collapse on big files', async () => {
       // >500 lines triggers AUTO_COLLAPSE_LINE_LIMIT.
       const bigHunk = Array.from({ length: 510 }, (_, i) => `+line${i}`).join('\n')
@@ -568,8 +747,8 @@ describe('DiffPanel', () => {
       const { container, rerender } = render(DiffPanel, { props: propsA('co-A') })
       await settle()
 
-      // big.go auto-collapsed on load. Expand it; collapse b.go so
-      // collapsedFiles.size > 0 at nav time (→ cache saves).
+      // big.go auto-collapsed on load. Expand it; collapse b.go so both
+      // intent sets are non-empty at nav time (→ cache saves).
       const big = () => container.querySelector('[data-file-path="big.go"]')!
       const b = () => container.querySelector('[data-file-path="b.go"]')!
       expect(big().querySelector('.diff-line')).toBeNull() // auto-collapsed
@@ -592,6 +771,110 @@ describe('DiffPanel', () => {
 
       expect(big().querySelector('.diff-line')).not.toBeNull() // NOT re-auto-collapsed
       expect(b().querySelector('.diff-line')).toBeNull() // manual collapse restored
+    })
+  })
+
+  describe('collapse intent — pinned reveals vs persisted choices', () => {
+    const bigDiff = (path: string) =>
+      `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -0,0 +1,510 @@\n` +
+      Array.from({ length: 510 }, (_, i) => `+line${i}`).join('\n') + '\n'
+    const bigPlusSmall = (commitId: string, changeId = 'ch-A') => props({
+      diffContent: bigDiff('big.go') + tinyDiff('b.go'),
+      changedFiles: [mkFile('big.go', { additions: 510 }), mkFile('b.go')],
+      diffTarget: target(commitId, changeId),
+    })
+    const elsewhere = () => props({
+      diffTarget: target('co-Z', 'ch-Z'),
+      diffContent: tinyDiff('z.go'),
+      changedFiles: [mkFile('z.go')],
+    })
+
+    it('programmatic reveal is session-only — revealed big file re-collapses on revisit', async () => {
+      // scrollToFile/scrollToMatch/scrollToHunk all route through revealFile,
+      // which pins via pinnedExpanded — NOT userExpanded — so a search jump
+      // into a 5k-line file doesn't permanently disable its auto-collapse.
+      const { container, component, rerender } = render(DiffPanel, { props: bigPlusSmall('co-A') })
+      await settle()
+      const big = () => container.querySelector('[data-file-path="big.go"]')!
+      expect(big().querySelector('.diff-line')).toBeNull() // auto-collapsed
+
+      component.scrollToFile('big.go', { smooth: false })
+      await settle()
+      expect(big().querySelector('.diff-line')).not.toBeNull() // revealed for this visit
+
+      // Navigate away (no explicit choices → nothing persisted) and back.
+      await rerender(elsewhere())
+      await settle()
+      await rerender(bigPlusSmall('co-A2'))
+      await settle()
+      expect(big().querySelector('.diff-line')).toBeNull() // auto-collapse applies again
+    })
+
+    it('Expand all is explicit intent — persists across revisits even with nothing collapsed', async () => {
+      // Regression for the old "save only when something is collapsed" rule:
+      // here userCollapsed stays empty and only CollapseMemo.expanded carries
+      // the choice across the round trip.
+      const { container, rerender } = render(DiffPanel, { props: bigPlusSmall('co-A') })
+      await settle()
+      const big = () => container.querySelector('[data-file-path="big.go"]')!
+      expect(big().querySelector('.diff-line')).toBeNull() // auto-collapsed
+
+      await fireEvent.click(container.querySelector('[aria-label="Expand all files"]')!)
+      await settle()
+      expect(big().querySelector('.diff-line')).not.toBeNull()
+
+      await rerender(elsewhere())
+      await settle()
+      await rerender(bigPlusSmall('co-A2')) // same change_id, new commit_id (rewrite)
+      await settle()
+      expect(big().querySelector('.diff-line')).not.toBeNull() // expanded intent restored
+    })
+
+    it('same-change snapshot pins currently-expanded files — growth past a threshold does not snap them shut', async () => {
+      // a.go starts small (expanded, NO explicit intent). A snapshot rewrites @
+      // (new commit_id, same change_id) and the edit pushes a.go over
+      // AUTO_COLLAPSE_LINE_LIMIT. Production order: commit_id flips first,
+      // diffContent lags — the sameChange branch pins what was on screen.
+      const { container, rerender } = render(DiffPanel, {
+        props: props({ diffTarget: target('co-1', 'ch-X'), diffContentKey: 'co-1' }),
+      })
+      await settle()
+      const a = () => container.querySelector('[data-file-path="a.go"]')!
+      expect(a().querySelector('.diff-line')).not.toBeNull()
+
+      // Snapshot: commit_id advances, content still the outgoing small a.go.
+      await rerender(props({ diffTarget: target('co-2', 'ch-X'), diffContentKey: 'co-1' }))
+      await settle()
+      // Fresh diff lands: a.go is now 510 lines (over the collapse limit).
+      await rerender(props({
+        diffContent: bigDiff('a.go'),
+        changedFiles: [mkFile('a.go', { additions: 510 })],
+        diffTarget: target('co-2', 'ch-X'),
+        diffContentKey: 'co-2',
+      }))
+      await settle()
+      expect(a().querySelector('.diff-line')).not.toBeNull() // still open — pinned, not snapped shut
+    })
+  })
+
+  describe('reviewed checkbox — collapse on check, no expand on uncheck', () => {
+    it('checking collapses the file; unchecking leaves it collapsed', async () => {
+      const { container } = render(DiffPanel, { props: props() })
+      await settle()
+      const file = () => container.querySelector('[data-file-path="a.go"]')!
+      expect(file().querySelector('.diff-line')).not.toBeNull()
+
+      const check = () => file().querySelector('.reviewed-check') as HTMLButtonElement
+      expect(check()).toBeTruthy()
+      await fireEvent.click(check())
+      await settle()
+      // Confirmed check (setReviewed resolved true) → file collapses.
+      expect(file().querySelector('.diff-line')).toBeNull()
+
+      // Uncheck removes the marker but does NOT surprise-expand.
+      await fireEvent.click(check())
+      await settle()
+      expect(file().querySelector('.diff-line')).toBeNull()
     })
   })
 

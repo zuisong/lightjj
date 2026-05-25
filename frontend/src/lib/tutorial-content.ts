@@ -6,6 +6,7 @@ export interface TutorialFeature {
 }
 
 export const FEATURES: TutorialFeature[] = [
+  { version: '1.29.0', shortcut: null, title: 'Faster large diffs', description: 'Large diffs now render instead of hiding (up to 50k lines / 300 files, shown as collapsed file headers), big code files keep full syntax highlighting instead of falling back to plain text, and offscreen file bodies mount lazily as you scroll. Expand-all on multi-thousand-line diffs is ~10× faster.' },
   { version: '1.28.0', shortcut: null, title: 'One-click conflict resolution', description: 'Conflicted file headers now have ◀ Ours / Theirs ▶ buttons next to ⧉ Merge — take the whole file from one side without opening the 3-pane editor. N-way and git-style conflicts still fall back to the merge editor.' },
   { version: '1.28.0', shortcut: null, title: 'Experimental Windows builds', description: 'Releases now include lightjj-windows-x86_64.exe, cross-compiled and SLSA-attested like the other binaries. It has not had much real-world testing yet — if you run Windows, please report anything broken on GitHub.' },
   { version: '1.27.0', shortcut: 'g', title: 'Git menu: common ops first', description: 'The git modal is now grouped Common / Bookmarks / Other: Fetch, push current change, push tracking bookmarks, and push all sit at the top instead of below the per-bookmark list. Enter on open now fetches; all single-key hotkeys (f/c/p/a, 1–9, d/t/F) are unchanged.' },
