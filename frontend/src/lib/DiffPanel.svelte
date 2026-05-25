@@ -771,8 +771,12 @@
    *  edits, so they're lost, not recovered on toggle-back. Confirm first when
    *  editing, mirroring startMerge's discard guard. (Conflict files became
    *  editable via quickResolve/startMerge's N-way fallback, which newly exposes
-   *  this; non-conflict edits had it latently too.) */
-  function toggleSplitView() {
+   *  this; non-conflict edits had it latently too.)
+   *  Exported: App's Cmd+K "Toggle split/unified diff" must route through this
+   *  same confirm — a direct config.splitView write reaches the $bindable and
+   *  silently discards the buffer (the palette is reachable while focus is in
+   *  the editor, since Cmd+K is gated before isInInput). */
+  export function toggleSplitView() {
     if (editingFiles.size > 0) {
       const names = editingFiles.size === 1 ? [...editingFiles][0] : `${editingFiles.size} files`
       if (!confirm(`Switch view and discard unsaved edits in ${names}?`)) return
@@ -796,12 +800,24 @@
       openFileEditor(path, content)
       return
     }
+    // Modify/delete conflicts: jj materializes the deleted side as empty, so
+    // reconstructSides yields '' for it. fileWrite has no delete path — writing
+    // '' would "resolve" to a zero-byte file (M with the empty blob, not D):
+    // wrong tree content with no warning. The markers can't distinguish
+    // deleted-on-that-side from emptied-on-that-side, so refuse both and
+    // explain; a genuinely-empty resolve still works via the merge editor.
+    const chosen = side === 'ours' ? sides.ours : sides.theirs
+    if (chosen === '') {
+      editError = `The ${side} side of ${path} is empty — likely a modify/delete conflict. `
+        + `Quick-resolve can't delete files; delete the file in the working copy to take that side.`
+      return
+    }
     if (diffTarget?.kind !== 'single') return
     const revId = diffTarget.changeId
     editBusy.add(path)
     editError = ''
     try {
-      await api.fileWrite(path, side === 'ours' ? sides.ours : sides.theirs)
+      await api.fileWrite(path, chosen)
       // j/k nav during the await → don't reload for the wrong revision.
       if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return
       await onfilesaved?.()

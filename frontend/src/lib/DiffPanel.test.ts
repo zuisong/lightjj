@@ -768,6 +768,12 @@ describe('DiffPanel', () => {
       await rerender(conflictProps({ diffTarget: target('co-A', 'ch-A', { immutable: true }) }))
       await settle()
       expect(quickBtn(container, '◀ Ours')).toBeFalsy()
+
+      // multi-revision target → kind !== 'single' → canMutateFiles false → buttons gone.
+      const multi: DiffTarget = { kind: 'multi', revset: 'co-A|co-B', commitIds: ['co-A', 'co-B'] }
+      await rerender(conflictProps({ diffTarget: multi }))
+      await settle()
+      expect(quickBtn(container, '◀ Ours')).toBeFalsy()
     })
 
     it('"◀ Ours" writes sides.ours and reloads (auto-jj-edits the non-@ target first)', async () => {
@@ -871,6 +877,60 @@ describe('DiffPanel', () => {
       // appeared even when the surface was a dead-end — the false-confidence trap.)
       expect(mockFileWrite).not.toHaveBeenCalled()
       expect(fileEl.querySelector('.split-editor')).toBeTruthy()
+    })
+
+    it('modify/delete conflict: taking the deleted (empty) side refuses — no zero-byte fileWrite', async () => {
+      // jj's default "diff" marker style materializes the deleted side as a
+      // %%%%%%% section whose lines are all '-'-prefixed → reconstructSides
+      // yields '' for that side. Writing '' would "resolve" to an empty file
+      // (M with the empty blob, not D) — wrong tree content. quickResolve must
+      // refuse with an explanation instead.
+      const deleteConflictContent = [
+        '<<<<<<< Conflict 1 of 1',
+        '+++++++ Contents of side #1',
+        'OURS',
+        '%%%%%%% Changes from base to side #2',
+        '-BASE',
+        '>>>>>>> Conflict 1 of 1 ends',
+      ].join('\n')
+      mockFileShow.mockResolvedValue({ content: deleteConflictContent })
+      mockFileWrite.mockResolvedValue({ ok: true })
+      const { container } = render(DiffPanel, {
+        props: conflictProps({ diffTarget: target('co-A', 'ch-A', { isWorkingCopy: true }) }),
+      })
+      await settle()
+
+      await fireEvent.click(quickBtn(container, 'Theirs ▶')!)
+      await settle()
+
+      expect(mockFileWrite).not.toHaveBeenCalled()
+      expect(container.querySelector('.edit-error-banner')?.textContent).toContain('empty')
+
+      // The surviving (non-deleted) side still resolves one-click on the same conflict.
+      await fireEvent.click(quickBtn(container, '◀ Ours')!)
+      await settle()
+      expect(mockFileWrite).toHaveBeenCalledWith('a.go', 'OURS')
+    })
+
+    it('toggleSplitView is exported and confirms — the Cmd+K palette path, not just the toolbar', async () => {
+      // App's "Toggle split/unified diff" palette command calls this export;
+      // writing config.splitView directly would reach the $bindable, unmount the
+      // FileEditor, and silently discard its buffer with no confirm.
+      mockFileShow.mockResolvedValue({ content: 'line1\nline2\n' })
+      const { container, component } = render(DiffPanel, {
+        props: props({ diffTarget: target('co-A', 'ch-A', { isWorkingCopy: true }) }),
+      })
+      await settle()
+      await fireEvent.click(editBtn(container)!)            // open editor (splitView → true)
+      await settle()
+      expect(container.querySelector('.split-editor')).toBeTruthy()
+
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      component.toggleSplitView()
+      await settle()
+      expect(confirmSpy).toHaveBeenCalled()
+      expect(container.querySelector('.split-editor')).toBeTruthy()  // declined → editor survives
+      confirmSpy.mockRestore()
     })
 
     it('split/unified toggle confirms before discarding in-progress edits (round-3 data-loss)', async () => {

@@ -785,7 +785,14 @@
 
     // View (non-dynamic)
     { label: 'Edit config (JSON)…', category: 'View', hint: 'theme, fonts, editorArgs', action: () => { closeAllModals(); configModalOpen = true } },
-    { label: 'Toggle split/unified diff', category: 'View', action: () => { config.splitView = !config.splitView } },
+    // Route through DiffPanel's toggleSplitView when it's mounted — its confirm
+    // guards an open FileEditor's buffer (unified unmounts the editor); a direct
+    // config.splitView write would bypass that and silently discard edits. No
+    // DiffPanel (branches/merge view) → nothing can be editing → plain toggle.
+    { label: 'Toggle split/unified diff', category: 'View', action: () => {
+      if (diffPanelRef) diffPanelRef.toggleSplitView()
+      else config.splitView = !config.splitView
+    } },
     { label: 'Toggle operation log', shortcut: 'O', category: 'View', action: toggleOplog },
     { label: 'Toggle evolution log', shortcut: 'E', category: 'View', action: toggleEvolog, when: () => !!selectedRevision },
     // Help — showInCheatsheet lets shortcut-less entries appear in the empty-query grid
