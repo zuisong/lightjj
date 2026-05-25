@@ -332,6 +332,8 @@ defer runner.Verify()  // asserts all expectations called
 
 ## Frontend Performance Patterns
 
+The rule-level checklist lives in [CLAUDE.md](../CLAUDE.md#svelte-frontend-performance), with per-rule rationale in [design-notes/frontend-perf.md](design-notes/frontend-perf.md); this section covers the architectural patterns behind several of those rules.
+
 **Per-file prop scoping** — `DiffPanel` passes per-file slices of global state to each `DiffFileView` rather than the full dataset. This localizes reactive invalidation:
 
 ```mermaid
