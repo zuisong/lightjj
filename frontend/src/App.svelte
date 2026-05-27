@@ -973,7 +973,16 @@
   }
 
   function handleRunAlias(name: string) {
-    runMutation(() => api.runAlias(name), `Ran alias: ${name}`)
+    // Streamed like handleGitOp: aliases can wrap slow network ops. Progress
+    // lines feed mutationProgress; .finally() clears it on resolve and reject.
+    const onLine = (line: string) => { if (line.trim()) mutationProgress = line.trim() }
+    runMutation(
+      // Seed INSIDE the wrapped fn: if the mutation gate rejects (another op in
+      // flight), nothing runs and nothing needs clearing — seeding outside would
+      // leave a stale "Running alias…" line that .finally() never removes.
+      () => { mutationProgress = `Running alias: ${name}…`; return api.runAlias(name, onLine).finally(() => { mutationProgress = '' }) },
+      `Ran alias: ${name}`,
+    )
   }
 
 
@@ -1486,10 +1495,11 @@
     // on success, which would leak a stale line into the next (non-streaming)
     // mutation's status.
     const onLine = (line: string) => { if (line.trim()) mutationProgress = line.trim() }
-    mutationProgress = `git ${type}…`
     return runMutation(
-      () => (type === 'push' ? api.gitPush : api.gitFetch)(flags, onLine)
-              .finally(() => { mutationProgress = '' }),
+      // Seeded inside the wrapped fn so a gate-rejected call leaves no stale line.
+      () => { mutationProgress = `git ${type}…`
+              return (type === 'push' ? api.gitPush : api.gitFetch)(flags, onLine)
+              .finally(() => { mutationProgress = '' }) },
       `Git ${type} complete`,
       { after: () => { loadPullRequests(); checkStaleImmutable() } },
     )

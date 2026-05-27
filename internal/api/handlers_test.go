@@ -2671,10 +2671,12 @@ func TestHandleAliases_NoAliases(t *testing.T) {
 }
 
 func TestHandleRunAlias(t *testing.T) {
+	// Aliases stream like git push/fetch (they can wrap slow network ops):
+	// NDJSON `{"line":...}` frames terminated by `{"done":true,...}`.
 	runner := testutil.NewMockRunner(t)
 	aliasOutput := "aliases.sync = ['git', 'fetch']\n"
 	runner.Expect(jj.ConfigListAliases()).SetOutput([]byte(aliasOutput))
-	runner.Expect([]string{"sync"}).SetOutput([]byte("fetched from origin"))
+	runner.Expect([]string{"sync"}).SetOutput([]byte("fetching from origin\nfetched from origin\n"))
 	defer runner.Verify()
 
 	srv := newTestServer(runner)
@@ -2684,9 +2686,48 @@ func TestHandleRunAlias(t *testing.T) {
 	srv.Mux.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "fetched from origin", resp["output"])
+	assert.Equal(t, "application/x-ndjson", w.Header().Get("Content-Type"))
+
+	lines := strings.Split(strings.TrimRight(w.Body.String(), "\n"), "\n")
+	require.Len(t, lines, 3)
+
+	var l0, l1 map[string]string
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &l0))
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &l1))
+	assert.Equal(t, "fetching from origin", l0["line"])
+	assert.Equal(t, "fetched from origin", l1["line"])
+
+	var done map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[2]), &done))
+	assert.Equal(t, true, done["done"])
+	assert.Nil(t, done["error"])
+	assert.Contains(t, done["output"], "fetched from origin")
+	assert.Equal(t, "abc123", done["op_id"]) // newTestServer's allowed CurrentOpId
+}
+
+func TestHandleRunAlias_RunnerError(t *testing.T) {
+	// Failure mid-stream: headers already flushed, so status stays 200 and the
+	// streamed text becomes the error on the terminal frame.
+	runner := testutil.NewMockRunner(t)
+	aliasOutput := "aliases.sync = ['git', 'fetch']\n"
+	runner.Expect(jj.ConfigListAliases()).SetOutput([]byte(aliasOutput))
+	runner.Expect([]string{"sync"}).
+		SetOutput([]byte("Error: no remote configured\n")).
+		SetError(errors.New("exit status 1"))
+	defer runner.Verify()
+
+	srv := newTestServer(runner)
+	body, _ := json.Marshal(runAliasRequest{Name: "sync"})
+	req := jsonPost("/api/alias", body)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	lines := strings.Split(strings.TrimRight(w.Body.String(), "\n"), "\n")
+	var done map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &done))
+	assert.Equal(t, true, done["done"])
+	assert.Equal(t, "Error: no remote configured", done["error"])
 }
 
 func TestHandleRunAlias_InvalidName(t *testing.T) {

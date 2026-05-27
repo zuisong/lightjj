@@ -186,7 +186,7 @@ Tab routes are host-level (registered by `TabManager` in `tabs.go`, not in `rout
 |--------|------|---------|
 | GET | `/api/info` | Hostname, repo path, mode, default remote, jj version |
 | GET | `/api/aliases` | User-configured jj aliases |
-| POST | `/api/alias` | Run a configured alias (validated against config) |
+| POST | `/api/alias` | Run a configured alias (validated against config; streamed output) |
 | GET | `/api/pull-requests` | Open PR info per bookmark via `gh` |
 | GET | `/api/symbol` | rg-backed symbol definition lookup |
 

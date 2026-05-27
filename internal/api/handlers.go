@@ -1510,7 +1510,10 @@ func (s *Server) handleRunAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.runMutation(w, r, []string{req.Name})
+	// Stream rather than buffer: aliases are user-defined and can wrap slow
+	// network ops (fetch+rebase on a large repo) that outlive the 120s
+	// WriteTimeout a buffered runMutation response is bound to.
+	s.streamMutation(w, r, []string{req.Name})
 }
 
 // --- Pull requests ---

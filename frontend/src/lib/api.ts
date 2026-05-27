@@ -1192,8 +1192,10 @@ export const api = {
 
   aliases: () => _aliases ??= request<Alias[]>('/api/aliases').catch(e => { _aliases = undefined; throw e }),
 
-  runAlias: (name: string) =>
-    post<MutationResult>('/api/alias', { name }),
+  // Streaming (like gitPush/gitFetch): aliases are user-defined and can wrap
+  // slow network ops that outlive the buffered path's write timeout.
+  runAlias: (name: string, onLine: (line: string) => void) =>
+    streamPost('/api/alias', { name }, onLine),
 
   // Annotations are uncached — they're review-state, not revision content.
   // The set changes when the user adds/removes/resolves, and when the agent
