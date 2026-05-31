@@ -6,20 +6,23 @@
 // State ownership: this factory owns comments + metadata. DocView owns the
 // EditorView and dispatches transactions, calling onTransaction here so comment
 // positions track edits.
+//
+// Data model mirrors annotations.svelte.ts: `stored` is the wire truth
+// (DocComment[], what mutations operate on and what persists), `placement` is
+// session-local PM position state, and `comments` is the PlacedReview[]
+// read-model projection (review.ts) that DocView/DocCommentRail render.
 
 import type { Transaction } from 'prosemirror-state'
 import type { Node } from 'prosemirror-model'
 import { parseMarkdown, serializeMarkdown } from './pm-schema'
 import { captureAnchor, refind } from './reanchor'
 import { createLoader } from './loader.svelte'
+import { createReviewMutations } from './review-mutations.svelte'
+import { fromDocComment, type PlacedReview } from './review'
 import { api, type DocComment } from './api'
 
-/** DocComment + session-local position state (not persisted). */
-export type PlacedComment = DocComment & {
-  from?: number
-  to?: number
-  orphaned: boolean
-}
+/** Session-local placement for one comment id (not persisted). */
+type Placement = { from?: number; to?: number; orphaned: boolean }
 
 // PM positions count node-open/close tokens; refind/captureAnchor work on flat
 // text. buildTextMap walks text nodes once and gives both directions. No block
@@ -69,7 +72,9 @@ function buildTextMap(doc: Node) {
   return { text, toPM, toText, place }
 }
 
-function anchorEq(a: import('./api').DocAnchor, b: import('./api').DocAnchor): boolean {
+// Wire anchor equality (note: api.ts has no named DocAnchor type — index into
+// DocComment, the previous `import('./api').DocAnchor` silently resolved to any).
+function anchorEq(a: DocComment['anchor'], b: DocComment['anchor']): boolean {
   return a.selection === b.selection && a.contextBefore === b.contextBefore && a.contextAfter === b.contextAfter
 }
 
@@ -89,7 +94,12 @@ export function createDocSession(
   // EditorState instances applying the same tr → reconfigure-on-every-keystroke
   // when DocView tries to sync (different doc instances, same content).
   let doc = $state<Node | null>(null)
-  let comments = $state<PlacedComment[]>([])
+  // Wire truth — what the server has plus optimistic writes. Mutations operate
+  // on this; never on the projection.
+  let stored = $state<DocComment[]>([])
+  // PM positions per comment id. Always REASSIGNED (never .set() in place) so
+  // the `comments` $derived sees the change — plain Maps aren't deeply reactive.
+  let placement = $state<Map<string, Placement>>(new Map())
   let baseCommitId = $state('')
   let baseContentHash = $state('')
   let version = $state(0)
@@ -99,34 +109,21 @@ export function createDocSession(
   // file to show what the first commitBack will rewrite. Null = byte-identical.
   let normalizationDiff = $state<string | null>(null)
 
-  // Guards add/resolve/remove against a concurrent import_ overwriting comments[].
-  // Symmetric: bump BEFORE await, check AFTER (CLAUDE.md gen-counter rule).
-  let gen = 0
-  const bumpGen = () => ++gen
+  // Read-model projection (review.ts PlacedReview) — what DocView and
+  // DocCommentRail render. Missing placement (shouldn't happen — import_ and
+  // refreshComments place every stored id) degrades to orphaned.
+  const comments = $derived<PlacedReview[]>(stored.map((c) => ({
+    ...fromDocComment(c),
+    ...(placement.get(c.id) ?? { orphaned: true }),
+  })))
 
-  // Optimistic-write helper: snapshot, apply, await, rollback+surface on error.
-  // Mutations apply locally first so the UI is instant; if the server write
-  // fails (SSH drop, 500) the local state must not silently diverge.
-  let mutationError = $state('')
-  let inFlightMutation = 0
-  async function optimistic(apply: () => void, persist: () => Promise<unknown>): Promise<void> {
-    const g = bumpGen()
-    const snapshot = comments
-    apply()
-    mutationError = ''
-    inFlightMutation++
-    try {
-      await persist()
-    } catch (e) {
-      // Only roll back if nothing else (import_/onTransaction/another mutation)
-      // has written comments since — restoring a stale snapshot would clobber
-      // remapped positions or a fresh load.
-      if (g === gen) comments = snapshot
-      mutationError = e instanceof Error ? e.message : String(e)
-    } finally {
-      inFlightMutation--
-    }
-  }
+  // Shared concurrency policy (review-mutations.svelte.ts): optimistic apply +
+  // gen-guarded rollback. The gen is shared with import_/refreshComments/
+  // onTransaction so a rollback never restores a snapshot that a load, a
+  // refresh, or a typing remap has since replaced. Mutation failures are
+  // surfaced via `error` (callers are fire-and-forget), so the core's rethrow
+  // is swallowed at each call site.
+  const mutations = createReviewMutations()
 
   const importLoader = createLoader(async () => {
     const commitId = getWorkingCopyCommitId()
@@ -134,21 +131,22 @@ export function createDocSession(
     const { content } = await api.fileShow(commitId, filePath)
     const doc = parseMarkdown(content)
     const tm = buildTextMap(doc)
-    const stored = await api.docComments.list(filePath)
-    const placed: PlacedComment[] = stored.map((c) => {
+    const wire = await api.docComments.list(filePath)
+    const placed = new Map<string, Placement>(wire.map((c) => {
       const hit = refind(c.anchor, tm.text)
-      return hit ? { ...c, ...tm.place(hit), orphaned: false } : { ...c, orphaned: true }
-    })
-    return { commitId, content, doc, placed }
+      return [c.id, hit ? { ...tm.place(hit), orphaned: false } : { orphaned: true }]
+    }))
+    return { commitId, content, doc, wire, placed }
   }, null)
 
   async function import_(): Promise<void> {
-    const g = bumpGen()
+    const g = mutations.bump()
     const ok = await importLoader.load()
-    if (!ok || g !== gen || !importLoader.value) return
-    const { commitId, content, doc: parsed, placed } = importLoader.value
+    if (!ok || !mutations.current(g) || !importLoader.value) return
+    const { commitId, content, doc: parsed, wire, placed } = importLoader.value
     doc = parsed
-    comments = placed
+    stored = wire
+    placement = placed
     baseCommitId = commitId
     baseContentHash = await sha256Hex(content)
     version = 0
@@ -165,44 +163,46 @@ export function createDocSession(
   // the next poll tick recovers. gen check covers the typing case
   // (onTransaction bumps gen, stale placement discarded).
   async function refreshComments(): Promise<void> {
-    if (!doc || inFlightMutation > 0) return
-    const g = bumpGen()
-    let stored: DocComment[]
+    if (!doc || mutations.mutating) return
+    const g = mutations.bump()
+    let wire: DocComment[]
     try {
-      stored = await api.docComments.list(filePath)
+      wire = await api.docComments.list(filePath)
     } catch {
       return
     }
-    if (g !== gen || inFlightMutation > 0 || !doc) return
+    if (!mutations.current(g) || mutations.mutating || !doc) return
     const tm = buildTextMap(doc)
     // Preserve existing local placement for known ids whose anchor is unchanged
     // — onTransaction has been remapping their from/to through every edit,
     // which is exact. Re-running refind would orphan accepted suggestions
     // (stored selection no longer exists). New ids OR same id with a changed
     // anchor (agent re-upsert to move a comment) fall through to refind.
-    const local = new Map(comments.map((c) => [c.id, c]))
-    comments = stored.map((c) => {
-      const prev = local.get(c.id)
-      if (prev && prev.from !== undefined && anchorEq(prev.anchor, c.anchor)) {
-        return { ...c, from: prev.from, to: prev.to, orphaned: prev.orphaned }
+    const prevWire = new Map(stored.map((c) => [c.id, c]))
+    placement = new Map(wire.map((c) => {
+      const pw = prevWire.get(c.id)
+      const pp = placement.get(c.id)
+      if (pw && pp && pp.from !== undefined && anchorEq(pw.anchor, c.anchor)) {
+        return [c.id, pp]
       }
       const hit = refind(c.anchor, tm.text)
-      return hit ? { ...c, ...tm.place(hit), orphaned: false } : { ...c, orphaned: true }
-    })
+      return [c.id, hit ? { ...tm.place(hit), orphaned: false } : { orphaned: true }]
+    }))
+    stored = wire
   }
 
   function onTransaction(tr: Transaction, newDoc: Node): void {
     doc = newDoc
     if (tr.docChanged) {
       version++
-      // Bump gen: this writes comments[], so any in-flight optimistic() rollback
+      // Bump gen: this rewrites placement, so any in-flight optimistic rollback
       // must NOT restore its pre-edit snapshot (positions would be stale).
-      bumpGen()
-      comments = comments.map((c) =>
-        c.orphaned || c.from === undefined || c.to === undefined
-          ? c
-          : { ...c, from: tr.mapping.map(c.from), to: tr.mapping.map(c.to, -1) },
-      )
+      mutations.bump()
+      placement = new Map([...placement].map(([id, p]) =>
+        p.orphaned || p.from === undefined || p.to === undefined
+          ? [id, p]
+          : [id, { ...p, from: tr.mapping.map(p.from), to: tr.mapping.map(p.to, -1) }],
+      ))
     }
   }
 
@@ -279,27 +279,39 @@ export function createDocSession(
       author: 'user',
       createdAt: Date.now(),
     }
-    await optimistic(
-      () => { comments = [...comments, { ...c, from, to, orphaned: false }] },
-      () => api.docComments.upsert(c),
-    )
+    const snapStored = stored
+    const snapPlacement = placement
+    await mutations.run({
+      apply: () => {
+        stored = [...stored, c]
+        placement = new Map(placement).set(c.id, { from, to, orphaned: false })
+      },
+      persist: () => api.docComments.upsert(c),
+      rollback: (stillCurrent) => {
+        if (stillCurrent) { stored = snapStored; placement = snapPlacement }
+      },
+    }).catch(() => { /* surfaced via `error` — callers are fire-and-forget */ })
   }
 
   async function resolveComment(id: string, resolution: 'addressed' | 'wontfix'): Promise<void> {
-    const c = comments.find((x) => x.id === id)
+    const c = stored.find((x) => x.id === id)
     if (!c) return
-    const updated: DocComment = { ...stripLocal(c), resolution, resolvedAt: Date.now() }
-    await optimistic(
-      () => { comments = comments.map((x) => (x.id === id ? { ...x, resolution, resolvedAt: updated.resolvedAt } : x)) },
-      () => api.docComments.upsert(updated),
-    )
+    const updated: DocComment = { ...c, resolution, resolvedAt: Date.now() }
+    const snapshot = stored
+    await mutations.run({
+      apply: () => { stored = stored.map((x) => (x.id === id ? updated : x)) },
+      persist: () => api.docComments.upsert(updated),
+      rollback: (stillCurrent) => { if (stillCurrent) stored = snapshot },
+    }).catch(() => { /* surfaced via `error` */ })
   }
 
   async function removeComment(id: string): Promise<void> {
-    await optimistic(
-      () => { comments = comments.filter((x) => x.id !== id && x.parentId !== id) },
-      () => api.docComments.remove(filePath, id),
-    )
+    const snapshot = stored
+    await mutations.run({
+      apply: () => { stored = stored.filter((x) => x.id !== id && x.parentId !== id) },
+      persist: () => api.docComments.remove(filePath, id),
+      rollback: (stillCurrent) => { if (stillCurrent) stored = snapshot },
+    }).catch(() => { /* surfaced via `error` */ })
   }
 
   // Returns the edit spec for a suggestion; caller (DocView) builds+dispatches
@@ -325,7 +337,7 @@ export function createDocSession(
     get orphanedComments() { return orphanedComments },
     get dirty() { return dirty },
     get saving() { return saving },
-    get error() { return importLoader.error || mutationError },
+    get error() { return importLoader.error || mutations.error },
     get busy() { return importLoader.loading },
     get baseCommitId() { return baseCommitId },
     get baseContentHash() { return baseContentHash },
@@ -342,9 +354,4 @@ export function createDocSession(
     removeComment,
     acceptSuggestion,
   }
-}
-
-function stripLocal(c: PlacedComment): DocComment {
-  const { from: _f, to: _t, orphaned: _o, ...rest } = c
-  return rest
 }

@@ -898,6 +898,69 @@ describe('request() empty-body handling', () => {
   })
 })
 
+describe('namespaced annotation client (api.annotations.*)', () => {
+  // api.annotations mirrors api.docComments: {list, save, remove, clear}.
+  // The flat methods (api.annotations(id), saveAnnotation, deleteAnnotation,
+  // clearAnnotations) are deprecated aliases delegating here.
+
+  it('list() GETs by changeId', async () => {
+    mockFetch.mockResolvedValue(mockResponse([{ id: 'a1' }]))
+    const result = await api.annotations.list('abc')
+    expect(result).toEqual([{ id: 'a1' }])
+    expect(mockFetch).toHaveBeenCalledWith('/tab/0/api/annotations?changeId=abc', expect.anything())
+  })
+
+  it('callable form delegates to list()', async () => {
+    mockFetch.mockResolvedValue(mockResponse([]))
+    await api.annotations('abc')
+    expect(mockFetch).toHaveBeenCalledWith('/tab/0/api/annotations?changeId=abc', expect.anything())
+  })
+
+  it('save() POSTs the annotation', async () => {
+    mockFetch.mockResolvedValue(mockResponse({ id: 'a1' }))
+    await api.annotations.save({ id: 'a1' } as Parameters<typeof api.annotations.save>[0])
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/tab/0/api/annotations',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ id: 'a1' }) }),
+    )
+  })
+
+  it('remove()/clear() DELETE with the same URLs as the deprecated flat aliases', async () => {
+    mockFetch.mockResolvedValue(mockResponse(null))
+    await api.annotations.remove('abc', 'a1')
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      '/tab/0/api/annotations?changeId=abc&id=a1',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    await api.annotations.clear('abc')
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      '/tab/0/api/annotations?changeId=abc',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+
+    // Deprecated aliases hit identical URLs (pure delegation).
+    await api.deleteAnnotation('abc', 'a1')
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      '/tab/0/api/annotations?changeId=abc&id=a1',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    await api.clearAnnotations('abc')
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      '/tab/0/api/annotations?changeId=abc',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+
+  it('saveAnnotation alias delegates to save()', async () => {
+    mockFetch.mockResolvedValue(mockResponse({ id: 'a2' }))
+    await api.saveAnnotation({ id: 'a2' } as Parameters<typeof api.saveAnnotation>[0])
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/tab/0/api/annotations',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+})
+
 describe('diffRange caching', () => {
   it('caches by commit_id pair', async () => {
     mockFetch.mockResolvedValue(mockResponse({ diff: 'd1' }))

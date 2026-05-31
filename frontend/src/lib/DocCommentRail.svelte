@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { DocSession, PlacedComment } from './doc-session.svelte'
+  import type { DocSession } from './doc-session.svelte'
   import type { CommentVisibility } from './comment-visibility.svelte'
-  import { fromDocComment } from './review'
+  import { anchorText, type PlacedReview } from './review'
   import CommentCard from './CommentCard.svelte'
 
   let {
@@ -18,11 +18,13 @@
     onaccept?: (id: string) => void
   } = $props()
 
-  type Thread = { root: PlacedComment; replies: PlacedComment[] }
+  // session.comments is already the PlacedReview projection (review.ts) —
+  // cards consume it directly, no per-render adapter call.
+  type Thread = { root: PlacedReview; replies: PlacedReview[] }
 
   const threads = $derived.by((): Thread[] => {
     const roots = session.comments.filter((c) => !c.parentId && !c.orphaned)
-    const byParent = new Map<string, PlacedComment[]>()
+    const byParent = new Map<string, PlacedReview[]>()
     for (const c of session.comments) {
       if (!c.parentId) continue
       const arr = byParent.get(c.parentId) ?? []
@@ -70,9 +72,9 @@
   <div class="rail-body">
     {#each visibleThreads as t (t.root.id)}
       <CommentCard
-        review={fromDocComment(t.root)}
-        replies={t.replies.map(fromDocComment)}
-        anchorText={t.root.anchor.selection}
+        review={t.root}
+        replies={t.replies}
+        anchorText={anchorText(t.root)}
         orphaned={t.root.orphaned}
         onjump={t.root.from !== undefined ? () => onjump?.(t.root.from!) : undefined}
         onhover={(id) => onhover?.(id)}
@@ -98,8 +100,8 @@
       </div>
       {#each session.orphanedComments as c (c.id)}
         <CommentCard
-          review={fromDocComment(c)}
-          anchorText={c.anchor.selection}
+          review={c}
+          anchorText={anchorText(c)}
           orphaned
           onresolve={(id, r) => session.resolveComment(id, r)}
           ondelete={(id) => session.removeComment(id)}

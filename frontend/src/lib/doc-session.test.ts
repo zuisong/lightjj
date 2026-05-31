@@ -30,6 +30,7 @@ vi.mock('./api', () => {
 })
 
 import { createDocSession } from './doc-session.svelte'
+import { anchorText } from './review'
 import { api } from './api'
 import { EditorState, type Transaction } from 'prosemirror-state'
 import { docSchema } from './pm-schema'
@@ -93,12 +94,18 @@ describe('createDocSession', () => {
 
     await s.addComment(pmFrom, pmTo, 'please clarify')
     expect(s.comments).toHaveLength(1)
+    // comments[] is the PlacedReview projection (review.ts) — prose anchor
+    // fields are selection/ctxBefore/ctxAfter.
     const c = s.comments[0]
-    expect(c.anchor.selection).toBe('distinctive phrase')
-    expect(c.anchor.contextBefore.endsWith('with a ')).toBe(true)
+    expect(anchorText(c)).toBe('distinctive phrase')
+    expect(c.anchor.kind === 'prose' && c.anchor.ctxBefore.endsWith('with a ')).toBe(true)
     expect(c.from).toBe(pmFrom)
     expect(c.orphaned).toBe(false)
     expect(api.docComments.upsert).toHaveBeenCalledOnce()
+    // Wire shape is unchanged: the persisted DocComment still carries
+    // contextBefore/contextAfter (the agent API contract).
+    const wire = (api.docComments.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocComment
+    expect(wire.anchor.contextBefore.endsWith('with a ')).toBe(true)
   })
 
   it('round-trip: comment re-found at same PM position after re-import', async () => {
@@ -172,7 +179,7 @@ describe('createDocSession', () => {
     mockApi.__setStored([{
       id: 's1', filePath: 'docs/DESIGN.md', kind: 'suggestion',
       anchor: { selection: 'distinctive phrase', contextBefore: '', contextAfter: '' },
-      suggestion: { replacement: 'replaced text' },
+      suggestion: { replacement: 'replaced text', baseVersion: 0 },
       body: '', author: 'agent', createdAt: 1,
     }])
     const s = createDocSession('docs/DESIGN.md', () => 'cid')
@@ -219,7 +226,7 @@ describe('createDocSession', () => {
     mockApi.__setStored([{
       id: 's1', filePath: 'x.md', kind: 'suggestion',
       anchor: { selection: 'Folded', contextBefore: '', contextAfter: '' },
-      suggestion: { replacement: 'Archived' },
+      suggestion: { replacement: 'Archived', baseVersion: 0 },
       body: '', author: 'agent', createdAt: 1,
     }])
     const s = createDocSession('x.md', () => 'cid')
@@ -239,7 +246,7 @@ describe('createDocSession', () => {
     mockApi.__setStored([{
       id: 's1', filePath: 'x.md', kind: 'suggestion',
       anchor: { selection: 'tail.', contextBefore: '', contextAfter: '' },
-      suggestion: { replacement: 'tail (extended).' },
+      suggestion: { replacement: 'tail (extended).', baseVersion: 0 },
       body: '', author: 'a', createdAt: 1,
     }])
     const s = createDocSession('x.md', () => 'cid')

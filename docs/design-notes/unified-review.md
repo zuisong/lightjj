@@ -1,6 +1,6 @@
 # Unified review model
 
-**Status:** implemented (v1.25.0; the [Open questions](#open-questions) below remain open) · **Supersedes:** parts of [ANNOTATIONS.md](../ANNOTATIONS.md) (data model only; the agent-iteration workflow there stays)
+**Status:** implemented (v1.25.0) and **unification completed** (see [Completion notes](#completion-notes); the [Open questions](#open-questions) below remain open) · **Supersedes:** parts of [ANNOTATIONS.md](../ANNOTATIONS.md) (data model only; the agent-iteration workflow there stays)
 
 ## Problem
 
@@ -178,6 +178,54 @@ DiffPanel keeps a **severity count strip** in the panel toolbar (`●3 ●5 ●2
 | 1     | `review.ts` (types + 2 read adapters), `comment-visibility.svelte.ts`, `holdViewport` in `virtual.svelte.ts`, extract `<CommentCard>` from DocCommentRail, `relativeTime(number)` overload, `config.hiddenCommentAuthors`. Compiles unused. |
 | 2     | DiffPanel: gutter SVG → bubble, drop chip-bar/file-note, inline-row mount, severity strip, orphan row, wire visibility + `holdViewport`. `annotations.svelte.ts` exposes `PlacedReview[]`; six `status==='orphaned'` sites retyped. Go: `Annotation.Resolution` optional field. |
 | 3     | DocView/DocCommentRail rewire over `<CommentCard>`; `{`/`}` in doc mode; `refreshPreviews` → `holdViewport`. |
+| 4     | **Completion pass** (see below): doc-session adopts `PlacedReview`, single reviewed-marker predicate, shared mutation-concurrency core, store `byId()`, namespaced annotation client. |
+
+## Completion notes
+
+The unification originally stalled at ~80%: the read-model existed but the two
+stores still had parallel types, duplicate predicates, and divergent
+concurrency strategies. The completion pass closed those gaps:
+
+1. **`PlacedReview` subsumes `PlacedComment`** (deleted). `doc-session.svelte.ts`
+   now mirrors `annotations.svelte.ts` structurally: a wire-truth list
+   (`stored: DocComment[]` / `list: Annotation[]`) plus session-local placement
+   → a `PlacedReview[]` $derived projection that components render.
+   `DocCommentRail` consumes `session.comments` directly — no per-card
+   `fromDocComment()` call per render. The "no Review→wire inverse mappers"
+   rule still holds: mutations operate on the wire list inside each store.
+
+2. **One reviewed-marker predicate.** `review.ts isReviewedReview` is THE
+   definition of the file-viewed checkbox sentinel;
+   `annotations.isReviewedMarker` is a thin wrapper projecting `Annotation`
+   through `fromAnnotation` for wire-shape call sites (exports, setReviewed).
+
+3. **One mutation-concurrency strategy** — `review-mutations.svelte.ts
+   createReviewMutations()`. Both stores route server mutations through
+   `run(apply/persist/rollback)`. The strategy is **optimistic apply +
+   rollback-on-error**: apply-after-confirm (the annotation store's old
+   policy) punishes every successful mutation with a visible network round
+   trip (~400ms over SSH) to simplify the rare failed one; optimistic gives
+   instant feedback and the failure path is still safe (rollback + recorded
+   error). The generation counter is shared with each store's
+   loads/refreshes/position-remaps, so a rollback can never restore a
+   snapshot that a newer write replaced. Rollback shapes: surgical by-id
+   (add — always safe) vs gen-guarded snapshot restore (update/remove/clear).
+
+4. **`annotations.byId(id)`** recovers the wire `Annotation` from a
+   `PlacedReview` id — store call sites no longer do
+   `list.find(a => a.id === ...)` round-trips. (DiffPanel still does; it owns
+   that migration.)
+
+5. **Namespaced annotation client** — `api.annotations.{list, save, remove,
+   clear}` mirrors `api.docComments`. The bare-callable form
+   `api.annotations(changeId)` and the flat
+   `saveAnnotation`/`deleteAnnotation`/`clearAnnotations` survive as
+   deprecated delegating aliases for pre-namespacing call sites (App.svelte,
+   DiffPanel's test mock).
+
+Remaining (owned by the App/DiffPanel surfaces, not the stores): migrate
+DiffPanel/App off the deprecated flat api aliases and `annotations.list.find`
+→ `annotations.byId`, then drop the aliases.
 
 ## Open questions
 

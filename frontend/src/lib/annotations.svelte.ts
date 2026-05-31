@@ -15,14 +15,18 @@
 
 import { api, FILE_LEVEL, type Annotation, type AnnotationSeverity, type DiffSide } from './api'
 import { parseDiffContent, expandTabs } from './diff-parser'
-import { fromAnnotation, type PlacedReview, type Resolution } from './review'
+import { fromAnnotation, isReviewedReview, type PlacedReview, type Resolution } from './review'
+import { createReviewMutations } from './review-mutations.svelte'
 
 /** A file-level annotation that exists purely as a "viewed" checkbox state —
  *  green severity, no comment body. Excluded from export + chip bar (it's
  *  progress tracking, not feedback). File-level annotations WITH a comment
- *  are real feedback and export normally. */
-export const isReviewedMarker = (a: Annotation) =>
-  a.lineNum === FILE_LEVEL && a.severity === 'reviewed' && a.comment === ''
+ *  are real feedback and export normally.
+ *
+ *  Wire-type wrapper over review.ts isReviewedReview — that's the single
+ *  definition of the sentinel; this just projects Annotation through
+ *  fromAnnotation so wire-shape call sites (exports, setReviewed) can use it. */
+export const isReviewedMarker = (a: Annotation) => isReviewedReview(fromAnnotation(a))
 
 const FUZZY_WINDOW = 5 // ±lines to search for content match
 const NO_ANN: readonly PlacedReview[] = [] // shared empty result for forLine misses
@@ -180,6 +184,10 @@ interface AnnotationStore {
   readonly loadedChangeId: string | null
   /** True while a load/save/delete request is in flight. */
   readonly busy: boolean
+  /** Wire-shape annotation by id. PlacedReview shares ids with Annotation, so
+   *  call sites holding a projection can recover the wire object without
+   *  `list.find(a => a.id === ...)` round-trips. */
+  byId(id: string): Annotation | undefined
   /** Lookup annotations for a specific line (for gutter badge). Multiple
    *  annotations may share a line if the user annotated it twice. */
   forLine(filePath: string, lineNum: number, side?: DiffSide): readonly PlacedReview[]
@@ -217,7 +225,6 @@ interface AnnotationStore {
 export function createAnnotationStore(): AnnotationStore {
   let list = $state<Annotation[]>([])
   let loadedChangeId = $state<string | null>(null)
-  let busy = $state(false)
 
   // Read-model projection. PlacedReview.line/orphaned mirror the persisted
   // post-reanchor lineNum/status (load() persists reanchor results).
@@ -252,28 +259,23 @@ export function createAnnotationStore(): AnnotationStore {
     return s
   })
 
-  let inFlight = 0
-  async function withBusy<T>(fn: () => Promise<T>): Promise<T> {
-    inFlight++; busy = true
-    try { return await fn() } finally { busy = --inFlight > 0 }
-  }
+  // Shared concurrency policy (review-mutations.svelte.ts): optimistic
+  // mutations + generation counter + busy bookkeeping. The gen invalidates
+  // in-flight load() when navigation or a write makes its pending final
+  // `list = ...` assignment stale. Without the write-side bump, add()
+  // completing mid-reanchor gets overwritten by load's final map():
+  // annotation saved on backend but invisible in UI until next nav.
+  const mutations = createReviewMutations()
 
-  // Generation counter invalidates in-flight load() when navigation or a
-  // write (add/update/remove/clear) makes its pending final `list = ...`
-  // assignment stale. Without the write-side bump, add() completing mid-
-  // reanchor gets overwritten by load's final map(): annotation saved on
-  // backend but invisible in UI until next nav.
-  let loadGen = 0
-  const bumpGen = () => ++loadGen
   // No negative caching of empty changeIds: agents POST annotations out-of-band
   // (other tabs, the agent CLI), so a "known empty" memo would make those
   // comments permanently invisible here. One cheap GET per revisit of an
   // annotation-free revision is the price of correctness.
   async function load(changeId: string, commitId: string) {
-    const gen = bumpGen()
-    return withBusy(async () => {
+    const gen = mutations.bump()
+    return mutations.track(async () => {
       const raw = await api.annotations(changeId)
-      if (gen !== loadGen) return
+      if (!mutations.current(gen)) return
       loadedChangeId = changeId
       if (raw.length === 0) {
         list = []
@@ -306,7 +308,7 @@ export function createAnnotationStore(): AnnotationStore {
         let hunksByFile: Map<string, ReturnType<typeof parseDiffContent>[number]['hunks']>
         try {
           const { diff } = await api.diffRange(fromCommit, commitId, files)
-          if (gen !== loadGen) return
+          if (!mutations.current(gen)) return
           const parsed = parseDiffContent(diff)
           hunksByFile = new Map(parsed.map(f => [f.filePath, f.hunks]))
         } catch {
@@ -328,13 +330,27 @@ export function createAnnotationStore(): AnnotationStore {
       // workspace tab opened later sees the anchored positions).
       for (const u of updates) {
         await api.saveAnnotation(u)
-        if (gen !== loadGen) return
+        if (!mutations.current(gen)) return
       }
 
       // Apply updates in-memory (saves returned the same objects).
       const byId = new Map(updates.map(u => [u.id, u]))
       list = raw.map(a => byId.get(a.id) ?? a)
     })
+  }
+
+  // Mutations are optimistic (apply → persist → rollback on error) via the
+  // shared core. Rollback shapes:
+  // - add/setReviewed(true): surgical filter-by-id — always safe, even if a
+  //   nav/load replaced the list mid-flight (the filter is then a no-op).
+  // - update/remove/clear: gen-guarded snapshot restore — restoring a stale
+  //   snapshot after a competing load would resurrect another revision's list.
+  // Failures rethrow (DiffPanel's callers catch); the wire writes still go
+  // through the deprecated flat api.* aliases — DiffPanel.test.ts's api mock
+  // stubs those names, so the store can't switch to api.annotations.* until
+  // that mock is updated by the diff-panel surface owner.
+  function byId(id: string): Annotation | undefined {
+    return list.find(a => a.id === id)
   }
 
   async function add(opts: Parameters<AnnotationStore['add']>[0]) {
@@ -344,44 +360,46 @@ export function createAnnotationStore(): AnnotationStore {
       createdAt: Date.now(),
       status: 'open',
     }
-    return withBusy(async () => {
-      const gen = bumpGen()
-      await api.saveAnnotation(ann)
-      if (gen !== loadGen) return
-      list = [...list, ann]
-    })
+    return mutations.track(() => mutations.run({
+      apply: () => { list = [...list, ann] },
+      persist: () => api.saveAnnotation(ann),
+      rollback: () => { list = list.filter(a => a.id !== ann.id) },
+    }))
   }
 
   async function update(ann: Annotation) {
-    return withBusy(async () => {
-      const gen = bumpGen()
-      await api.saveAnnotation(ann)
-      if (gen !== loadGen) return
-      list = list.map(a => a.id === ann.id ? ann : a)
-    })
+    const snapshot = list
+    return mutations.track(() => mutations.run({
+      apply: () => { list = list.map(a => a.id === ann.id ? ann : a) },
+      persist: () => api.saveAnnotation(ann),
+      rollback: (stillCurrent) => { if (stillCurrent) list = snapshot },
+    }))
   }
 
   async function resolveAs(id: string, resolution: Resolution) {
-    const a = list.find(x => x.id === id)
+    const a = byId(id)
     if (!a) return
     return update({ ...a, status: 'resolved', resolution })
   }
 
   async function remove(id: string) {
     if (!loadedChangeId) return
-    return withBusy(async () => {
-      const gen = bumpGen()
-      await api.deleteAnnotation(loadedChangeId!, id)
-      if (gen !== loadGen) return
-      list = list.filter(a => a.id !== id)
-    })
+    const changeId = loadedChangeId
+    const snapshot = list
+    return mutations.track(() => mutations.run({
+      apply: () => { list = list.filter(a => a.id !== id) },
+      persist: () => api.deleteAnnotation(changeId, id),
+      rollback: (stillCurrent) => { if (stillCurrent) list = snapshot },
+    }))
   }
 
-  // setReviewed does NOT route through add()/remove() — those bump the global
-  // loadGen, so checking file A then file B would cancel A's post-await list
-  // write (marker on backend, missing from UI). Checkbox toggles are
-  // cross-file-concurrent + high-frequency; optimistic write + rollback keeps
-  // them independent of loadGen and gives instant checkbox feedback.
+  // setReviewed does NOT go through track() — checkbox toggles are
+  // cross-file-concurrent + high-frequency, and flipping the store-level busy
+  // flag for them would couple unrelated UI. The per-file reviewBusy set is
+  // the only dedup gate. mutations.run() still bumps the shared gen (so an
+  // in-flight load()'s stale snapshot won't clobber the optimistic write), and
+  // its rollbacks deliberately ignore stillCurrent: cross-file toggles each
+  // bump the gen, but neither may skip the other's rollback.
   const reviewBusy = new Set<string>()
 
   async function setReviewed(filePath: string, reviewed: boolean, ctx: { changeId: string; createdAtCommitId: string }): Promise<boolean> {
@@ -389,11 +407,6 @@ export function createAnnotationStore(): AnnotationStore {
     const existing = list.filter(a => a.filePath === filePath && isReviewedMarker(a))
     if (reviewed === existing.length > 0) return false
     reviewBusy.add(filePath)
-    // Bump-only (no capture, no check): invalidates any in-flight load() so
-    // its stale snapshot won't clobber our optimistic write. setReviewed
-    // itself never CHECKS gen, so cross-file toggles each bump but neither
-    // cancels the other.
-    bumpGen()
     try {
       if (reviewed) {
         const ann: Annotation = {
@@ -401,20 +414,25 @@ export function createAnnotationStore(): AnnotationStore {
           lineNum: FILE_LEVEL, lineContent: '', comment: '', severity: 'reviewed',
           createdAt: Date.now(), status: 'open',
         }
-        list = [...list, ann]
-        try { await api.saveAnnotation(ann) }
-        catch (e) { list = list.filter(a => a.id !== ann.id); throw e }
+        await mutations.run({
+          apply: () => { list = [...list, ann] },
+          persist: () => api.saveAnnotation(ann),
+          // Surgical: removing the phantom marker by id is always safe.
+          rollback: () => { list = list.filter(a => a.id !== ann.id) },
+        })
       } else {
         const ids = new Set(existing.map(m => m.id))
-        list = list.filter(a => !ids.has(a.id))
-        try {
-          for (const m of existing) await api.deleteAnnotation(ctx.changeId, m.id)
-        } catch (e) {
+        await mutations.run({
+          apply: () => { list = list.filter(a => !ids.has(a.id)) },
+          persist: async () => {
+            for (const m of existing) await api.deleteAnnotation(ctx.changeId, m.id)
+          },
           // Rollback only if still on the same changeId — appending old-rev
           // markers onto a navigated-to rev's list would render phantom ✓s.
-          if (ctx.changeId === loadedChangeId) list = [...list, ...existing]
-          throw e
-        }
+          rollback: () => {
+            if (ctx.changeId === loadedChangeId) list = [...list, ...existing]
+          },
+        })
       }
       return true
     } finally {
@@ -424,19 +442,21 @@ export function createAnnotationStore(): AnnotationStore {
 
   async function clear() {
     if (!loadedChangeId) return
-    return withBusy(async () => {
-      const gen = bumpGen()
-      await api.clearAnnotations(loadedChangeId!)
-      if (gen !== loadGen) return
-      list = []
-    })
+    const changeId = loadedChangeId
+    const snapshot = list
+    return mutations.track(() => mutations.run({
+      apply: () => { list = [] },
+      persist: () => api.clearAnnotations(changeId),
+      rollback: (stillCurrent) => { if (stillCurrent) list = snapshot },
+    }))
   }
 
   return {
     get list() { return list },
     get placed() { return placed },
     get loadedChangeId() { return loadedChangeId },
-    get busy() { return busy },
+    get busy() { return mutations.busy },
+    byId,
     // forLine excludes FILE_LEVEL — split-view's right column for deleted files
     // yields annLine===0; without this guard the file-level annotation would
     // leak into the gutter as a line badge.

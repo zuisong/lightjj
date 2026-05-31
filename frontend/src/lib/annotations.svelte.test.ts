@@ -20,7 +20,9 @@ vi.mock('./api', async (importOriginal) => {
 import { reanchor, exportMarkdown, exportJSON, createAnnotationStore, isReviewedMarker } from './annotations.svelte'
 import { api, FILE_LEVEL, type Annotation } from './api'
 
-const mockAnnotations = api.annotations as ReturnType<typeof vi.fn>
+// `unknown` hop: the real api.annotations is a callable object (list/save/
+// remove/clear attached); the vi.mock above replaces it with a bare vi.fn().
+const mockAnnotations = api.annotations as unknown as ReturnType<typeof vi.fn>
 const mockSave = api.saveAnnotation as ReturnType<typeof vi.fn>
 const mockDelete = api.deleteAnnotation as ReturnType<typeof vi.fn>
 const mockClear = api.clearAnnotations as ReturnType<typeof vi.fn>

@@ -100,11 +100,12 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     ConflictQueue.svelte   — Merge-mode left rail: conflicted files grouped by commit
     merge-controller.svelte.ts — createMergeController(): merge-mode queue/sides/save orchestration (shared gen)
     DocView.svelte         — Doc-mode ProseMirror editor (View|Edit)
-    DocCommentRail.svelte  — Doc-mode comment rail (threads → CommentCard)
-    review.ts              — Unified read-model over Annotation + DocComment
+    DocCommentRail.svelte  — Doc-mode comment rail (PlacedReview threads → CommentCard)
+    review.ts              — Unified read-model over Annotation + DocComment (Review/PlacedReview + reviewed-marker predicate)
+    review-mutations.svelte.ts — createReviewMutations(): shared optimistic-mutation policy for both review stores
     CommentCard.svelte     — Pure presentational comment card
     comment-visibility.svelte.ts — createCommentVisibility() per-App comment visibility store
-    doc-session.svelte.ts  — createDocSession(): PM ↔ file two-tier model + comment anchoring
+    doc-session.svelte.ts  — createDocSession(): PM ↔ file two-tier model; comments = PlacedReview projection
     pm-schema.ts           — ProseMirror Schema + parseMarkdown/serializeMarkdown
     pm-mermaid.ts          — Mermaid code_block NodeView
     reanchor.ts            — Content-addressed anchor capture/refind
@@ -165,7 +166,7 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     slide.ts               — computeSlide(): Shift+J/K single-step reorder along linear graph segments
     config.svelte.ts       — Reactive config singleton (server config + localStorage cache)
     recent-actions.svelte.ts — State-backed (state.json) last-used timestamps for bookmark recency sort
-    annotations.svelte.ts  — Per-line review comment store (server-backed, agent workflows)
+    annotations.svelte.ts  — Per-line review comment store (server-backed, agent workflows; PlacedReview projection)
     AnnotationBubble.svelte — Annotation create/edit popup
     WelcomeModal.svelte    — "What's new" modal on version bump
     tutorial-content.ts    — Feature announcements keyed by version

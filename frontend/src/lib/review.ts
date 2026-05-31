@@ -3,7 +3,10 @@
 //
 // Read-only: components render Review, but mutations go through the existing
 // stores by id. No Review→wire inverse mappers — CommentCard emits intent
-// callbacks and the parent surface wires them to its own store.
+// callbacks and the parent surface wires them to its own store. Both stores
+// (annotations.svelte.ts, doc-session.svelte.ts) project their wire lists into
+// PlacedReview[] for rendering and route server writes through the shared
+// concurrency policy in review-mutations.svelte.ts.
 
 import { FILE_LEVEL, type Annotation, type AnnotationSeverity, type DiffSide, type DocComment } from './api'
 
@@ -103,8 +106,11 @@ export function anchorText(r: Review): string {
   return r.anchor.kind === 'diff' ? r.anchor.lineContent : r.anchor.selection
 }
 
-/** Review-side equivalent of annotations.isReviewedMarker — the file-viewed
- *  checkbox sentinel. Excluded from nav, counts, and CommentCard rendering. */
+/** THE definition of the file-viewed checkbox sentinel — a marker, not
+ *  feedback. Excluded from nav, counts, exports, and CommentCard rendering.
+ *  Wire-type call sites use annotations.isReviewedMarker, which is a thin
+ *  wrapper over this (projects through fromAnnotation) — don't re-derive the
+ *  predicate from Annotation fields anywhere else. */
 export const isReviewedReview = (r: Review): boolean =>
   r.severity === 'reviewed' && r.body === '' &&
   r.anchor.kind === 'diff' && r.anchor.line === FILE_LEVEL
