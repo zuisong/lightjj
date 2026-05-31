@@ -121,6 +121,27 @@ describe('createLoader', () => {
     expect(onError).toHaveBeenCalledExactlyOnceWith(err)
   })
 
+  it('keepValueOnError: keeps last good value through a failed load', async () => {
+    let shouldThrow = false
+    const loader = createLoader(
+      async () => {
+        if (shouldThrow) throw new Error('boom')
+        return 42
+      },
+      0,
+      undefined,
+      { keepValueOnError: true },
+    )
+    await loader.load()
+    expect(loader.value).toBe(42)
+
+    shouldThrow = true
+    const ok = await loader.load()
+    expect(ok).toBe(false)
+    expect(loader.value).toBe(42) // kept, not reset to 0
+    expect(loader.error).toBe('boom')
+  })
+
   it('clears error on subsequent successful load', async () => {
     let shouldThrow = true
     const loader = createLoader(async () => {

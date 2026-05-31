@@ -7,7 +7,11 @@
 export const DIFF_LOAD_DEBOUNCE_MS = 50
 
 export interface Loader<T, A extends unknown[]> {
-  /** Current loaded value. Starts at `initial`, resets to `initial` on error. */
+  /**
+   * Current loaded value. Starts at `initial`; on error resets to `initial` unless
+   * `keepValueOnError` was set (server-state mirrors keep showing their last good
+   * value through transient fetch failures).
+   */
   readonly value: T
   /** True while a load is in flight and is still the latest generation. */
   readonly loading: boolean
@@ -28,6 +32,7 @@ export function createLoader<T, A extends unknown[]>(
   fetch: (...args: A) => Promise<T>,
   initial: T,
   onError?: (e: unknown) => void,
+  opts?: { keepValueOnError?: boolean },
 ): Loader<T, A> {
   let value = $state<T>(initial)
   let loading = $state(false)
@@ -59,7 +64,7 @@ export function createLoader<T, A extends unknown[]>(
     } catch (e) {
       if (gen !== generation) return false
       clearTimeout(loadingTimer)
-      value = initial
+      if (!opts?.keepValueOnError) value = initial
       error = e instanceof Error ? e.message : String(e)
       onError?.(e)
       return false
