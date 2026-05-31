@@ -7,12 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -25,8 +22,6 @@ import (
 // hash = sha256(RepoPath + "|" + filePath)[:16]. Hashing the key sidesteps
 // path-traversal validation and filesystem-unsafe characters in filePath.
 // RepoPath (not RepoDir) is set in both local and SSH mode.
-
-var docCommentMu sync.Mutex
 
 type DocAnchor struct {
 	Selection     string `json:"selection"`
@@ -55,6 +50,37 @@ type DocComment struct {
 
 func (c DocComment) GetID() string { return c.ID }
 
+// docCommentStore is the per-(repo, filePath) doc-comment collection. The
+// store key is the full hash input — RepoPath + "|" + cleaned filePath (see
+// docCommentKey) — so this package-level store works across Server instances
+// (tabs) while each repo+file pair maps to its own file. Package-level for the
+// same reason as annotationStore: the mutex must be shared across tabs.
+var docCommentStore = &jsonCollection[DocComment]{
+	pathFor: docCommentStorePath,
+	merge:   mergeDocComment,
+	stamp:   stampDocComment,
+	// Cascade-delete replies: a thread root delete must take its children
+	// or they reload as ghost highlights with no rail card and no UI delete.
+	deleteMatch: func(c DocComment, id string) bool {
+		return c.ID == id || c.ParentId == id
+	},
+}
+
+// docCommentKey builds the store key for an already-cleaned filePath. The key
+// (not the raw filePath) determines the on-disk filename: sha256(key)[:16].
+func (s *Server) docCommentKey(cleanPath string) string {
+	return s.RepoPath + "|" + cleanPath
+}
+
+func docCommentStorePath(key string) (string, error) {
+	dir, err := userConfigDir()
+	if err != nil {
+		return "", err
+	}
+	h := sha256.Sum256([]byte(key))
+	return filepath.Join(dir, "lightjj", "doc-comments", hex.EncodeToString(h[:])[:16]+".json"), nil
+}
+
 // cleanDocPath normalizes filePath to a canonical repo-relative form so that
 // "./docs/X.md" and "docs/X.md" hash to the same store. Agents POST against
 // paths they read from /api/file-show; the UI uses paths from the diff parser —
@@ -70,17 +96,30 @@ func cleanDocPath(p string) (string, error) {
 	return c, nil
 }
 
-func (s *Server) docCommentPath(filePath string) (string, error) {
-	clean, err := cleanDocPath(filePath)
-	if err != nil {
-		return "", err
+// mergeDocComment preserves an existing record's resolution/resolvedAt/
+// createdAt when the incoming upsert omits them — so an agent re-POST to amend
+// a body doesn't clobber the human's accept/reject or rewrite history.
+func mergeDocComment(existing, incoming DocComment) DocComment {
+	if incoming.Resolution == "" {
+		incoming.Resolution = existing.Resolution
+		incoming.ResolvedAt = existing.ResolvedAt
 	}
-	dir, err := userConfigDir()
-	if err != nil {
-		return "", err
+	if incoming.CreatedAt == 0 {
+		incoming.CreatedAt = existing.CreatedAt
 	}
-	h := sha256.Sum256([]byte(s.RepoPath + "|" + clean))
-	return filepath.Join(dir, "lightjj", "doc-comments", hex.EncodeToString(h[:])[:16]+".json"), nil
+	return incoming
+}
+
+// stampDocComment fills server-side defaults: a random id when the client
+// omitted one, and createdAt when neither the client nor an existing merged
+// record supplied it.
+func stampDocComment(c *DocComment) {
+	if c.ID == "" {
+		c.ID = randID()
+	}
+	if c.CreatedAt == 0 {
+		c.CreatedAt = time.Now().UnixMilli()
+	}
 }
 
 func randID() string {
@@ -89,25 +128,78 @@ func randID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// mergeDocComment upserts c into items, preserving an existing record's
-// resolution/resolvedAt when c omits them, and its createdAt when c's was
-// server-stamped (so an agent re-POST to amend body doesn't clobber the
-// human's accept/reject or rewrite history). Returns the post-merge c so the
-// HTTP response reflects what was actually stored (the preserved fields).
-func mergeDocComment(items []DocComment, c DocComment, stamped bool) ([]DocComment, DocComment) {
-	for i := range items {
-		if items[i].ID == c.ID {
-			if c.Resolution == "" {
-				c.Resolution = items[i].Resolution
-				c.ResolvedAt = items[i].ResolvedAt
-			}
-			if stamped {
-				c.CreatedAt = items[i].CreatedAt
-			}
-			break
-		}
+// GET /api/doc-comments?path=X — list (empty array if none).
+func (s *Server) handleDocCommentsGet(w http.ResponseWriter, r *http.Request) {
+	fp := r.URL.Query().Get("path")
+	if fp == "" {
+		s.writeError(w, http.StatusBadRequest, "path required")
+		return
 	}
-	return upsertByID(items, c), c
+	clean, err := cleanDocPath(fp)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := docCommentStore.List(s.docCommentKey(clean))
+	if err != nil {
+		s.writeError(w, storeErrStatus(err), err.Error())
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, items)
+}
+
+// POST /api/doc-comments — upsert by id (body = DocComment).
+func (s *Server) handleDocCommentsPost(w http.ResponseWriter, r *http.Request) {
+	var c DocComment
+	if err := decodeBody(w, r, &c); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if c.FilePath == "" {
+		s.writeError(w, http.StatusBadRequest, "filePath required")
+		return
+	}
+	if c.Anchor.Selection == "" {
+		s.writeError(w, http.StatusBadRequest, "anchor.selection required")
+		return
+	}
+	clean, err := cleanDocPath(c.FilePath)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.FilePath = clean
+	stored, err := docCommentStore.Upsert(s.docCommentKey(clean), c)
+	if err != nil {
+		s.writeError(w, storeErrStatus(err), err.Error())
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, stored)
+}
+
+// DELETE /api/doc-comments?path=X&id=Y — remove one (cascades to replies).
+// Unlike annotations, id is required: there is no clear-all.
+func (s *Server) handleDocCommentsDelete(w http.ResponseWriter, r *http.Request) {
+	fp := r.URL.Query().Get("path")
+	id := r.URL.Query().Get("id")
+	if fp == "" {
+		s.writeError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	clean, err := cleanDocPath(fp)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if id == "" {
+		s.writeError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	if err := docCommentStore.Delete(s.docCommentKey(clean), id); err != nil {
+		s.writeError(w, storeErrStatus(err), err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 const maxBatchComments = 256
@@ -117,10 +209,11 @@ type docCommentBatchRequest struct {
 	Comments []DocComment `json:"comments"`
 }
 
-// handleDocCommentsBatch validates ALL comments before writing ANY — an agent
-// posting 12 review notes gets all-or-nothing instead of a partial set on the
-// 7th failing validation. Held under docCommentMu for the whole batch so a
-// concurrent single-POST can't interleave between read and write.
+// POST /api/doc-comments/batch — handleDocCommentsBatch validates ALL comments
+// before writing ANY: an agent posting 12 review notes gets all-or-nothing
+// instead of a partial set on the 7th failing validation. UpsertBatch holds
+// the store mutex for the whole batch so a concurrent single-POST can't
+// interleave between the read and the write.
 func (s *Server) handleDocCommentsBatch(w http.ResponseWriter, r *http.Request) {
 	var req docCommentBatchRequest
 	if err := decodeBody(w, r, &req); err != nil {
@@ -141,138 +234,17 @@ func (s *Server) handleDocCommentsBatch(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	now := time.Now().UnixMilli()
-	stamped := make([]bool, len(req.Comments))
 	for i := range req.Comments {
-		c := &req.Comments[i]
-		if c.Anchor.Selection == "" {
+		if req.Comments[i].Anchor.Selection == "" {
 			s.writeError(w, http.StatusBadRequest, "comments["+strconv.Itoa(i)+"].anchor.selection required")
 			return
 		}
-		c.FilePath = clean
-		if c.ID == "" {
-			c.ID = randID()
-		}
-		stamped[i] = c.CreatedAt == 0
-		if stamped[i] {
-			c.CreatedAt = now
-		}
+		req.Comments[i].FilePath = clean
 	}
-	path, err := s.docCommentPath(clean)
+	stored, err := docCommentStore.UpsertBatch(s.docCommentKey(clean), req.Comments)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, storeErrStatus(err), err.Error())
 		return
 	}
-	docCommentMu.Lock()
-	defer docCommentMu.Unlock()
-	items, _ := readJSONStore[DocComment](path)
-	for i := range req.Comments {
-		items, req.Comments[i] = mergeDocComment(items, req.Comments[i], stamped[i])
-	}
-	if err := atomicWriteJSON(path, items); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "write failed: "+err.Error())
-		return
-	}
-	s.writeJSON(w, r, http.StatusOK, req.Comments)
-}
-
-// GET    /api/doc-comments?path=X       — list (empty array if none)
-// POST   /api/doc-comments              — upsert by id (body = DocComment)
-// DELETE /api/doc-comments?path=X&id=Y  — remove one (cascades to replies)
-func (s *Server) handleDocComments(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		fp := r.URL.Query().Get("path")
-		if fp == "" {
-			s.writeError(w, http.StatusBadRequest, "path required")
-			return
-		}
-		path, err := s.docCommentPath(fp)
-		if err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		items, _ := readJSONStore[DocComment](path)
-		s.writeJSON(w, r, http.StatusOK, items)
-
-	case http.MethodPost:
-		var c DocComment
-		if err := decodeBody(w, r, &c); err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if c.FilePath == "" {
-			s.writeError(w, http.StatusBadRequest, "filePath required")
-			return
-		}
-		if c.Anchor.Selection == "" {
-			s.writeError(w, http.StatusBadRequest, "anchor.selection required")
-			return
-		}
-		clean, err := cleanDocPath(c.FilePath)
-		if err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		c.FilePath = clean
-		if c.ID == "" {
-			c.ID = randID()
-		}
-		stamped := c.CreatedAt == 0
-		if stamped {
-			c.CreatedAt = time.Now().UnixMilli()
-		}
-		path, err := s.docCommentPath(c.FilePath)
-		if err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		docCommentMu.Lock()
-		defer docCommentMu.Unlock()
-		items, _ := readJSONStore[DocComment](path)
-		items, c = mergeDocComment(items, c, stamped)
-		if err := atomicWriteJSON(path, items); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "write failed: "+err.Error())
-			return
-		}
-		s.writeJSON(w, r, http.StatusOK, c)
-
-	case http.MethodDelete:
-		fp := r.URL.Query().Get("path")
-		id := r.URL.Query().Get("id")
-		if fp == "" {
-			s.writeError(w, http.StatusBadRequest, "path required")
-			return
-		}
-		path, err := s.docCommentPath(fp)
-		if err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if id == "" {
-			s.writeError(w, http.StatusBadRequest, "id required")
-			return
-		}
-		docCommentMu.Lock()
-		defer docCommentMu.Unlock()
-		items, _ := readJSONStore[DocComment](path)
-		// Cascade-delete replies: a thread root delete must take its children
-		// or they reload as ghost highlights with no rail card and no UI delete.
-		items = slices.DeleteFunc(items, func(c DocComment) bool {
-			return c.ID == id || c.ParentId == id
-		})
-		if len(items) == 0 {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				s.writeError(w, http.StatusInternalServerError, "remove failed")
-				return
-			}
-		} else if err := atomicWriteJSON(path, items); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "write failed")
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-
-	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-	}
+	s.writeJSON(w, r, http.StatusOK, stored)
 }

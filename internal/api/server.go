@@ -219,9 +219,9 @@ func (s *Server) routes() {
 	reg("POST /api/annotations", s.handleAnnotationsPost)
 	reg("DELETE /api/annotations", s.handleAnnotationsDelete)
 
-	reg("GET /api/doc-comments", s.handleDocComments)
-	reg("POST /api/doc-comments", s.handleDocComments)
-	reg("DELETE /api/doc-comments", s.handleDocComments)
+	reg("GET /api/doc-comments", s.handleDocCommentsGet)
+	reg("POST /api/doc-comments", s.handleDocCommentsPost)
+	reg("DELETE /api/doc-comments", s.handleDocCommentsDelete)
 	reg("POST /api/doc-comments/batch", s.handleDocCommentsBatch)
 	reg("GET /api/agent", s.handleAgentDocs)
 	reg("GET /api/capabilities", s.handleCapabilities)
