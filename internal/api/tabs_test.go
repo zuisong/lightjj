@@ -160,13 +160,18 @@ func TestTabCreate_DedupAndFactory(t *testing.T) {
 }
 
 func TestTabManager_SharedSnapshotPause(t *testing.T) {
+	// Counter sharing is keyed by canonical repo path and resolved at watcher
+	// CONSTRUCTION (pauseCounterFor in watcher.go) — TabManager does no
+	// counter wiring. In production the tab factory builds each Server with
+	// RepoDir = the same canonical root that AddTab mounts it under, so tabs
+	// pointing at one working copy share one counter.
 	tm := NewTabManager(nil, nil)
-	mk := func() *Server {
-		s := &Server{}
+	mk := func(repoDir string) *Server {
+		s := &Server{RepoDir: repoDir}
 		s.Watcher = newWatcher(s)
 		return s
 	}
-	a, b, c := mk(), mk(), mk()
+	a, b, c := mk("/repo/one"), mk("/repo/one"), mk("/repo/two")
 	tm.AddTab(a, "/repo/one")
 	tm.AddTab(b, "/repo/one") // same canonical path → shared counter
 	tm.AddTab(c, "/repo/two")

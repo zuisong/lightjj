@@ -3584,7 +3584,7 @@ func TestUnifiedSuccessEnvelope(t *testing.T) {
 		runner := testutil.NewMockRunner(t)
 		defer runner.Verify()
 		srv := newTestServer(runner)
-		srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+		srv.Watcher = &Watcher{subs: make(map[chan sseEvent]struct{}), srv: srv}
 
 		w := httptest.NewRecorder()
 		srv.Mux.ServeHTTP(w, jsonPost("/api/navigate", []byte(`{"change_id":"abc"}`)))
@@ -3757,7 +3757,7 @@ func TestHandleNavigate(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	defer runner.Verify()
 	srv := newTestServer(runner)
-	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+	srv.Watcher = &Watcher{subs: make(map[chan sseEvent]struct{}), srv: srv}
 
 	ch, unsub := srv.Watcher.subscribe()
 	defer unsub()
@@ -3768,9 +3768,9 @@ func TestHandleNavigate(t *testing.T) {
 
 	select {
 	case msg := <-ch:
-		require.True(t, strings.HasPrefix(msg, evNav))
+		require.Equal(t, evNameNav, msg.name)
 		var p navigateRequest
-		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(msg, evNav)), &p))
+		require.NoError(t, json.Unmarshal([]byte(msg.data), &p))
 		assert.Equal(t, "abc", p.ChangeID)
 		assert.Equal(t, "src/a.go", p.FilePath)
 		assert.Equal(t, 42, p.Line)
@@ -3783,7 +3783,7 @@ func TestHandleNavigate_ReMarshalsSSEInjection(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	defer runner.Verify()
 	srv := newTestServer(runner)
-	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+	srv.Watcher = &Watcher{subs: make(map[chan sseEvent]struct{}), srv: srv}
 
 	ch, unsub := srv.Watcher.subscribe()
 	defer unsub()
@@ -3797,14 +3797,14 @@ func TestHandleNavigate_ReMarshalsSSEInjection(t *testing.T) {
 	msg := <-ch
 	// json.Marshal escapes newlines inside string values, so the broadcast
 	// payload contains no raw LF that would terminate the SSE data field.
-	assert.NotContains(t, strings.TrimPrefix(msg, evNav), "\n")
+	assert.NotContains(t, msg.data, "\n")
 }
 
 func TestHandleNavigate_BadRequest(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	defer runner.Verify()
 	srv := newTestServer(runner)
-	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+	srv.Watcher = &Watcher{subs: make(map[chan sseEvent]struct{}), srv: srv}
 
 	for _, tc := range []struct{ name, body string }{
 		{"empty", `{}`},
@@ -3834,7 +3834,7 @@ func TestHandleNavigateCommentID(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	defer runner.Verify()
 	srv := newTestServer(runner)
-	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+	srv.Watcher = &Watcher{subs: make(map[chan sseEvent]struct{}), srv: srv}
 
 	ch, unsub := srv.Watcher.subscribe()
 	defer unsub()
@@ -3845,9 +3845,9 @@ func TestHandleNavigateCommentID(t *testing.T) {
 
 	select {
 	case msg := <-ch:
-		require.True(t, strings.HasPrefix(msg, evNav))
+		require.Equal(t, evNameNav, msg.name)
 		var p navigateRequest
-		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(msg, evNav)), &p))
+		require.NoError(t, json.Unmarshal([]byte(msg.data), &p))
 		assert.Equal(t, "c-42", p.CommentID)
 		assert.Empty(t, p.ChangeID)
 		assert.Empty(t, p.FilePath)
@@ -3951,7 +3951,7 @@ func TestHandleNavigateFieldTooLong(t *testing.T) {
 	runner := testutil.NewMockRunner(t)
 	defer runner.Verify()
 	srv := newTestServer(runner)
-	srv.Watcher = &Watcher{subs: make(map[chan string]struct{}), srv: srv}
+	srv.Watcher = &Watcher{subs: make(map[chan sseEvent]struct{}), srv: srv}
 
 	long := strings.Repeat("a", 257)
 	longPath := strings.Repeat("a", 4097)

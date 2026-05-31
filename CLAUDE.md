@@ -47,9 +47,9 @@ internal/
     local.go               — LocalRunner: exec("jj", args); WriteFile symlink-escape hardening; resolve rejects forgotten workspaces
     ssh.go                 — SSHRunner: wraps jj args in an ssh command
   api/                     — HTTP handlers
-    server.go              — Route registration (route lines ARE the pure-mutation handlers), runMutation, op-id caching, helpers
+    server.go              — Route registration (route lines ARE the pure-mutation handlers), runMutation, op-id cache (getOpId/setOpId/casOpId), helpers
     handlers.go            — Endpoint implementations, generic mutation[Req] factory, flag validation
-    watcher.go             — Op-id watcher: fsnotify + SSE push (local), sshPollLoop (SSH), stale-WC detection
+    watcher.go             — Op-id watcher: fsnotify + SSE push (local), sshPollLoop (SSH), typed sseEvent broadcasts, shared probeTracker, stale-WC detection
     tabs.go                — TabManager: per-tab Server + Watcher mounted at /tab/{id}/
     config.go              — Server-side JSONC config (hujson); mergeAndWriteConfig single write path for human-edited keys
     config_jsonc.go        — hujson helpers: standardizeJSONC, unmarshalJSONC, patchConfigKeys, removeConfigKeys

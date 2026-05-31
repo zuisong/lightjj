@@ -321,9 +321,7 @@ func (s *Server) refreshOpId() string {
 			name := entries[0].Name()
 			if len(name) >= 12 {
 				opId := name[:12]
-				s.cachedMu.Lock()
-				s.cachedOp = opId
-				s.cachedMu.Unlock()
+				s.setOpId(opId)
 				return opId
 			}
 		}
@@ -339,9 +337,7 @@ func (s *Server) refreshOpId() string {
 		return ""
 	}
 	opId := strings.TrimSpace(string(output))
-	s.cachedMu.Lock()
-	s.cachedOp = opId
-	s.cachedMu.Unlock()
+	s.setOpId(opId)
 	return opId
 }
 
@@ -367,10 +363,14 @@ func (s *Server) pauseSnapshot() (resume func()) {
 	return func() { watchdog.Stop(); release() }
 }
 
-// trySnapshot is the single chokepoint for "observe the WC now" — snapshotLoop,
-// handleSnapshot, handleFileWrite all go through here so they uniformly respect
-// snapshotPaused. Returns whether the snapshot ran; callers that do
-// stale-detection check err only when ran.
+// trySnapshot runs `jj util snapshot` unless background snapshots are paused
+// by an in-flight mutation. Callers: snapshotLoop (the periodic background
+// snapshot) and handleFileWrite (post-write so the UI sees the new content
+// without waiting for the next tick). handleSnapshot does NOT come through
+// here — it needs runMutation's response envelope + sync op-id refresh, and
+// runMutation itself bumps snapshotPaused, so it duplicates the paused check
+// inline before calling runMutation instead. Returns whether the snapshot ran;
+// callers that do stale-detection check err only when ran.
 func (s *Server) trySnapshot(ctx context.Context) (ran bool, err error) {
 	if s.Watcher != nil && s.Watcher.snapshotPaused.Load() > 0 {
 		return false, nil
@@ -510,10 +510,38 @@ func (s *Server) streamMutation(w http.ResponseWriter, r *http.Request, args []s
 }
 
 // getOpId returns the cached op-id (may be empty on first call).
+//
+// getOpId/setOpId/casOpId are the op-id cache API — the cachedOp/cachedMu
+// fields are an implementation detail nothing outside these three methods
+// (plus refreshOpId, which composes them with the actual jj read) should
+// touch. The SSH poll loop in particular must use casOpId, not the fields.
 func (s *Server) getOpId() string {
 	s.cachedMu.RLock()
 	defer s.cachedMu.RUnlock()
 	return s.cachedOp
+}
+
+// setOpId stores a freshly observed op-id in the cache.
+func (s *Server) setOpId(opId string) {
+	s.cachedMu.Lock()
+	s.cachedOp = opId
+	s.cachedMu.Unlock()
+}
+
+// casOpId is a compare-and-swap on the cached op-id: the cache advances to
+// next only if it still holds prev (the value the caller read before starting
+// its observation). Returns the cache's current value either way, plus whether
+// the swap happened. The SSH poll loop uses this so a poll result captured
+// BEFORE a concurrent runMutation's refresh can't regress the cache — on
+// mismatch the loop broadcasts the (fresher) current value instead.
+func (s *Server) casOpId(prev, next string) (current string, swapped bool) {
+	s.cachedMu.Lock()
+	defer s.cachedMu.Unlock()
+	if s.cachedOp != prev {
+		return s.cachedOp, false
+	}
+	s.cachedOp = next
+	return next, true
 }
 
 // readWorkspaceStore reads and parses the workspace store index file.

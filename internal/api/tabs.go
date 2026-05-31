@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -50,10 +49,6 @@ type TabManager struct {
 	mu   sync.RWMutex
 	tabs map[string]*Tab
 	next int
-	// pauseCounters: one snapshotPaused counter per canonical repo path, so a
-	// push in tab A suppresses tab B's snapshotLoop when both point at the
-	// same WC. Never deleted — O(distinct-paths-ever-opened), each 8 bytes.
-	pauseCounters map[string]*atomic.Int32
 
 	newTab  TabFactory
 	resolve TabResolve
@@ -85,12 +80,11 @@ type TabManager struct {
 
 func NewTabManager(newTab TabFactory, resolve TabResolve) *TabManager {
 	m := &TabManager{
-		Mux:           http.NewServeMux(),
-		tabs:          make(map[string]*Tab),
-		pauseCounters: make(map[string]*atomic.Int32),
-		newTab:        newTab,
-		resolve:       resolve,
-		ShutdownCh:    make(chan struct{}),
+		Mux:        http.NewServeMux(),
+		tabs:       make(map[string]*Tab),
+		newTab:     newTab,
+		resolve:    resolve,
+		ShutdownCh: make(chan struct{}),
 	}
 	m.Mux.HandleFunc("GET /tabs", m.handleList)
 	m.Mux.HandleFunc("POST /tabs", m.handleCreate)
@@ -138,15 +132,12 @@ func (m *TabManager) addLocked(srv *Server, path string) *Tab {
 	// Wire this tab's SSE subscriber count into the cross-tab total. Nil-safe:
 	// --no-watch or NewWatcher failure means no SSE → this tab contributes
 	// nothing to idle detection (can't detect "browser closed" without SSE).
+	// (Snapshot-pause sharing across same-path tabs needs no wiring here:
+	// watchers resolve their shared counter at construction via
+	// pauseCounterFor — see watcher.go.)
 	if srv.Watcher != nil {
 		srv.Watcher.onSub = m.incSub
 		srv.Watcher.onUnsub = m.decSub
-		pc, ok := m.pauseCounters[path]
-		if !ok {
-			pc = new(atomic.Int32)
-			m.pauseCounters[path] = pc
-		}
-		srv.Watcher.snapshotPaused = pc
 	}
 	return t
 }
