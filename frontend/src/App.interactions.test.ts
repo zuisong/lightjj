@@ -26,7 +26,10 @@ vi.mock('./lib/api', async (orig) => {
 vi.stubGlobal('fetch', async () => new Response(null, { status: 204 }))
 
 import App from './App.svelte'
-import { resetMockApi, calls, triggerNavigate } from './testutil/mock-api'
+import {
+  resetMockApi, calls, triggerNavigate, triggerStale,
+  setFixtures, defaultFixtures, mkRevision,
+} from './testutil/mock-api'
 import { waitFor } from './testutil/wait-for'
 
 // Dispatch on body, not window: event.target must be an HTMLElement for
@@ -41,7 +44,7 @@ const selectedEntry = () => qs('.graph-row.node-row.selected')?.getAttribute('da
 async function mountApp() {
   const r = render(App)
   // loadLog() is fired at module-body level; wait for the graph to render.
-  // workingCopyIndex (entry 0 in defaultFixtures) becomes selectedIndex.
+  // The working copy (entry 0 in defaultFixtures) becomes the cursor fallback.
   await waitFor(() => document.querySelectorAll('.graph-row.node-row').length === 3)
   return r
 }
@@ -167,5 +170,96 @@ describe('App.svelte interactions', () => {
     triggerNavigate({ change_id: 'cnonexistent' })
     await waitFor(() => qs('.message-text')?.textContent?.includes('not in current revset') === true)
     expect(selectedEntry()).toBe('0')
+  })
+})
+
+// ── Staleness model + identity-keyed cursor ─────────────────────────────────
+// Locks the App-side behavior of the derived staleness design: staleness is
+// `currentOpId !== renderedOpId` evaluated by an $effect, so a refresh
+// suppressed by an inline mode/modal/mutation fires when the gate clears
+// instead of being dropped. And the cursor is identity-keyed (selectedId →
+// derived selectedIndex), so a refresh that shifts row positions cannot
+// silently re-bind the cursor (and the diff panel) to a different revision.
+describe('staleness + identity cursor', () => {
+  const logCalls = () => calls.filter(c => c.method === 'log').length
+
+  it('an external op-id change refreshes the log', async () => {
+    await mountApp()
+    const before = logCalls()
+    triggerStale('op-ext-1')
+    await waitFor(() => logCalls() > before)
+  })
+
+  it('staleness during rebase mode is deferred — refresh fires on Escape, not dropped', async () => {
+    await mountApp()
+    await press('R')
+    await waitFor(() => qs('.statusbar.rebase-active') !== null)
+
+    const before = logCalls()
+    triggerStale('op-ext-2')
+    // Must NOT refresh while the mode is active. Real-time wait covers the
+    // effect's macrotask deferral window (it re-checks gates and bails).
+    await new Promise(r => setTimeout(r, 50))
+    expect(logCalls()).toBe(before)
+
+    // Exiting the mode flips a gate the (still-stale) effect depends on →
+    // the refresh fires now. This is the fact the old event-callback model
+    // dropped permanently.
+    await press('Escape')
+    await waitFor(() => qs('.statusbar.rebase-active') === null)
+    await waitFor(() => logCalls() > before)
+  })
+
+  it('cursor follows revision identity when a refresh shifts row positions', async () => {
+    await mountApp()
+    await press('j')
+    await waitFor(() => selectedEntry() === '1') // on cmid
+
+    // External op inserts a new revision between @ and cmid → rows shift.
+    const f = defaultFixtures()
+    setFixtures({
+      revisions: [
+        f.revisions[0],
+        mkRevision({ change_id: 'cnew', commit_id: 'knew', description: 'external work', parent_ids: ['kmid'] }),
+        f.revisions[1],
+        f.revisions[2],
+      ],
+    })
+    triggerStale('op-ext-3')
+
+    await waitFor(() => document.querySelectorAll('.graph-row.node-row').length === 4)
+    // cmid now sits at entry 2. An index-keyed cursor would have stayed at
+    // entry 1 — the unrelated external revision — and loaded its diff.
+    await waitFor(() => selectedEntry() === '2')
+  })
+
+  it('cursor falls back to the working copy when its revision disappears', async () => {
+    await mountApp()
+    await press('j')
+    await waitFor(() => selectedEntry() === '1') // on cmid
+
+    // External op abandons cmid.
+    const f = defaultFixtures()
+    setFixtures({ revisions: [f.revisions[0], f.revisions[2]] })
+    triggerStale('op-ext-4')
+
+    await waitFor(() => document.querySelectorAll('.graph-row.node-row').length === 2)
+    await waitFor(() => selectedEntry() === '0') // back on @
+  })
+
+  // Tab-switch snapshot contract (AppShell getState → initialState round-trip).
+  it('getState() snapshots the cursor as identity, not index', async () => {
+    const { component } = await mountApp()
+    await press('j')
+    await waitFor(() => selectedEntry() === '1')
+    expect(component.getState().selectedId).toBe('cmid')
+  })
+
+  it('initialState.selectedId restores the cursor onto the same revision', async () => {
+    render(App, { props: { initialState: {
+      selectedId: 'cmid', revsetFilter: '', activeView: 'log', diffScrollTop: 0,
+    } } })
+    await waitFor(() => document.querySelectorAll('.graph-row.node-row').length === 3)
+    await waitFor(() => selectedEntry() === '1')
   })
 })

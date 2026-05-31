@@ -85,7 +85,7 @@ export function mkFileChange(over: Partial<FileChange> = {}): FileChange {
 }
 
 /** 3-revision linear history: @ at index 0, mutable middle, immutable trunk.
- *  Mirrors loadLog's default selectedIndex = workingCopyIndex behavior. */
+ *  Mirrors loadLog's default cursor fallback (selectedId → working copy). */
 export function defaultFixtures(): Fixtures {
   const trunk = mkRevision({ change_id: 'ctrunk', commit_id: 'ktrunk', description: 'main', immutable: true })
   const mid = mkRevision({ change_id: 'cmid', commit_id: 'kmid', description: 'feature work', parent_ids: ['ktrunk'] })
@@ -118,6 +118,7 @@ export function resetMockApi(): void {
   calls.length = 0
   _seq = 0
   _navCb = null
+  _staleCb = null
 }
 
 const okMutation: MutationResult = { output: '' }
@@ -169,13 +170,20 @@ export function triggerNavigate(p: NavigatePayload): void {
   _navCb?.(p)
 }
 
+let _staleCb: ((opId: string) => void) | null = null
+/** Fire the op-id staleness handler App registered via `onStale(cb)` —
+ *  simulates an external operation observed via SSE/header. */
+export function triggerStale(opId: string): void {
+  _staleCb?.(opId)
+}
+
 /** Override map for `vi.mock('./lib/api')` — spread on top of importActual.
  *  Contains every network-touching named export App.svelte and its transitive
  *  imports (revision-navigator, DiffPanel) read. Pure helpers stay real. */
 export const netStubs = {
   api: mockApi,
   wireAutoRefresh: () => () => {},
-  onStale: noopSub,
+  onStale: (cb: (opId: string) => void) => { _staleCb = cb; return () => { _staleCb = null } },
   onStaleWC: noopSub,
   onPollFail: noopSub,
   onSSEState: noopSub,

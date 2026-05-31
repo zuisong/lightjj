@@ -156,8 +156,14 @@ export interface Bookmark {
 // Used ONLY to trigger log/graph refresh via staleCallbacks — NOT for cache
 // invalidation. Per-revision data is keyed by commit_id (content-addressed,
 // self-invalidating) so op-id changes don't touch the cache at all.
+//
+// Callbacks receive the new op-id so consumers can model staleness as DERIVED
+// state ("the op-id I rendered" vs "the op-id the backend last reported")
+// instead of treating each notification as a droppable refresh-now event.
+// App.svelte's staleness $effect is the canonical consumer (docs/CACHING.md
+// "Staleness model").
 let lastOpId: string | null = null
-const staleCallbacks = new Set<() => void>()
+const staleCallbacks = new Set<(opId: string) => void>()
 let refreshQueued = false
 
 // Stale-working-copy subscribers. Server's snapshotLoop pushes `stale-wc` /
@@ -237,7 +243,12 @@ const cache = new Map<string, unknown>()
 const READ_TIMEOUT_MS = 30_000
 const MUTATION_TIMEOUT_MS = 60_000
 
-export function onStale(callback: () => void): () => void {
+/** Subscribe to op-id changes (jj state advanced — by this tab, another tab,
+ *  or an external CLI/agent). The callback receives the latest op-id; store it
+ *  in reactive state and DERIVE staleness from it rather than refreshing
+ *  inside the callback — callbacks coalesce per tick and a refresh suppressed
+ *  at callback time would otherwise be lost. */
+export function onStale(callback: (opId: string) => void): () => void {
   staleCallbacks.add(callback)
   return () => { staleCallbacks.delete(callback) }
 }
@@ -366,12 +377,26 @@ function notifyOpId(opId: string) {
   lastOpId = opId
   if (!changed) return
 
+  // The op-id advanced: drop the aliases/remotes session memos so the next
+  // consumer refetches. They're memoized as "session-stable", but a CLI
+  // `jj config set` (aliases) or `git remote add` (remotes) followed by any
+  // operation invalidates that assumption; bounded staleness beats forever-
+  // staleness. _info is deliberately NOT cleared — repo identity / SSH mode
+  // can't change for a running server, and clearing it would flap the jj
+  // feature gates that resolvedInfo() feeds synchronously.
+  _remotes = undefined
+  _aliases = undefined
+
   if (staleCallbacks.size > 0 && !refreshQueued) {
     refreshQueued = true
-    // Deduplicates within a single tick; resets after callbacks fire
+    // Deduplicates within a single tick; resets after callbacks fire.
+    // Callbacks get the LATEST op-id known at fire time — a burst of
+    // notifications within one tick coalesces to the newest.
     queueMicrotask(() => {
       refreshQueued = false
-      for (const cb of [...staleCallbacks]) cb()
+      const op = lastOpId
+      if (!op) return // tab switched between queue and fire — new tab reseeds
+      for (const cb of [...staleCallbacks]) cb(op)
     })
   }
 }
@@ -751,7 +776,9 @@ export async function prefetchFilesBatch(commitIds: string[]): Promise<void> {
 }
 
 // Session-stable data — remotes/aliases don't change mid-session unless the
-// user edits jj config externally. clearAllCaches() (hard refresh) resets.
+// user edits jj config externally. Cleared by clearAllCaches() (hard refresh),
+// setActiveTab() (different repo), and notifyOpId() on op-id change (an
+// external operation may follow a config/remote edit — see notifyOpId).
 let _remotes: Promise<string[]> | undefined
 let _aliases: Promise<Alias[]> | undefined
 let _info: Promise<InfoResponse> | undefined

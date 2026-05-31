@@ -16,9 +16,12 @@ that is *intentionally* rewrite-stable (collapse preferences, annotations) or
 need explicit invalidation. Every cache in this doc falls into one of these two
 key-type buckets; when adding a new one, decide which and document why.
 
-Corollary: **op-id changes never touch the response cache.** They fire
-`staleCallbacks` → `loadLog()` (graph refresh) but commit_id-keyed entries
-stay valid across arbitrary operations.
+Corollary: **op-id changes never touch the response cache.** They feed the
+frontend's staleness model (below) — graph refresh, never cache invalidation —
+and commit_id-keyed entries stay valid across arbitrary operations. The one
+exception is the aliases/remotes promise memos (#2), which ARE dropped on
+op-id change: they're keyed by repo identity, not commit_id, so "an operation
+happened" is the only signal that they might have changed.
 
 ---
 
@@ -27,7 +30,7 @@ stay valid across arbitrary operations.
 | # | Cache | Location | Key format | Keyed by | Size | Invalidation |
 |---|---|---|---|---|---|---|
 | 1 | `cache` (response) | api.ts module | `diff:${cid}` · `files:${cid}` · `desc:${cid}` · `diff:${id}:${file}:ctx${n}` · `range:${from}\x1F${to}\x1F${sortedFiles}` | commit_id | `MAX_CACHE_SIZE` | self-invalidating |
-| 2 | `_remotes`/`_aliases`/`_info` | api.ts module | promise memo | repo identity | single-slot | `clearSessionMemos()` on tab-switch / hard-refresh |
+| 2 | `_remotes`/`_aliases`/`_info` | api.ts module | promise memo | repo identity | single-slot | `clearSessionMemos()` on tab-switch / hard-refresh; `_remotes`/`_aliases` (NOT `_info`) also dropped on op-id change |
 | 3 | Browser HTTP disk cache | browser | `/api/revision?...&immutable=1` URL | commit_id | browser-managed | `Cache-Control: immutable` — never |
 | 4 | `derivedCache` | diff-cache.ts | `diffTargetKey(t)` = commit_id OR `connected(a\|b\|c)` | commit_id-embedding | `DERIVED_CACHE_SIZE` | self-invalidating · `clearDiffCaches()` on hard-refresh |
 | 5 | `parsedDiffCache` | diff-cache.ts | raw diff string | content | `DERIVED_CACHE_SIZE` | self-invalidating (same content → same parse) · `clearDiffCaches()` |
@@ -82,6 +85,17 @@ value) so concurrent callers share one request. Error path clears the slot:
 `.catch(e => { _remotes = undefined; throw e })` — otherwise a transient
 network error memoizes a rejected Promise and every future call rejects until
 hard-refresh. Tested (`api.test.ts`: "retries remotes() after failure").
+
+**Op-id invalidation (aliases/remotes only).** `notifyOpId` drops `_remotes`
+and `_aliases` whenever the op-id changes: a CLI `jj config set` or
+`git remote add` doesn't itself advance the op-id, but the user's *next*
+operation does, and at that point "session-stable" is no longer a safe
+assumption. Bounded staleness instead of forever-staleness; the next consumer
+(GitModal open, App's throttled mirror refresh) refetches. `_info` is NOT
+dropped — repo identity / SSH mode can't change for a running server, and
+clearing it would flap the jj feature gates that `resolvedInfo()` feeds
+synchronously. Tested (`api.test.ts`: "op-id change drops the aliases/remotes
+session memos", "does NOT drop the info memo").
 
 ### 3. Browser HTTP cache
 
@@ -204,9 +218,58 @@ self-healing, costs one redundant HTTP round-trip. Rare at current LRU size.
 `setActiveTab(B)` sets `lastOpId = null` so tab B's first response seeds it
 cleanly. Known bounded race: an in-flight request from tab A can arrive after
 the reset and seed A's op-id → B's next response fires one redundant
-`loadLog`. Bounded to one extra refresh; App's `!loading` guard prevents
-stacking. The **cache write** from that in-flight request is always correct —
-commit_id-keyed data is valid regardless of which tab fetched it.
+`loadLog`. Bounded to one extra refresh; App's gates prevent stacking. The
+**cache write** from that in-flight request is always correct — commit_id-keyed
+data is valid regardless of which tab fetched it.
+
+---
+
+## Staleness model
+
+How the frontend decides "the rendered graph no longer reflects the repo."
+Not a cache (nothing is stored) but the coherence mechanism that drives every
+non-explicit `loadLog()`.
+
+**Staleness is derived state, never an event.** Three pieces, all in
+App.svelte:
+
+| Variable | Reactivity | Meaning |
+|---|---|---|
+| `currentOpId` | `$state` | latest op-id the backend reported. Written by the `onStale` subscription (api.ts callbacks pass the op-id; SSE pushes and response headers both feed it) |
+| `renderedOpId` | `$state` | op-id the rendered log reflects — a *lower bound*: set on successful `loadLog` to the `currentOpId` captured at load **start** (the response is at least that fresh, since op-ids only advance) |
+| `attemptedOpId` | plain `let` | op-id of the last *started* `loadLog`, stamped synchronously at entry, success or not |
+
+One `$effect` evaluates `currentOpId !== renderedOpId` behind the gates
+(`loading || mutating || anyModalOpen || inlineMode`). Because effects re-run
+when **any** dependency changes, a refresh suppressed by a gate fires as soon
+as the gate clears — the staleness fact cannot be dropped. (The previous
+design refreshed inside the `onStale` callback and returned early when gated;
+api.ts had already advanced `lastOpId`, so the dropped event never re-fired
+and the graph stayed stale until the *next* operation.)
+
+Supporting details:
+
+- **Capture-at-start renderedOpId.** An op-id arriving mid-`loadLog` leaves
+  `renderedOpId < currentOpId` → exactly one more refresh. Conservative,
+  never lossy; converges in one extra round.
+- **`attemptedOpId` (non-reactive on purpose).** (a) A persistently failing
+  `loadLog` doesn't retry-loop — each new op-id gets one effect-driven
+  attempt. (b) The effect defers its refresh by one macrotask and re-checks:
+  post-mutation flows (`runMutation`, DiffPanel `onfilesaved`) call `loadLog`
+  explicitly right after `mutating` clears, and the stamp lets the effect skip
+  the duplicate fetch.
+- **Dependency hygiene.** When not stale, the effect reads only the two
+  op-ids → inert until one moves. The gates become deps only while stale.
+- **What rides along.** A staleness-driven refresh also refreshes the other
+  server-state mirrors: workspaces + stale-immutable groups every time;
+  PR badges / aliases / remotes throttled to once per minute
+  (`refreshSlowMirrors`, stamped by `lastPrFetch`).
+
+The cursor survives these refreshes because selection is identity-keyed:
+`selectedId` (effectiveId) is the `$state`, `selectedIndex` is derived from it
+against the current `revisions` list, and `loadLog`'s reconciliation falls
+back to the working-copy row only when the selected revision disappeared.
+Tested: `App.interactions.test.ts` `describe('staleness + identity cursor')`.
 
 ---
 

@@ -62,7 +62,7 @@ export interface RevisionNavigator {
    * Schedule applyCacheHit past the next paint (double-rAF). Cancels any
    * prior navigate* schedule. `abort()` re-checked at fire — guards against
    * cursor moving via a path that doesn't call navigate* (loadLog's
-   * selectedIndex reset, selectRevisionCursorOnly).
+   * working-copy fallback, selectRevisionCursorOnly).
    *
    * Double-rAF: rAF callbacks run BEFORE paint in the same frame (event →
    * microtasks → rAF → style → layout → paint). Outer rAF = frame N pre-paint;

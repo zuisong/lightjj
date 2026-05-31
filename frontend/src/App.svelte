@@ -10,7 +10,10 @@
    *  (rebase/squash/split/describe) are intentionally NOT preserved — a
    *  half-complete operation across tabs is a footgun. */
   export interface TabState {
-    selectedIndex: number
+    /** Cursor identity (effectiveId of the selected revision), not an index —
+     *  the log can shift under a backgrounded tab, and an index snapshot would
+     *  silently re-bind to whatever row lands at that position. */
+    selectedId: string | null
     revsetFilter: string
     activeView: 'log' | 'branches'
     diffScrollTop: number
@@ -75,7 +78,14 @@
   // --- Global state ---
   // initialState-hydrated vars: restored on tab-switch-back via AppShell's
   // snapshot. Everything else starts fresh on mount.
-  let selectedIndex: number = $state(init?.selectedIndex ?? -1)
+  //
+  // Cursor IDENTITY — effectiveId (change_id; commit_id for divergent/hidden)
+  // of the selected revision. The index is DERIVED from this (`selectedIndex`
+  // in the Derived section below): a refresh that inserts/removes rows shifts
+  // positions, but the cursor stays on the same revision and the diff panel
+  // never silently re-binds to a different one. All selection writes go
+  // through selectRevision/selectRevisionCursorOnly/loadLog reconciliation.
+  let selectedId: string | null = $state(init?.selectedId ?? null)
   let revsetFilter: string = $state(init?.revsetFilter ?? '')
   let pendingScrollRestore: number | null = init?.diffScrollTop ?? null
 
@@ -605,6 +615,26 @@
   let wsSelectorEl: HTMLElement | undefined = $state(undefined)
 
   // --- Derived ---
+  // Scoped so it only re-scans when revisions changes, not on every loading/mutating flip.
+  // Index-based so the '@' key and post-load reset share the same scan.
+  let workingCopyIndex = $derived(revisions.findIndex(r => r.commit.is_working_copy))
+  let workingCopyEntry = $derived(workingCopyIndex >= 0 ? revisions[workingCopyIndex] : undefined)
+
+  // Cursor INDEX, derived from the identity (selectedId). Existing consumers
+  // (j/k bounds, mode destination targeting, RevisionGraph prop, slide) keep
+  // reading a number under the same name. Falls back to the working-copy row
+  // when the id isn't in the current list (external abandon, narrower revset);
+  // -1 only when the list is empty or has no working copy either. loadLog's
+  // reconciliation rewrites selectedId on fallback so the two stay consistent.
+  let selectedIndex = $derived.by(() => {
+    if (selectedId !== null) {
+      const id = selectedId
+      const idx = revisions.findIndex(r => effectiveId(r.commit) === id)
+      if (idx >= 0) return idx
+    }
+    return workingCopyIndex
+  })
+
   let selectedRevision: LogEntry | null = $derived(
     selectedIndex >= 0 && selectedIndex < revisions.length
       ? revisions[selectedIndex]
@@ -637,11 +667,6 @@
     for (const cid of connected) if (!checkedSet.has(cid)) implied.add(cid)
     return implied
   })
-
-  // Scoped so it only re-scans when revisions changes, not on every loading/mutating flip.
-  // Index-based so the '@' key and post-load reset share the same scan.
-  let workingCopyIndex = $derived(revisions.findIndex(r => r.commit.is_working_copy))
-  let workingCopyEntry = $derived(workingCopyIndex >= 0 ? revisions[workingCopyIndex] : undefined)
 
   // Live progress line from streamMutation (git push/fetch). Takes precedence
   // over the generic "Working..." while a stream is feeding it.
@@ -1051,9 +1076,29 @@
     catch { /* ignore — aliases are optional */ }
   }
 
+  // PR list is a `gh` network call (slow, possibly rate-limited). lastPrFetch
+  // throttles staleness-driven refreshes (refreshSlowMirrors below); explicit
+  // callers (mount, handleGitOp's after-hook) always fetch and stamp it.
+  const PR_REFRESH_MS = 60_000
+  let lastPrFetch = 0
   async function loadPullRequests() {
+    lastPrFetch = Date.now()
     try { pullRequests = await api.pullRequests() }
     catch { /* ignore — gh may not be available */ }
+  }
+
+  // Slow-changing server-state mirrors: PR badges, palette aliases, remote
+  // list. External changes to these are rare, so staleness-driven refreshes
+  // are throttled to once per PR_REFRESH_MS. api.ts drops its aliases/remotes
+  // session memos on op-id change, so the loadAliases/remotes calls here hit
+  // the network only when an operation could actually have changed them and
+  // are memo-hits otherwise; the PR fetch is the expensive one and shares the
+  // throttle.
+  function refreshSlowMirrors() {
+    if (Date.now() - lastPrFetch < PR_REFRESH_MS) return
+    void loadPullRequests()
+    void loadAliases()
+    api.remotes().then(r => { allRemotes = r }).catch(() => {})
   }
 
   function handleRunAlias(name: string) {
@@ -1070,22 +1115,54 @@
   }
 
 
+  // ── Staleness bookkeeping (see the staleness $effect further down) ────────
+  // currentOpId  — latest op-id the backend reported (SSE push or response
+  //                header), written by the onStale subscription. Reactive.
+  // renderedOpId — op-id the rendered log reflects (a lower bound: set to the
+  //                value of currentOpId captured when the applying loadLog
+  //                STARTED — the response is at least that fresh since op-ids
+  //                only advance). Reactive.
+  // attemptedOpId — op-id of the last STARTED loadLog (set synchronously at
+  //                entry, success or not). Non-reactive on purpose: it (a)
+  //                stops the staleness effect from retry-looping a
+  //                persistently failing load (each new op-id gets exactly one
+  //                effect-driven attempt), and (b) lets the effect's deferred
+  //                re-check see that an explicit post-mutation loadLog already
+  //                started and skip the duplicate fetch.
+  let currentOpId = $state<string | null>(null)
+  let renderedOpId = $state<string | null>(null)
+  let attemptedOpId: string | null = null
+
   async function loadLog(resetSelection = false) {
+    const opIdAtLoad = currentOpId
+    attemptedOpId = opIdAtLoad
+
     const revset = revsetFilter || undefined
     const ok = await log.load(revset)
     blurActiveInput()
     if (!ok) return // superseded or errored — don't post-process stale state
+
+    // The applied log reflects (at least) the op state we knew at load start.
+    // If a newer op-id arrived mid-fetch, renderedOpId stays behind currentOpId
+    // and the staleness effect fires one more refresh — conservative, never lossy.
+    renderedOpId = opIdAtLoad
 
     // pendingSelectCommitId: jumpToBookmark's deferred selection. Consume
     // here; on hit suppress resetSelection (which handleRevsetSubmit passes).
     let pending = pendingSelectCommitId
     pendingSelectCommitId = null
     if (pending) {
-      const idx = revisions.findIndex(r => r.commit.commit_id === pending)
-      if (idx >= 0) { selectedIndex = idx; resetSelection = false }
+      const entry = revisions.find(r => r.commit.commit_id === pending)
+      if (entry) { selectedId = effectiveId(entry.commit); resetSelection = false }
     }
-    if (resetSelection || selectedIndex < 0 || selectedIndex >= revisions.length) {
-      selectedIndex = workingCopyIndex
+    // Identity reconciliation: if the selected revision still exists, the
+    // cursor stays on it (selectedIndex re-derives its possibly-shifted
+    // position). If it disappeared (external abandon, narrower revset) — or a
+    // reset was requested — fall back to the working copy.
+    const stillExists = selectedId !== null &&
+      revisions.some(r => effectiveId(r.commit) === selectedId)
+    if (resetSelection || !stillExists) {
+      selectedId = workingCopyEntry ? effectiveId(workingCopyEntry.commit) : null
     }
     if (checkedRevisions.size > 0) {
       const validIds = new Set(revisions.map(r => effectiveId(r.commit)))
@@ -1095,6 +1172,10 @@
     }
     lastCheckedIndex = -1
     if (selectedIndex >= 0 && checkedRevisions.size === 0) {
+      // Same revision after a refresh → navigator's isRefresh path + the
+      // commit_id cache make this a no-op render-wise (no spinner, no fetch
+      // unless the commit was actually rewritten). Different/fallback
+      // revision → real load.
       const sel = revisions[selectedIndex]
       nav.loadDiffAndFiles(sel.commit, hasChecked)
     }
@@ -1128,7 +1209,8 @@
   // Move cursor without loading diff/files — used in squash mode where
   // the diff is intentionally frozen on the source revision
   function selectRevisionCursorOnly(index: number) {
-    selectedIndex = index
+    const entry = revisions[index]
+    if (entry) selectedId = effectiveId(entry.commit)
   }
 
   let prevSelectedIndex = -1
@@ -1137,11 +1219,14 @@
     const moved = index !== prevSelectedIndex
     const direction = index > prevSelectedIndex ? 1 : -1
     prevSelectedIndex = index
-    selectedIndex = index
-    descriptionEditing = false
 
     const entry = revisions[index]
+    // Callers bounds-check (navKey, '@', jumpToBookmark, RevisionGraph rows),
+    // so a missing entry only means an empty list — leave selection unchanged.
     if (!entry) return
+    const id = effectiveId(entry.commit)
+    selectedId = id
+    descriptionEditing = false
 
     // Clicking away from the divergent change closes the panel (intent =
     // "done looking at this"). Clicking the SAME change is a no-op — panel
@@ -1152,11 +1237,13 @@
     }
 
     // Scheduling (rAF/debounce/cancel) lives in navigator now. abort covers
-    // cursor moving via a path that doesn't call selectRevision (loadLog's
-    // index reset, selectRevisionCursorOnly in branches view).
+    // the cursor moving on via any path before the schedule fires (loadLog's
+    // working-copy fallback, selectRevisionCursorOnly in branches view).
+    // IDENTITY comparison — a row-shifting refresh that leaves the cursor on
+    // this same revision must NOT abort the scheduled apply.
     const hit = checkedRevisions.size === 0 ? getCached(entry.commit.commit_id) : null
     if (hit) {
-      nav.navigateCached(entry.commit, hit, () => selectedIndex !== index)
+      nav.navigateCached(entry.commit, hit, () => selectedId !== id)
     } else {
       // getCommit re-read at fire — rapid uncached j/k coalesces to CURRENT
       // cursor, not scheduled-time cursor.
@@ -2148,8 +2235,8 @@
   }
 
   // User-intent refresh — dismisses any stale error/warning. Background
-  // refreshes (runMutation's post-mutation loadLog, SSE onStale, mode-exit
-  // effect) call loadLog() directly and preserve the message they just set.
+  // refreshes (runMutation's post-mutation loadLog, the staleness effect)
+  // call loadLog() directly and preserve the message they just set.
   function userRefresh(resetSelection = false) {
     setMessage(null)
     return loadLog(resetSelection)
@@ -2471,28 +2558,44 @@
     }
   }
 
-  // Auto-refresh when jj state changes outside the UI (detected via op-id header).
-  // Skip if a mutation is in flight — mutation handlers call loadLog explicitly,
-  // and the stale callback fires as a microtask BEFORE res.json() resolves (i.e.
-  // while we're still inside await fn() with mutating=true, loading=false).
-  // Without !mutating, every mutation over SSH fires a redundant ~440ms loadLog.
-  // If stale events occur during inline mode OR a modal, defer refresh to
-  // when the suppressing condition clears. Same variable for both — the
-  // deferred-refresh effect below fires when neither is active.
-  let staleWhileSuppressed = false
+  // ── Staleness model ────────────────────────────────────────────────────────
+  // "Is the graph stale?" is DERIVED state, not an event: stale ⟺ the op-id
+  // the backend last reported (currentOpId) differs from the op-id the
+  // rendered log reflects (renderedOpId). The effect below re-evaluates
+  // whenever ANY input changes, so a refresh suppressed by loading/mutating/
+  // modal/inline-mode fires as soon as the suppressing condition clears — the
+  // staleness fact can never be dropped. (The previous model fired loadLog
+  // from inside the onStale callback and dropped the event when gated; an
+  // op-id arriving mid-loadLog left the graph stale until the NEXT operation.)
+  //
+  // The subscription only records the op-id; all policy lives in the effect.
+  $effect(() => onStale((opId) => { currentOpId = opId }))
+
   $effect(() => {
-    return onStale(() => {
-      if (!loading && !mutating && !anyModalOpen && !inlineMode) {
-        loadLog()
-        // Workspaces can change outside the UI too (CLI add/rename/forget,
-        // another tab, an agent). Fire-and-forget — one cheap jj call,
-        // error-swallowing, must not delay loadLog.
-        void loadWorkspaces()
-      } else if (inlineMode || anyModalOpen) staleWhileSuppressed = true
-      // loadLog at :721 already calls bookmarksPanel.load() when branches is
-      // active. Only fire here when loadLog was gated (loading/mutating true).
-      else if (activeView === 'branches') bookmarksPanel.load()
-    })
+    // Dependency note: when not stale, only currentOpId/renderedOpId are read
+    // → the effect is inert until an op-id moves. The gates below become deps
+    // only while stale, which is exactly when their flips should re-evaluate.
+    if (currentOpId === null || currentOpId === renderedOpId) return
+    if (loading || mutating || anyModalOpen || inlineMode) return
+    // Defer one macrotask + re-check before refreshing: post-mutation flows
+    // (runMutation, DiffPanel's onfilesaved) call loadLog explicitly right
+    // after `mutating` clears. The deferral lets that call start first — it
+    // stamps attemptedOpId synchronously at entry — so this effect doesn't
+    // fire a duplicate /api/log fetch. attemptedOpId also stops a persistently
+    // failing load from retry-looping (one effect-driven attempt per op-id).
+    const t = setTimeout(() => {
+      if (currentOpId === null || currentOpId === renderedOpId) return
+      if (currentOpId === attemptedOpId) return
+      if (loading || mutating || anyModalOpen || inlineMode) return
+      loadLog()
+      // Server-state mirrors that external operations can change. loadLog
+      // covers the graph + (in branches view) the bookmarks panel; these
+      // cover the rest. All fire-and-forget and error-swallowing.
+      void loadWorkspaces()
+      checkStaleImmutable()
+      refreshSlowMirrors()
+    }, 0)
+    return () => clearTimeout(t)
   })
   // Load on view entry. Covers key '2' + toolbar click + any future path.
   // loadLog also refreshes if branches view is open (mutations via this tab).
@@ -2500,8 +2603,9 @@
     if (activeView === 'branches') bookmarksPanel.load()
   })
   // Auto-refresh sources: SSE push (fsnotify/inotifywait) + tab-focus snapshot.
-  // Both route through notifyOpId → onStale so the guards above apply. The
-  // body reads no reactive state → runs once on mount, cleanup on unmount.
+  // Both route through notifyOpId → onStale → currentOpId, so the staleness
+  // effect's gates apply. The body reads no reactive state → runs once on
+  // mount, cleanup on unmount.
   $effect(() => wireAutoRefresh())
   $effect(() => onStaleWC((s) => { workspaceStale = s }))
   $effect(() => onPollFail((err) => { pollFailError = err }))
@@ -2633,15 +2737,6 @@
     clearTimeout(evologDebounceTimer)
     nav.cancel()
   })
-  $effect(() => {
-    if (!inlineMode && !anyModalOpen && staleWhileSuppressed) {
-      staleWhileSuppressed = false
-      loadLog()
-      // Mirror the direct onStale path — the suppressed staleness may have
-      // included workspace changes.
-      void loadWorkspaces()
-    }
-  })
 
   loadLog()
   loadInfo()
@@ -2653,7 +2748,9 @@
   // AppShell calls getState() before the {#key} remount destroys this instance.
   export function getState(): TabState {
     return {
-      selectedIndex,
+      // Identity, not index: the backgrounded tab's log can shift before the
+      // user switches back (SSE keeps flowing into the new instance).
+      selectedId,
       revsetFilter,
       // Merge/doc modes are NOT preserved across tabs — half-done conflict
       // resolution or in-progress doc edit across tab-switch is a footgun.

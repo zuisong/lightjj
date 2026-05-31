@@ -356,6 +356,67 @@ describe('onStale', () => {
     await Promise.resolve()
     expect(cb).not.toHaveBeenCalled()
   })
+
+  it('passes the new op-id to callbacks (consumers derive staleness from it)', async () => {
+    const cb = vi.fn()
+    onStale(cb)
+
+    mockFetch.mockResolvedValueOnce(mockResponse([], 'op1'))
+    await api.log()
+    mockFetch.mockResolvedValueOnce(mockResponse([], 'op2'))
+    await api.log()
+    await Promise.resolve()
+
+    expect(cb).toHaveBeenCalledWith('op2')
+  })
+
+  it('coalesced burst delivers the LATEST op-id, once', async () => {
+    // Two op-id changes land in the same tick → one microtask-deferred
+    // delivery carrying the newest value. A consumer that derives staleness
+    // (rendered vs current) only needs the latest.
+    const cb = vi.fn()
+    onStale(cb)
+    _testInternals.lastOpId = 'op1'
+
+    mockFetch.mockResolvedValueOnce(mockResponse([], 'op2'))
+    mockFetch.mockResolvedValueOnce(mockResponse([], 'op3'))
+    await Promise.all([api.log(), api.log()])
+    await Promise.resolve()
+
+    expect(_testInternals.lastOpId).toBe('op3')
+    expect(cb).toHaveBeenCalledTimes(1)
+    expect(cb).toHaveBeenCalledWith('op3')
+  })
+
+  it('op-id change drops the aliases/remotes session memos so the next call refetches', async () => {
+    // Memoize remotes under op1.
+    mockFetch.mockResolvedValueOnce(mockResponse(['origin'], 'op1'))
+    await api.remotes()
+    await api.remotes() // memo hit
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    // Op-id advances (external mutation observed via any response).
+    mockFetch.mockResolvedValueOnce(mockResponse([], 'op2'))
+    await api.log()
+
+    // Memo was dropped → refetch picks up the externally-added remote.
+    mockFetch.mockResolvedValueOnce(mockResponse(['origin', 'upstream'], 'op2'))
+    const r = await api.remotes()
+    expect(r).toEqual(['origin', 'upstream'])
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('op-id change does NOT drop the info memo (feature gates must not flap)', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ repo_path: '/r', ssh_mode: false }, 'op1'))
+    await api.info()
+
+    mockFetch.mockResolvedValueOnce(mockResponse([], 'op2'))
+    await api.log()
+
+    // Memo hit — no refetch.
+    await api.info()
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('isCached', () => {
