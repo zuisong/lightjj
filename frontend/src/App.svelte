@@ -2627,7 +2627,7 @@
     // Best-effort — on miss, fall through to whatever fields were supplied.
     if (p.comment_id && p.change_id) {
       try {
-        const anns = await api.annotations(p.change_id)
+        const anns = await api.annotations.list(p.change_id)
         const ann = anns.find(a => a.id === p.comment_id)
         if (ann) p = { ...p, file_path: p.file_path ?? ann.filePath, line: p.line ?? ann.lineNum }
       } catch { /* best-effort — proceed with the agent's raw payload */ }

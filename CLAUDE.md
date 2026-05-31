@@ -80,7 +80,8 @@ frontend/                  — Svelte 5 SPA (Vite + TypeScript + pnpm)
     RevisionGraph.svelte   — Revision list + graph gutter; always windowed via createWindower
     virtual.svelte.ts      — createWindower() fixed-row virtualization + holdViewport()
     GraphSvg.svelte        — SVG renderer for graph gutter characters
-    DiffPanel.svelte       — Diff viewer: unified/split, edit state, hunk/annotation nav, quick conflict resolve
+    DiffPanel.svelte       — Diff viewer: unified/split, collapse/defer, search, hunk/annotation nav
+    file-actions.svelte.ts — createFileActions(): per-file edit/preview/merge/quick-resolve state + actions (DiffPanel's mutation cluster)
     diff-cache.ts          — App-lifetime caches: derived highlights, parsed diffs, collapse state
     SearchResults.svelte   — Diff search match jump-list dropdown (capped render, snippet windowing)
     FileSelectionPanel.svelte — Squash/split/review file checkbox panel

@@ -123,6 +123,23 @@ export function resetMockApi(): void {
 
 const okMutation: MutationResult = { output: '' }
 
+// Recorded namespaced sub-clients. The real api.annotations / api.docComments
+// are OBJECTS ({list, save/upsert, remove, clear}), not flat methods — the
+// Proxy below returns a recorder FUNCTION per property, so `.list` on that
+// function would be undefined and namespaced callers (annotation store load,
+// DiffPanel doc-comment badges, App navigate-by-comment) would crash. Each
+// sub-method records as 'annotations.list' etc.
+function namespacedClient(ns: string, methods: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(methods).map(([name, result]) => [
+    name,
+    (...args: unknown[]) => { calls.push({ method: `${ns}.${name}`, args }); return Promise.resolve(result) },
+  ]))
+}
+const namespacedClients: Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>> = {
+  annotations: namespacedClient('annotations', { list: [], save: okMutation, remove: undefined, clear: undefined }),
+  docComments: namespacedClient('docComments', { list: [], upsert: okMutation, remove: undefined }),
+}
+
 // Proxy: any `api.<method>(...)` call records to `calls[]` and routes reads
 // to fixtures. Unknown methods (mutations, future additions) resolve with a
 // generic MutationResult so App's `withMutation` paths don't crash.
@@ -131,6 +148,8 @@ export const mockApi = new Proxy({} as Record<string, (...args: unknown[]) => Pr
     // Symbols + `then` must return undefined: a thenable Proxy hangs `await`,
     // and console/matcher introspection would otherwise pollute `calls[]`.
     if (typeof method === 'symbol' || method === 'then') return undefined
+    // Namespaced clients are objects, not callables.
+    if (method in namespacedClients) return namespacedClients[method]
     return (...args: unknown[]) => {
       calls.push({ method, args })
       const a0 = args[0] as string | undefined
@@ -152,7 +171,6 @@ export const mockApi = new Proxy({} as Record<string, (...args: unknown[]) => Pr
         case 'staleImmutable': return Promise.resolve([])
         case 'evolog': return Promise.resolve([])
         case 'oplog': return Promise.resolve([])
-        case 'annotations': return Promise.resolve([])
         default: return Promise.resolve(okMutation)
       }
     }

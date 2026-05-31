@@ -2,7 +2,7 @@
   import { tick, untrack, onDestroy } from 'svelte'
   import type { Snippet } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
-  import { api, diffTargetKey, FILE_TYPE_LABELS, IMAGE_RE, type FileChange, type DiffTarget, type DiffSide } from './api'
+  import { api, diffTargetKey, FILE_TYPE_LABELS, type FileChange, type DiffTarget, type DiffSide } from './api'
   import { parseDiffContent, hunkIndexForLine, type DiffFile, type DiffLine } from './diff-parser'
   import { expandGaps, type ExpandedDiff } from './context-expand'
   import type { WordSpan } from './word-diff'
@@ -16,11 +16,10 @@
   import { detectLanguage, needsLegacyParser, ensureLegacyParsers } from './languages'
   import { createDiffDerivation } from './diff-derivation.svelte'
   import { createLoader } from './loader.svelte'
+  import { createFileActions } from './file-actions.svelte'
   import DiffFileView, { type DiffLineInfo } from './DiffFileView.svelte'
   import SearchResults from './SearchResults.svelte'
   import FileComparePicker from './FileComparePicker.svelte'
-  import { reconstructSides, type MergeSides } from './conflict-extract'
-  import { resolveConflictFile } from './conflict-resolve'
   import FileSelectionPanel from './FileSelectionPanel.svelte'
   import type { ContextMenuItem, ContextMenuHandler } from './ContextMenu.svelte'
   import AnnotationBubble from './AnnotationBubble.svelte'
@@ -224,17 +223,29 @@
   $effect(() => {
     if (!reviewActive) return
     if (untrack(() => expandedDiffs.size + revealedGaps.size) > 0) resetExpandState()
-    // Unconditional bump — in-flight fetch may be the ONLY pending preview
-    // (map empty now, would populate post-resolve).
-    previewGen++
-    if (untrack(() => previewContents.size) > 0) previewContents = new Map()
+    // Unconditional gen bump + clear (the factory untracks its own size read —
+    // in-flight fetch may be the ONLY pending preview).
+    fileActions.clearPreviews()
   })
 
-  // --- Inline editing state ---
-  let editingFiles = new SvelteSet<string>()
-  let editFileContents = $state(new Map<string, string>())
-  let editBusy = new SvelteSet<string>()  // concurrency guard + loading indicator
-  let editError = $state('')  // last error message (shown in status bar area)
+  // --- Per-file mutation cluster (file-actions.svelte.ts) ---
+  // Inline edit / markdown preview / 3-pane merge / quick-resolve state and
+  // the async actions that drive them, extracted into createFileActions()
+  // (the merge-controller precedent). The factory owns
+  // editingFiles/editBusy/editFileContents/previewContents/mergeSides/
+  // mergingPath/editError plus the previewGen barrier; DiffPanel's template
+  // and $deriveds read its reactive getters, and the reset/hunk-review
+  // effects below call its lifecycle hooks (bumpPreviewGen/clearPreviews/
+  // refreshPreviews/reset). Deps are getter-closures so the factory's
+  // post-await guards always read the LIVE props.
+  const fileActions = createFileActions({
+    getDiffTarget: () => diffTarget,
+    getMutationLock: () => onjjmutation,
+    getOnFileSaved: () => onfilesaved,
+    revealFile: (path) => revealFile(path),
+    ensureSplitView: () => { if (!splitView) splitView = true },
+    setScrollTop: (v) => { if (panelContentEl) panelContentEl.scrollTop = v },
+  })
 
   // --- Inline compare picker ---
   // Right-click file header → "Compare to…" → rail + diff mounted below that
@@ -244,73 +255,16 @@
     comparePickerPath = comparePickerPath === p ? null : p
   }
 
-  // --- Markdown preview ---
-  // Presence = previewing. Simpler than editing (read-only, no busy/dirty);
-  // one Map serves as both toggle-set and content-store. previewGen bumped
-  // by every clear (toggle-off, hunkReview entry, edit-opens, nav reset) so
-  // an in-flight fileShow resolves bounce instead of re-inserting after a
-  // sync clear — the SSH-latency hunkReview race (fetch resolves 440ms
-  // AFTER the clear effect already ran).
-  let previewContents = $state(new Map<string, string>())
-  let previewGen = 0
-  // Which revision's content to render. Multi-select previews the NEWEST checked
-  // commit (commitIds is log-order = newest-first via revisions.filter in App).
+  // Which revision's content the Preview button renders — gates whether
+  // onpreview is offered. Multi-select previews the NEWEST checked commit
+  // (commitIds is log-order = newest-first via revisions.filter in App).
+  // file-actions.svelte.ts computes the same projection internally at fetch
+  // time (from the live target); this $derived exists for template gating.
   let previewCommitId = $derived(
     diffTarget?.kind === 'single' ? diffTarget.commitId
     : diffTarget?.kind === 'multi' ? diffTarget.commitIds[0]
     : undefined
   )
-
-  function closePreview(path: string) {
-    // NO gen bump — single-file close. All callers guard on has(path) so
-    // there's never an in-flight fetch for THIS path; editBusy prevents
-    // same-file double-click. Bumping the GLOBAL gen here would invalidate
-    // OTHER files' in-flight fetches (close CHANGELOG → README's pending
-    // fetch silently drops). Bulk clears (nav reset, hunkReview entry)
-    // bump previewGen at their own sites.
-    previewContents = new Map([...previewContents].filter(([p]) => p !== path))
-  }
-
-  // Same-change reset (snapshot/amend → new commit_id, same change_id) keeps
-  // previews open and refreshes content at the new commit. Unchanged .md →
-  // identical string → MarkdownPreview's $derived(html) short-circuits, so
-  // ToC/scroll/mermaid pan-zoom survive. Changed .md → {@html} swaps the
-  // subtree, so capture panel scroll just before the write and restore
-  // post-tick. Captured per-write (not pre-loop) so a 400ms-SSH await
-  // doesn't jump the user back to where they were before the fetch.
-  async function refreshPreviews(commitId: string, paths: string[], scrollTop?: number) {
-    const gen = previewGen
-    let changed = false
-    for (const path of paths) {
-      try {
-        const { content } = await api.fileShow(commitId, path)
-        if (gen !== previewGen) return
-        // closePreview doesn't bump gen (per-path close mustn't cancel OTHER
-        // files' fetches) — so a click-to-close during this await passes the
-        // gen check. has() guard stops the resurrect.
-        if (!previewContents.has(path)) continue
-        if (previewContents.get(path) !== content) {
-          previewContents = new Map(previewContents).set(path, content)
-          changed = true
-        }
-      } catch {
-        // Keep stale content on transient error (WC-lock contention with the
-        // concurrent diff.load/snapshot loop, SSH blip). Closing here surfaces
-        // as "preview vanished" — worse than briefly-stale.
-      }
-    }
-    // scrollTop captured by caller pre-await (sameChange branch) — covers the
-    // whole snapshot window, not just the final write.
-    if (changed && scrollTop !== undefined && gen === previewGen) {
-      await tick()
-      if (panelContentEl) panelContentEl.scrollTop = scrollTop
-    }
-  }
-
-  // 3-pane merge — when set, MergePanel takes over .panel-content entirely
-  // (vs FileEditor which slots into split-view's right column per-file).
-  let mergeSides: MergeSides | null = $state(null)
-  let mergingPath: string | null = $state(null)
 
   // --- Diff line context menu ---
   function openDiffLineContextMenu(e: MouseEvent, info: DiffLineInfo): void {
@@ -386,7 +340,71 @@
     oncontextmenu(items, e.clientX, e.clientY)
   }
 
-  // --- Annotations ---
+  // ── `[`/`]` hunk navigation ───────────────────────────────────────────────
+  // Flat list across files (in parsedDiff render order) + cursor index. The
+  // cursor resets in the per-identity reset effect below. Clamp, no wrap —
+  // matches stepFile. (Sits above the annotation section because scrollToHunk
+  // is shared: annotation jumps land on the hunk containing the comment.)
+
+  /** Expand + scroll. Queries the FIRST `[data-hunk]` match — header when
+   *  rendered (`!isExpanded`), else `.diff-lines`; both carry the attr so
+   *  expanded-unified still has a target. Split-expanded has neither
+   *  (no per-hunk wrapper) — degrades to scrollToFile. */
+  function scrollToHunk(path: string, hunkIdx: number) {
+    vis.bumpScrollGen()
+    revealFile(path)
+    requestAnimationFrame(() => {
+      const fileEl = document.querySelector(`[data-file-path="${CSS.escape(path)}"]`)
+      const target = fileEl?.querySelector(`[data-hunk="${hunkIdx}"]`) ?? fileEl
+      // Instant — [/]/{/}  are spammed like j/k; browser-native 'smooth' is
+      // fixed ~500ms regardless of distance, which queues badly under repeat.
+      target?.scrollIntoView({ block: 'start' })
+      activeFilePath = path
+    })
+  }
+
+  let flatHunks = $derived(
+    parsedDiff.flatMap(f => f.hunks.map((_, hi) => ({ path: f.filePath, hunkIdx: hi })))
+  )
+  let hunkNavIdx = $state(-1)
+
+  export function stepHunk(dir: 1 | -1) {
+    if (flatHunks.length === 0) return
+    if (hunkNavIdx < 0) {
+      // Seed from current scroll position so first `]` lands near the visible
+      // file, not at the top. activeFilePath is observer-tracked.
+      const seed = activeFilePath ? flatHunks.findIndex(h => h.path === activeFilePath) : -1
+      hunkNavIdx = seed >= 0 ? seed : (dir > 0 ? -1 : flatHunks.length)
+    }
+    hunkNavIdx = Math.max(0, Math.min(flatHunks.length - 1, hunkNavIdx + dir))
+    const t = flatHunks[hunkNavIdx]
+    scrollToHunk(t.path, t.hunkIdx)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ── ANNOTATION / REVIEW SURFACE ─────────────────────────────────────────────
+  // Store wiring, bubble/composer state, severity strip, `{`/`}` navigation,
+  // export helpers, doc-comment badges. Everything between this banner and the
+  // "end annotation surface" marker below belongs to this concern.
+  //
+  // Extraction into a diff-annotations.svelte.ts factory was evaluated
+  // (alongside the file-actions extraction) and DECLINED: the surface is
+  // coupled to rendering at too many points to cut cleanly —
+  //   - scrollToReview/jumpToFirstOfSeverity drive scrollToHunk/scrollToFile
+  //     (DOM queries + collapse/mount state) and write vis.overrides;
+  //   - toggleReviewed writes the collapse intent sets (userExpanded/Collapsed);
+  //   - navAnnotations/reviewedCount/annCountByPath intersect with parsedDiff
+  //     (file render order is a rendering concept);
+  //   - stepAnnotation/cycleVisibility/export*/clearAnnotations/hasAnnotations
+  //     are component exports App binds via bind:this;
+  //   - the composer renders through DiffFileView props + the snippet below.
+  // A factory would need ~10 callback deps (more plumbing than the ~120 lines
+  // of orchestration it would remove), while the state it would own (annBubble,
+  // two nav cursors) is trivial. The data/race logic already lives in
+  // annotations.svelte.ts (the store) + review-mutations.svelte.ts (the
+  // concurrency policy) — this section is intentionally just glue.
+  // ═══════════════════════════════════════════════════════════════════════════
+
   // Store is instance-scoped — annotations are per-changeId, loaded when
   // diffTarget changes. Multi-check mode (revset) doesn't support annotations
   // (which commit would they belong to?).
@@ -436,7 +454,7 @@
     const defaultId = editingId ?? (lineNum === FILE_LEVEL
       ? annotations.forFile(filePath).find(r => !isReviewedReview(r))?.id
       : annotations.forLine(filePath, lineNum, side)[0]?.id)
-    const editTarget = defaultId ? annotations.list.find(a => a.id === defaultId) : undefined
+    const editTarget = defaultId ? annotations.byId(defaultId) : undefined
     annBubble = {
       open: true, x, y,
       editing: editTarget ?? null,
@@ -534,45 +552,10 @@
     return annotations.list.some(a => a.status !== 'resolved' && !isReviewedMarker(a))
   }
 
-  // ── `[`/`]` hunk + `{`/`}` annotation navigation ──────────────────────────
-  // Both expose a flat list across files (in parsedDiff render order) and a
-  // cursor index. Cursors reset in the per-identity reset effect below. Clamp,
-  // no wrap — matches stepFile.
-
-  /** Expand + scroll. Queries the FIRST `[data-hunk]` match — header when
-   *  rendered (`!isExpanded`), else `.diff-lines`; both carry the attr so
-   *  expanded-unified still has a target. Split-expanded has neither
-   *  (no per-hunk wrapper) — degrades to scrollToFile. */
-  function scrollToHunk(path: string, hunkIdx: number) {
-    vis.bumpScrollGen()
-    revealFile(path)
-    requestAnimationFrame(() => {
-      const fileEl = document.querySelector(`[data-file-path="${CSS.escape(path)}"]`)
-      const target = fileEl?.querySelector(`[data-hunk="${hunkIdx}"]`) ?? fileEl
-      // Instant — [/]/{/}  are spammed like j/k; browser-native 'smooth' is
-      // fixed ~500ms regardless of distance, which queues badly under repeat.
-      target?.scrollIntoView({ block: 'start' })
-      activeFilePath = path
-    })
-  }
-
-  let flatHunks = $derived(
-    parsedDiff.flatMap(f => f.hunks.map((_, hi) => ({ path: f.filePath, hunkIdx: hi })))
-  )
-  let hunkNavIdx = $state(-1)
-
-  export function stepHunk(dir: 1 | -1) {
-    if (flatHunks.length === 0) return
-    if (hunkNavIdx < 0) {
-      // Seed from current scroll position so first `]` lands near the visible
-      // file, not at the top. activeFilePath is observer-tracked.
-      const seed = activeFilePath ? flatHunks.findIndex(h => h.path === activeFilePath) : -1
-      hunkNavIdx = seed >= 0 ? seed : (dir > 0 ? -1 : flatHunks.length)
-    }
-    hunkNavIdx = Math.max(0, Math.min(flatHunks.length - 1, hunkNavIdx + dir))
-    const t = flatHunks[hunkNavIdx]
-    scrollToHunk(t.path, t.hunkIdx)
-  }
+  // ── `{`/`}` annotation navigation ─────────────────────────────────────────
+  // Same shape as `[`/`]` hunk nav above (flat list + clamped cursor, reset in
+  // the per-identity effect below); jumps route through scrollToReview →
+  // scrollToHunk.
 
   // Line-level reviews only, in file-render order then line. Intersects with
   // parsedDiff (annotations persist per changeId across rewrites — files that
@@ -662,6 +645,10 @@
       }).catch(() => {})
     }
   })
+  // ── end annotation / review surface ─────────────────────────────────────────
+  // (The composer snippet + popup AnnotationBubble at the bottom of the
+  // template, and the annotations-bar / orphan-row markup, complete this
+  // surface — template pieces can't move into the script section.)
 
   // Capability gate for per-file mutations (Edit, Discard). Derived to
   // `undefined` when the button shouldn't render — DiffFileView's
@@ -669,223 +656,6 @@
   // diff = which commit would we restore into?), mutable only (jj rejects
   // restore on immutable; hide, don't invite the error).
   let canMutateFiles = $derived(diffTarget?.kind === 'single' && !diffTarget.immutable)
-
-  async function discardFile(path: string, sourcePath?: string) {
-    // editBusy guard: startEdit releases the mutation lock after api.edit,
-    // then awaits fileShow (holding only editBusy). Without this guard a
-    // Discard click during that window races: restore succeeds, then the
-    // resumed startEdit populates editFileContents with pre-discard content.
-    if (diffTarget?.kind !== 'single' || editBusy.has(path)) return
-    const revId = diffTarget.changeId
-    // Renames need both paths: `jj restore -c X root-file:"dest"` only matches
-    // the new path → rename would become a delete of the source.
-    const files = sourcePath ? [sourcePath, path] : [path]
-    editBusy.add(path)
-    editError = ''
-    try {
-      const result = onjjmutation
-        ? await onjjmutation(() => api.restore(revId, files))
-        : await api.restore(revId, files)
-      // undefined = withMutation rejected (busy). It already setMessage'd the
-      // warning at App.svelte — don't duplicate it in editError.
-      if (result === undefined && onjjmutation) return
-      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return
-      // Explicit refresh — onjjmutation is withMutation (lock only, no loadLog).
-      // The X-JJ-Op-Id header fires notifyOpId via queueMicrotask BEFORE
-      // res.json() resolves, so onStale fires while mutating=true and the
-      // !mutating guard in App's onStale handler drops it. The later SSE push
-      // dedups against lastOpId.
-      await onfilesaved?.()
-    } catch (e) {
-      editError = `Discard failed: ${e instanceof Error ? e.message : String(e)}`
-    } finally {
-      editBusy.delete(path)
-    }
-  }
-
-  /** Shared prologue for the edit/merge/resolve flows: guard, fetch file
-   *  content, post-await identity guards. Returns undefined on any bail
-   *  (concurrent op, navigation during await, network error). The tricky
-   *  post-await guards live here so a race fix lands in one place.
-   *
-   *  `moveWorkingCopy` additionally `jj edit`s a non-@ target BEFORE fetching.
-   *  Pass true ONLY on editor-opening paths (startEdit / openEditorFallback):
-   *  FileEditor's Save writes via fileWrite-to-@, so @ must BE the target.
-   *  Resolution paths (quickResolve/saveMerge) pass false — their write goes
-   *  through writeResolution → conflict-resolve.ts, which never moves @ in
-   *  local mode. */
-  async function fetchFileForEdit(path: string, errorPrefix: string, moveWorkingCopy: boolean): Promise<string | undefined> {
-    if (diffTarget?.kind !== 'single' || editBusy.has(path)) return undefined
-    const { changeId: revId, isWorkingCopy } = diffTarget
-    editBusy.add(path)
-    editError = ''
-    try {
-      if (moveWorkingCopy && !isWorkingCopy) {
-        // api.edit is a jj mutation — goes through App's mutation lock to
-        // prevent races with keyboard-triggered mutations (e.g. 'u' undo).
-        const result = onjjmutation
-          ? await onjjmutation(() => api.edit(revId))
-          : await api.edit(revId)
-        if (result === undefined && onjjmutation) return undefined
-      }
-      // Post-await identity guard — j/k navigation is possible during await.
-      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return undefined
-      const resp = await api.fileShow(revId, path)
-      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return undefined
-      return resp.content
-    } catch (e) {
-      editError = `${errorPrefix} failed: ${e instanceof Error ? e.message : String(e)}`
-      return undefined
-    } finally {
-      editBusy.delete(path)
-    }
-  }
-
-  /** Fallback for unparseable conflicts (N-way, git-style) or auto-resolved
-   *  races: open the raw FileEditor on the file. FileEditor's save path is
-   *  fileWrite-to-@, so a non-@ target must become @ first — this re-runs the
-   *  prologue WITH moveWorkingCopy (the editor-opening semantic, same as
-   *  startEdit). It is the only resolution-flow step that still moves the
-   *  working copy; the actual resolution writes never do (in local mode). */
-  async function openEditorFallback(path: string, errorPrefix: string) {
-    const content = await fetchFileForEdit(path, errorPrefix, true)
-    if (content === undefined) return
-    openFileEditor(path, content)
-  }
-
-  /** Single write path for conflict resolutions (quickResolve + saveMerge).
-   *  The @/non-@/SSH strategy lives in conflict-resolve.ts — shared with
-   *  merge-controller's save():
-   *    @ → api.fileWrite; non-@ local → api.mergeResolve (does NOT move @);
-   *    non-@ SSH (501) → explicit jj edit + fileWrite, surfaced via the
-   *    message banner ("working copy moved"), never silent.
-   *  Returns true when the write succeeded AND the target is still current,
-   *  so callers run their post-steps (closeMerge / onfilesaved). */
-  async function writeResolution(path: string, content: string, errorPrefix: string): Promise<boolean> {
-    if (diffTarget?.kind !== 'single' || editBusy.has(path)) return false
-    const target = diffTarget
-    const revId = target.changeId
-    editBusy.add(path)
-    editError = ''
-    try {
-      const run = () => resolveConflictFile(
-        {
-          api: { fileWrite: api.fileWrite, mergeResolve: api.mergeResolve, edit: api.edit },
-          // DiffPanel's @-knowledge is diffTarget.isWorkingCopy (computed by
-          // App at navigate time, change_id-derived) — expressed here as the
-          // change_id rule conflict-resolve.ts documents.
-          getWorkingCopyChangeId: () => (target.isWorkingCopy ? target.changeId : undefined),
-          // j/k nav during the await → the SSH fallback must not move @.
-          isStale: () => diffTarget?.kind !== 'single' || diffTarget.changeId !== revId,
-        },
-        // commitId for non-@ ops — unambiguous on divergent change_ids.
-        { changeId: target.changeId, revision: target.commitId },
-        path, content,
-      )
-      // jj mutations (resolve/edit) go through App's mutation lock, same as
-      // startEdit/discardFile. undefined = blocked (App already warned).
-      const outcome = onjjmutation ? await onjjmutation(run) : await run()
-      if (outcome === undefined) return false
-      if (!outcome.ok) {
-        if (outcome.reason === 'error') {
-          const e = outcome.error
-          editError = `${errorPrefix} failed: ${e instanceof Error ? e.message : String(e)}`
-        }
-        return false
-      }
-      if (outcome.movedWorkingCopy) {
-        // Surface via the existing banner — never silently move @. Survives
-        // the post-resolve refresh: the target's change_id is unchanged, so
-        // the reset effect takes its sameChange (soft) branch.
-        editError = `Resolved ${path}; working copy moved to ${revId.slice(0, 8)} (remote mode).`
-      }
-      // Post-await identity guard: nav during the resolve → the write already
-      // happened, but don't run post-steps (reload) for the wrong revision.
-      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return false
-      return true
-    } catch (e) {
-      editError = `${errorPrefix} failed: ${e instanceof Error ? e.message : String(e)}`
-      return false
-    } finally {
-      editBusy.delete(path)
-    }
-  }
-
-  function openFileEditor(path: string, content: string): void {
-    // Editor lives in the right split column — switch if coming from unified.
-    if (!splitView) splitView = true
-    // Edit wins over preview — DiffFileView's {#if previewContent} branch
-    // precedes the FileEditor branch; a stale preview would hide the editor.
-    if (previewContents.has(path)) closePreview(path)
-    revealFile(path)
-    editFileContents = new Map(editFileContents).set(path, content)
-    editingFiles.add(path)
-  }
-
-  async function startEdit(path: string) {
-    // Editor-opening path: moving @ to the target is the expected semantic —
-    // the editor's Save writes via fileWrite-to-@.
-    const content = await fetchFileForEdit(path, 'Edit', true)
-    if (content === undefined) return
-    openFileEditor(path, content)
-  }
-
-  async function togglePreview(path: string) {
-    if (previewContents.has(path)) return closePreview(path)
-    const revId = previewCommitId
-    if (!revId || editBusy.has(path)) return
-    revealFile(path)
-    if (IMAGE_RE.test(path)) {
-      previewContents = new Map(previewContents).set(path, '')
-      return
-    }
-    const gen = previewGen
-    editBusy.add(path)
-    try {
-      const { content } = await api.fileShow(revId, path)
-      if (gen !== previewGen || previewCommitId !== revId) return
-      previewContents = new Map(previewContents).set(path, content)
-    } catch (e) {
-      if (gen === previewGen) editError = `Preview failed: ${e instanceof Error ? e.message : String(e)}`
-    } finally {
-      editBusy.delete(path)
-    }
-  }
-
-  async function startMerge(path: string) {
-    // MergePanel takes over .panel-content → all FileEditors unmount → CM6
-    // state destroyed → unsaved edits lost. Editing the SAME file is fine (user
-    // is switching edit modes); OTHER files might have unsaved work. Confirm
-    // before any await — no post-await identity-guard complexity for this.
-    const otherEdits = [...editingFiles].filter(p => p !== path)
-    if (otherEdits.length > 0) {
-      const names = otherEdits.length === 1 ? otherEdits[0] : `${otherEdits.length} files`
-      if (!confirm(`Discard unsaved edits in ${names}?`)) return
-    }
-    // Pure read — opening the 3-pane editor no longer moves @; the eventual
-    // save goes through writeResolution (conflict-resolve.ts strategy).
-    const content = await fetchFileForEdit(path, 'Merge', false)
-    if (content === undefined) return
-    const sides = reconstructSides(content)
-    // Unparseable (N-way, git-style) OR auto-resolved race (conflict_sides
-    // said 2 but jj resolved between /api/files and here → all identical)
-    // → fall back to raw FileEditor (which DOES need @ at the target).
-    if (!sides || sides.ours === sides.theirs) {
-      await openEditorFallback(path, 'Merge')
-      return
-    }
-    // Entering merge clears ALL in-progress file editors — MergePanel takes
-    // over .panel-content entirely. User was warned via confirm() above.
-    editingFiles.clear()
-    editFileContents = new Map()
-    mergeSides = sides
-    mergingPath = path
-  }
-
-  function closeMerge() {
-    mergeSides = null
-    mergingPath = null
-  }
 
   /** Toggle split/unified. Switching to unified unmounts the inline FileEditor
    *  (it only renders in the split branch), destroying CodeMirror's live buffer
@@ -899,85 +669,12 @@
    *  silently discards the buffer (the palette is reachable while focus is in
    *  the editor, since Cmd+K is gated before isInInput). */
   export function toggleSplitView() {
-    if (editingFiles.size > 0) {
-      const names = editingFiles.size === 1 ? [...editingFiles][0] : `${editingFiles.size} files`
+    const editing = fileActions.editingFiles
+    if (editing.size > 0) {
+      const names = editing.size === 1 ? [...editing][0] : `${editing.size} files`
       if (!confirm(`Switch view and discard unsaved edits in ${names}?`)) return
     }
     splitView = !splitView
-  }
-
-  /** One-click whole-file resolve to ours/theirs WITHOUT the 3-pane editor —
-   *  the common "just take my/their side" case. Writes the full reconstructed
-   *  side (sides.ours/theirs), NOT planTake's incremental block surgery, so it
-   *  sidesteps planTake's blank-line separator gap entirely (see BACKLOG.md).
-   *  Fetches WITHOUT moving @ (pure read), then writes via writeResolution
-   *  (conflict-resolve.ts: @ → fileWrite, non-@ local → mergeResolve, non-@
-   *  SSH → explicit jj-edit fallback). N-way / git-style / auto-resolved-race
-   *  → fall back to the editor, same as startMerge. */
-  async function quickResolve(path: string, side: 'ours' | 'theirs') {
-    const content = await fetchFileForEdit(path, 'Resolve', false)
-    if (content === undefined) return
-    const sides = reconstructSides(content)
-    if (!sides || sides.ours === sides.theirs) {
-      await openEditorFallback(path, 'Resolve')
-      return
-    }
-    // Modify/delete conflicts: jj materializes the deleted side as empty, so
-    // reconstructSides yields '' for it. The resolution write has no delete
-    // path — writing '' would "resolve" to a zero-byte file (M with the empty
-    // blob, not D): wrong tree content with no warning. The markers can't
-    // distinguish deleted-on-that-side from emptied-on-that-side, so refuse
-    // both and explain; a genuinely-empty resolve still works via the merge
-    // editor.
-    const chosen = side === 'ours' ? sides.ours : sides.theirs
-    if (chosen === '') {
-      editError = `The ${side} side of ${path} is empty — likely a modify/delete conflict. `
-        + `Quick-resolve can't delete files; delete the file in the working copy to take that side.`
-      return
-    }
-    if (!await writeResolution(path, chosen, 'Resolve')) return
-    await onfilesaved?.()
-  }
-
-  async function saveMerge(content: string) {
-    const path = mergingPath
-    if (!path) return
-    if (!await writeResolution(path, content, 'Save')) return
-    closeMerge()
-    await onfilesaved?.()
-  }
-
-  function clearEditState(path: string): void {
-    editingFiles.delete(path)
-    const next = new Map(editFileContents)
-    next.delete(path)
-    editFileContents = next
-  }
-
-  async function saveFile(path: string, content: string) {
-    if (editBusy.has(path) || diffTarget?.kind !== 'single') return
-    const revId = diffTarget.changeId
-    editBusy.add(path)
-    editError = ''
-    try {
-      await api.fileWrite(path, content)
-      // Guard: display target may have changed during the await (navigation)
-      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return
-      clearEditState(path)
-      // Reload to show updated diff. Scroll position is preserved by the
-      // stale-while-revalidate pattern in the panel-content {#if} — it keeps
-      // showing the old diff until the new one arrives, and the keyed {#each}
-      // maintains DiffFileView component instances across the swap.
-      await onfilesaved?.()
-    } catch (e) {
-      editError = `Save failed: ${e instanceof Error ? e.message : String(e)}`
-    } finally {
-      editBusy.delete(path)
-    }
-  }
-
-  function cancelEdit(path: string) {
-    clearEditState(path)
   }
 
   let parsedDiff = $derived(parseDiffCached(diffContent))
@@ -1431,7 +1128,9 @@
     const sameChange = !!incoming && incoming.changeId === lastCollapseCacheKey
     lastCollapseCacheKey = incoming?.changeId ?? null
 
-    previewGen++
+    // Unconditional gen bump — covers sameChange→sameChange double-snapshots
+    // (an in-flight preview fetch from the FIRST snapshot must bounce).
+    fileActions.bumpPreviewGen()
     if (sameChange) {
       // Snapshot/amend/describe rewrote @ under us — same change, new commit_id.
       // Preserve view state (collapse/expand/edit/compare/search/preview-open);
@@ -1448,9 +1147,9 @@
       // Edit may push totalDiffLines over HIDE_DIFF_TOTAL_LINES; user was
       // already viewing the content, so keep showing it.
       forceShowLargeDiff = true
-      const openPreviews = [...untrack(() => previewContents).keys()]
+      const openPreviews = [...untrack(() => fileActions.previewContents).keys()]
       if (openPreviews.length > 0) {
-        refreshPreviews(incoming.commitId, openPreviews, panelContentEl?.scrollTop)
+        fileActions.refreshPreviews(incoming.commitId, openPreviews, panelContentEl?.scrollTop)
       }
       // Same lifecycle as refreshPreviews: the cached `--context 10000`
       // diff is keyed by filePath but FETCHED for the prior commit_id.
@@ -1470,14 +1169,9 @@
     mountedFiles.clear()
     mountQueue.length = 0
     resetExpandState()
-    editingFiles.clear()
-    editFileContents = new Map()
-    editBusy.clear()
-    editError = ''
-    previewContents = new Map()
+    // Edit/preview/merge state lives in the factory — one call clears it all.
+    fileActions.reset()
     comparePickerPath = null
-    mergeSides = null
-    mergingPath = null
     activeFilePath = null
     hunkNavIdx = -1
     annNavIdx = -1
@@ -1526,7 +1220,7 @@
   // Auto-collapse never applies to a file being previewed/edited (live check —
   // stronger than the old pinned-at-collapse-time defense).
   function autoCollapsed(file: DiffFile): boolean {
-    if (previewContents.has(file.filePath) || editingFiles.has(file.filePath)) return false
+    if (fileActions.previewContents.has(file.filePath) || fileActions.editingFiles.has(file.filePath)) return false
     if (fileLineCount(file) > AUTO_COLLAPSE_LINE_LIMIT || isOversize(file)) return true
     return totalDiffLines > AUTO_COLLAPSE_TOTAL_LINES
   }
@@ -1567,7 +1261,7 @@
   function isBodyDeferred(path: string): boolean {
     if (mountedFiles.has(path) || eagerMountPaths.has(path)) return false
     // Bodies that must exist regardless of scroll position.
-    if (editingFiles.has(path) || previewContents.has(path)) return false
+    if (fileActions.editingFiles.has(path) || fileActions.previewContents.has(path)) return false
     return true
   }
 
@@ -1635,7 +1329,7 @@
     // Merge mode replaces the whole diff subtree ({#if mergeSides && mergingPath});
     // closing it recreates every placeholder element — re-attach or they'd
     // never be observed again.
-    void mergingPath
+    void fileActions.mergingPath
     if (!container) return
     let observer: IntersectionObserver | null = null
     const raf = requestAnimationFrame(() => {
@@ -1729,8 +1423,8 @@
     // Skip files with an open inline editor — collapsing unmounts FileEditor
     // and silently discards the unsaved CM6 buffer (same loss toggleSplitView
     // and startMerge confirm against).
-    for (const f of parsedDiff) { if (!editingFiles.has(f.filePath)) userCollapsed.add(f.filePath) }
-    for (const cf of conflictOnlyFiles) { if (!editingFiles.has(cf.path)) userCollapsed.add(cf.path) }
+    for (const f of parsedDiff) { if (!fileActions.editingFiles.has(f.filePath)) userCollapsed.add(f.filePath) }
+    for (const cf of conflictOnlyFiles) { if (!fileActions.editingFiles.has(cf.path)) userCollapsed.add(cf.path) }
   }
 
   function expandAll() {
@@ -1774,7 +1468,7 @@
   // hunk-review. togglePreview itself guards editBusy/diffTarget.
   export function togglePreviewActive() {
     if (!activeFilePath || hunkReview || !/\.(md|excalidraw)$/i.test(activeFilePath)) return
-    void togglePreview(activeFilePath)
+    void fileActions.togglePreview(activeFilePath)
   }
 
   // Reset collapse intent when diff changes significantly (e.g., multi-select)
@@ -1936,7 +1630,7 @@
     revealFile(match.filePath)
     // Preview hides diff lines → search marks don't exist in DOM. Close it
     // so the match is visible (same auto-reveal intent as the collapse delete).
-    if (previewContents.has(match.filePath)) closePreview(match.filePath)
+    if (fileActions.previewContents.has(match.filePath)) fileActions.closePreview(match.filePath)
     // tick() ensures Svelte has flushed DOM updates (e.g. expanding a collapsed file)
     // before we query for the scroll target
     await tick()
@@ -2140,14 +1834,14 @@
   {/if}
   <div class="panel-content" bind:this={panelContentEl} onscrollcapture={() => symbolHover.clear()}>
     <SymbolHover hover={symbolHover} />
-    {#if mergeSides && mergingPath}
+    {#if fileActions.mergeSides && fileActions.mergingPath}
       <!-- {#key} enforces fresh-mount per file — MergePanel's $effect has no
            centerView guard and relies on this for props-never-change-mid-mount. -->
-      {#key mergingPath}
+      {#key fileActions.mergingPath}
         {#await import('./MergePanel.svelte') then { default: MergePanel }}
-          <MergePanel sides={mergeSides} filePath={mergingPath}
-            busy={editBusy.has(mergingPath)} error={editError}
-            onsave={saveMerge} oncancel={closeMerge} />
+          <MergePanel sides={fileActions.mergeSides} filePath={fileActions.mergingPath}
+            busy={fileActions.editBusy.has(fileActions.mergingPath)} error={fileActions.editError}
+            onsave={fileActions.saveMerge} oncancel={fileActions.closeMerge} />
         {/await}
       {/key}
     {:else if diffPending || (diffLoading && parsedDiff.length === 0)}
@@ -2176,10 +1870,10 @@
         <button class="btn" onclick={() => forceShowLargeDiff = true}>Show anyway</button>
       </div>
     {:else}
-      {#if editError}
+      {#if fileActions.editError}
         <div class="edit-error-banner" role="alert">
-          {editError}
-          <button class="close-btn edit-error-dismiss" onclick={() => editError = ''} aria-label="Dismiss">×</button>
+          {fileActions.editError}
+          <button class="close-btn edit-error-dismiss" onclick={() => fileActions.editError = ''} aria-label="Dismiss">×</button>
         </div>
       {/if}
       <div class="diff-content">
@@ -2205,18 +1899,18 @@
             onexpand={hunkReview ? undefined : expandGap}
             searchMatches={matchesByFile.get(filePath) ?? EMPTY_MATCHES}
             {currentMatchIdx}
-            editing={editingFiles.has(filePath)}
-            editContent={editFileContents.get(filePath)}
-            editBusy={editBusy.has(filePath)}
-            onedit={canMutateFiles ? startEdit : undefined}
-            onpreview={previewCommitId && !hunkReview ? togglePreview : undefined}
-            previewContent={previewContents.get(filePath)}
+            editing={fileActions.editingFiles.has(filePath)}
+            editContent={fileActions.editFileContents.get(filePath)}
+            editBusy={fileActions.editBusy.has(filePath)}
+            onedit={canMutateFiles ? fileActions.startEdit : undefined}
+            onpreview={previewCommitId && !hunkReview ? fileActions.togglePreview : undefined}
+            previewContent={fileActions.previewContents.get(filePath)}
             previewRevision={diffTarget?.kind === 'single' ? diffTarget.changeId : previewCommitId}
-            onmerge={canMutateFiles ? startMerge : undefined}
-            onresolveconflict={canMutateFiles ? quickResolve : undefined}
-            ondiscard={canMutateFiles ? discardFile : undefined}
-            onsavefile={saveFile}
-            oncanceledit={cancelEdit}
+            onmerge={canMutateFiles ? fileActions.startMerge : undefined}
+            onresolveconflict={canMutateFiles ? fileActions.quickResolve : undefined}
+            ondiscard={canMutateFiles ? fileActions.discardFile : undefined}
+            onsavefile={fileActions.saveFile}
+            oncanceledit={fileActions.cancelEdit}
             onlinecontext={openDiffLineContextMenu}
             {oncontextmenu}
             {onopenfile}
@@ -2263,13 +1957,13 @@
               wordDiffs={EMPTY_WD}
               ontoggle={toggleFile}
               onexpand={expandGap}
-              onmerge={canMutateFiles ? startMerge : undefined}
-              onresolveconflict={canMutateFiles ? quickResolve : undefined}
-              editBusy={editBusy.has(cf.path)}
-              editing={editingFiles.has(cf.path)}
-              editContent={editFileContents.get(cf.path)}
-              onsavefile={saveFile}
-              oncanceledit={cancelEdit}
+              onmerge={canMutateFiles ? fileActions.startMerge : undefined}
+              onresolveconflict={canMutateFiles ? fileActions.quickResolve : undefined}
+              editBusy={fileActions.editBusy.has(cf.path)}
+              editing={fileActions.editingFiles.has(cf.path)}
+              editContent={fileActions.editFileContents.get(cf.path)}
+              onsavefile={fileActions.saveFile}
+              oncanceledit={fileActions.cancelEdit}
               searchMatches={matchesByFile.get(cf.path) ?? EMPTY_MATCHES}
               {currentMatchIdx}
               onlinecontext={openDiffLineContextMenu}

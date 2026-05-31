@@ -274,7 +274,7 @@ export function createAnnotationStore(): AnnotationStore {
   async function load(changeId: string, commitId: string) {
     const gen = mutations.bump()
     return mutations.track(async () => {
-      const raw = await api.annotations(changeId)
+      const raw = await api.annotations.list(changeId)
       if (!mutations.current(gen)) return
       loadedChangeId = changeId
       if (raw.length === 0) {
@@ -329,7 +329,7 @@ export function createAnnotationStore(): AnnotationStore {
       // Persist re-anchor results so the next load is a no-op (and so a
       // workspace tab opened later sees the anchored positions).
       for (const u of updates) {
-        await api.saveAnnotation(u)
+        await api.annotations.save(u)
         if (!mutations.current(gen)) return
       }
 
@@ -345,10 +345,8 @@ export function createAnnotationStore(): AnnotationStore {
   //   nav/load replaced the list mid-flight (the filter is then a no-op).
   // - update/remove/clear: gen-guarded snapshot restore — restoring a stale
   //   snapshot after a competing load would resurrect another revision's list.
-  // Failures rethrow (DiffPanel's callers catch); the wire writes still go
-  // through the deprecated flat api.* aliases — DiffPanel.test.ts's api mock
-  // stubs those names, so the store can't switch to api.annotations.* until
-  // that mock is updated by the diff-panel surface owner.
+  // Failures rethrow (DiffPanel's callers catch). Wire writes go through the
+  // namespaced client (api.annotations.list/save/remove/clear).
   function byId(id: string): Annotation | undefined {
     return list.find(a => a.id === id)
   }
@@ -362,7 +360,7 @@ export function createAnnotationStore(): AnnotationStore {
     }
     return mutations.track(() => mutations.run({
       apply: () => { list = [...list, ann] },
-      persist: () => api.saveAnnotation(ann),
+      persist: () => api.annotations.save(ann),
       rollback: () => { list = list.filter(a => a.id !== ann.id) },
     }))
   }
@@ -371,7 +369,7 @@ export function createAnnotationStore(): AnnotationStore {
     const snapshot = list
     return mutations.track(() => mutations.run({
       apply: () => { list = list.map(a => a.id === ann.id ? ann : a) },
-      persist: () => api.saveAnnotation(ann),
+      persist: () => api.annotations.save(ann),
       rollback: (stillCurrent) => { if (stillCurrent) list = snapshot },
     }))
   }
@@ -388,7 +386,7 @@ export function createAnnotationStore(): AnnotationStore {
     const snapshot = list
     return mutations.track(() => mutations.run({
       apply: () => { list = list.filter(a => a.id !== id) },
-      persist: () => api.deleteAnnotation(changeId, id),
+      persist: () => api.annotations.remove(changeId, id),
       rollback: (stillCurrent) => { if (stillCurrent) list = snapshot },
     }))
   }
@@ -416,7 +414,7 @@ export function createAnnotationStore(): AnnotationStore {
         }
         await mutations.run({
           apply: () => { list = [...list, ann] },
-          persist: () => api.saveAnnotation(ann),
+          persist: () => api.annotations.save(ann),
           // Surgical: removing the phantom marker by id is always safe.
           rollback: () => { list = list.filter(a => a.id !== ann.id) },
         })
@@ -425,7 +423,7 @@ export function createAnnotationStore(): AnnotationStore {
         await mutations.run({
           apply: () => { list = list.filter(a => !ids.has(a.id)) },
           persist: async () => {
-            for (const m of existing) await api.deleteAnnotation(ctx.changeId, m.id)
+            for (const m of existing) await api.annotations.remove(ctx.changeId, m.id)
           },
           // Rollback only if still on the same changeId — appending old-rev
           // markers onto a navigated-to rev's list would render phantom ✓s.
@@ -446,7 +444,7 @@ export function createAnnotationStore(): AnnotationStore {
     const snapshot = list
     return mutations.track(() => mutations.run({
       apply: () => { list = [] },
-      persist: () => api.clearAnnotations(changeId),
+      persist: () => api.annotations.clear(changeId),
       rollback: (stillCurrent) => { if (stillCurrent) list = snapshot },
     }))
   }

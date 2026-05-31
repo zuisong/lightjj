@@ -911,7 +911,7 @@ describe('computeConnectedCommitIds', () => {
 
 describe('request() empty-body handling', () => {
   // DELETE /api/annotations returns 200 with no body. Before the
-  // Content-Length check, res.json() threw SyntaxError → deleteAnnotation
+  // Content-Length check, res.json() threw SyntaxError → annotations.remove
   // failed silently → store's `list = list.filter()` never ran → badge stuck.
 
   function emptyBodyResponse() {
@@ -925,18 +925,18 @@ describe('request() empty-body handling', () => {
     }
   }
 
-  it('deleteAnnotation resolves on 200 + empty body', async () => {
+  it('annotations.remove resolves on 200 + empty body', async () => {
     mockFetch.mockResolvedValue(emptyBodyResponse())
-    await expect(api.deleteAnnotation('abc', 'a1')).resolves.toBeUndefined()
+    await expect(api.annotations.remove('abc', 'a1')).resolves.toBeUndefined()
     expect(mockFetch).toHaveBeenCalledWith(
       '/tab/0/api/annotations?changeId=abc&id=a1',
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
 
-  it('clearAnnotations resolves on 200 + empty body', async () => {
+  it('annotations.clear resolves on 200 + empty body', async () => {
     mockFetch.mockResolvedValue(emptyBodyResponse())
-    await expect(api.clearAnnotations('abc')).resolves.toBeUndefined()
+    await expect(api.annotations.clear('abc')).resolves.toBeUndefined()
   })
 
   it('falls back gracefully when Content-Length header missing', async () => {
@@ -948,32 +948,24 @@ describe('request() empty-body handling', () => {
       headers: { get: () => null },
       json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')),
     })
-    await expect(api.deleteAnnotation('abc', 'a1')).resolves.toBeUndefined()
+    await expect(api.annotations.remove('abc', 'a1')).resolves.toBeUndefined()
   })
 
   it('GET with real JSON body still parses normally', async () => {
     // Regression guard: the empty-body handling must not break valid JSON responses.
     mockFetch.mockResolvedValue(mockResponse([{ id: 'a1' }]))
-    const result = await api.annotations('abc')
+    const result = await api.annotations.list('abc')
     expect(result).toEqual([{ id: 'a1' }])
   })
 })
 
 describe('namespaced annotation client (api.annotations.*)', () => {
   // api.annotations mirrors api.docComments: {list, save, remove, clear}.
-  // The flat methods (api.annotations(id), saveAnnotation, deleteAnnotation,
-  // clearAnnotations) are deprecated aliases delegating here.
 
   it('list() GETs by changeId', async () => {
     mockFetch.mockResolvedValue(mockResponse([{ id: 'a1' }]))
     const result = await api.annotations.list('abc')
     expect(result).toEqual([{ id: 'a1' }])
-    expect(mockFetch).toHaveBeenCalledWith('/tab/0/api/annotations?changeId=abc', expect.anything())
-  })
-
-  it('callable form delegates to list()', async () => {
-    mockFetch.mockResolvedValue(mockResponse([]))
-    await api.annotations('abc')
     expect(mockFetch).toHaveBeenCalledWith('/tab/0/api/annotations?changeId=abc', expect.anything())
   })
 
@@ -986,7 +978,7 @@ describe('namespaced annotation client (api.annotations.*)', () => {
     )
   })
 
-  it('remove()/clear() DELETE with the same URLs as the deprecated flat aliases', async () => {
+  it('remove()/clear() DELETE the changeId-scoped URLs', async () => {
     mockFetch.mockResolvedValue(mockResponse(null))
     await api.annotations.remove('abc', 'a1')
     expect(mockFetch).toHaveBeenLastCalledWith(
@@ -997,27 +989,6 @@ describe('namespaced annotation client (api.annotations.*)', () => {
     expect(mockFetch).toHaveBeenLastCalledWith(
       '/tab/0/api/annotations?changeId=abc',
       expect.objectContaining({ method: 'DELETE' }),
-    )
-
-    // Deprecated aliases hit identical URLs (pure delegation).
-    await api.deleteAnnotation('abc', 'a1')
-    expect(mockFetch).toHaveBeenLastCalledWith(
-      '/tab/0/api/annotations?changeId=abc&id=a1',
-      expect.objectContaining({ method: 'DELETE' }),
-    )
-    await api.clearAnnotations('abc')
-    expect(mockFetch).toHaveBeenLastCalledWith(
-      '/tab/0/api/annotations?changeId=abc',
-      expect.objectContaining({ method: 'DELETE' }),
-    )
-  })
-
-  it('saveAnnotation alias delegates to save()', async () => {
-    mockFetch.mockResolvedValue(mockResponse({ id: 'a2' }))
-    await api.saveAnnotation({ id: 'a2' } as Parameters<typeof api.saveAnnotation>[0])
-    expect(mockFetch).toHaveBeenCalledWith(
-      '/tab/0/api/annotations',
-      expect.objectContaining({ method: 'POST' }),
     )
   })
 })

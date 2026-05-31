@@ -212,20 +212,16 @@ concurrency strategies. The completion pass closed those gaps:
    (add — always safe) vs gen-guarded snapshot restore (update/remove/clear).
 
 4. **`annotations.byId(id)`** recovers the wire `Annotation` from a
-   `PlacedReview` id — store call sites no longer do
-   `list.find(a => a.id === ...)` round-trips. (DiffPanel still does; it owns
-   that migration.)
+   `PlacedReview` id — call sites (the store and DiffPanel's bubble opener)
+   no longer do `list.find(a => a.id === ...)` round-trips.
 
 5. **Namespaced annotation client** — `api.annotations.{list, save, remove,
    clear}` mirrors `api.docComments`. The bare-callable form
    `api.annotations(changeId)` and the flat
-   `saveAnnotation`/`deleteAnnotation`/`clearAnnotations` survive as
-   deprecated delegating aliases for pre-namespacing call sites (App.svelte,
-   DiffPanel's test mock).
-
-Remaining (owned by the App/DiffPanel surfaces, not the stores): migrate
-DiffPanel/App off the deprecated flat api aliases and `annotations.list.find`
-→ `annotations.byId`, then drop the aliases.
+   `saveAnnotation`/`deleteAnnotation`/`clearAnnotations` aliases existed
+   transitionally and have since been deleted: App's navigate-by-comment,
+   the annotation store's persists, and every test mock (DiffPanel.test.ts,
+   annotations.svelte.test.ts, testutil/mock-api.ts) use the namespaced form.
 
 ## Open questions
 

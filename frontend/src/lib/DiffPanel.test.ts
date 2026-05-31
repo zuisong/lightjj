@@ -16,10 +16,14 @@ vi.mock('./api', async (importOriginal) => {
       mergeResolve: vi.fn(),
       restore: vi.fn(),
       diff: vi.fn(),
-      annotations: vi.fn().mockResolvedValue([]),
+      // Namespaced annotation client — mirrors the real api.annotations shape.
+      annotations: {
+        list: vi.fn().mockResolvedValue([]),
+        save: vi.fn(),
+        remove: vi.fn(),
+        clear: vi.fn(),
+      },
       diffRange: vi.fn().mockResolvedValue({ diff: '' }),
-      saveAnnotation: vi.fn(),
-      deleteAnnotation: vi.fn(),
     },
   }
 })
@@ -81,8 +85,8 @@ beforeEach(() => {
 
 // --- Helper queries via DiffFileView DOM ---
 // editing=true → Save/Cancel buttons render; editing=false + onedit → Edit button.
-// These are the only externally observable signals for the edit state (DiffPanel
-// doesn't export editingFiles).
+// These are the only externally observable signals for the edit state (it lives
+// inside DiffPanel's file-actions factory, not on the component).
 function headerBtn(c: HTMLElement, ...labels: string[]) {
   return [...c.querySelectorAll('.diff-file-header .btn')]
     .find(b => labels.includes(b.textContent ?? '')) as HTMLButtonElement | undefined
@@ -94,7 +98,7 @@ function saveBtn(c: HTMLElement) {
 }
 
 describe('DiffPanel', () => {
-  describe('startEdit race guard — DiffPanel.svelte:264,266', () => {
+  describe('startEdit race guard — file-actions.svelte.ts post-await identity guards', () => {
     it('navigation during api.edit await → editor does NOT appear', async () => {
       let resolveEdit!: () => void
       mockEdit.mockReturnValue(new Promise<void>(r => { resolveEdit = r }))
@@ -116,7 +120,7 @@ describe('DiffPanel', () => {
       }))
       await settle()
 
-      // A's api.edit resolves; guard at :264 compares live diffTarget.changeId
+      // A's api.edit resolves; the post-await guard compares live diffTarget.changeId
       // ('ch-B') against captured revId ('ch-A') → bails BEFORE fileShow.
       resolveEdit()
       await settle()
@@ -145,7 +149,7 @@ describe('DiffPanel', () => {
       }))
       await settle()
 
-      // Stale fileShow resolves — guard at :266 bails, editFileContents NOT set.
+      // Stale fileShow resolves — the post-await guard bails, editFileContents NOT set.
       resolveShow({ content: 'stale' })
       await settle()
 
@@ -166,11 +170,12 @@ describe('DiffPanel', () => {
     })
   })
 
-  describe('discardFile busy-guard — DiffPanel.svelte:217', () => {
-    // The race documented at :213-216: startEdit releases the mutation lock
-    // after api.edit resolves, then awaits fileShow holding only editBusy.
-    // A Discard click during that window must no-op — otherwise restore
-    // succeeds, then the resumed fileShow writes pre-discard content.
+  describe('discardFile busy-guard — file-actions.svelte.ts editBusy hold', () => {
+    // The race documented at discardFile in file-actions.svelte.ts: startEdit
+    // releases the mutation lock after api.edit resolves, then awaits fileShow
+    // holding only editBusy. A Discard click during that window must no-op —
+    // otherwise restore succeeds, then the resumed fileShow writes pre-discard
+    // content.
     it('Discard while startEdit has editBusy → no-op (restore NOT called)', async () => {
       mockEdit.mockResolvedValue(undefined)
       let resolveShow!: (v: { content: string }) => void
@@ -187,7 +192,7 @@ describe('DiffPanel', () => {
 
       expect(mockFileShow).toHaveBeenCalled()
 
-      // Click Discard while editBusy is held → guard at :217 bails.
+      // Click Discard while editBusy is held → the editBusy guard bails.
       const discard = headerBtn(container, 'Discard')
       expect(discard).toBeDefined()
       await fireEvent.click(discard!)
@@ -241,7 +246,7 @@ describe('DiffPanel', () => {
     })
   })
 
-  describe('reset effect — DiffPanel.svelte:539-575', () => {
+  describe('reset effect — DiffPanel nav-identity reset', () => {
     it('navigation clears editing state', async () => {
       mockEdit.mockResolvedValue(undefined)
       mockFileShow.mockResolvedValue({ content: 'body' })
@@ -294,7 +299,7 @@ describe('DiffPanel', () => {
       expect(inputAfter.value).toBe('') // query cleared
     })
 
-    it('highlights apply on post-lag parsedDiff update when cacheKey already advanced — DiffPanel.svelte:820', async () => {
+    it('highlights apply on post-lag parsedDiff update when cacheKey already advanced', async () => {
       // Root cause: activeRevisionId updates sync at nav; diff.value (→
       // diffContent → parsedDiff) lags the async fetch. Pre-fix the $effect
       // would fire with STALE parsedDiff under the NEW cacheKey, writeMemo
@@ -510,7 +515,7 @@ describe('DiffPanel', () => {
       resolveA({ content: 'A content (stale)' })
       await settle()
 
-      // Template at DiffPanel.svelte:1187 renders conflictFetch.value.get(path).
+      // The conflict-only template branch renders conflictFetch.value.get(path).
       // If A's stale resolve landed, we'd see A's content. We should see B's.
       const bodyText = container.textContent ?? ''
       expect(bodyText).toContain('B content')
@@ -933,7 +938,7 @@ describe('DiffPanel', () => {
     })
   })
 
-  describe('markdown preview persistence — DiffPanel.svelte:863,874', () => {
+  describe('markdown preview persistence — file-actions.svelte.ts previewGen barrier', () => {
     const mdProps = (commitId: string, changeId: string) => props({
       diffTarget: target(commitId, changeId),
       diffContent: tinyDiff('README.md'),

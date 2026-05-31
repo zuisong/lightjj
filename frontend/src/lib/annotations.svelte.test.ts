@@ -1,17 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 // api mock MUST be set up before importing anything from annotations.svelte
-// — the store captures api.* at module eval time.
+// — the store captures api.* at module eval time. The annotation client is
+// namespaced (api.annotations.list/save/remove/clear), so the mock mirrors
+// that shape.
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>()
   return {
     ...actual,
     api: {
       ...actual.api,
-      annotations: vi.fn(),
-      saveAnnotation: vi.fn(),
-      deleteAnnotation: vi.fn(),
-      clearAnnotations: vi.fn(),
+      annotations: {
+        list: vi.fn(),
+        save: vi.fn(),
+        remove: vi.fn(),
+        clear: vi.fn(),
+      },
       diffRange: vi.fn(),
     },
   }
@@ -20,12 +24,10 @@ vi.mock('./api', async (importOriginal) => {
 import { reanchor, exportMarkdown, exportJSON, createAnnotationStore, isReviewedMarker } from './annotations.svelte'
 import { api, FILE_LEVEL, type Annotation } from './api'
 
-// `unknown` hop: the real api.annotations is a callable object (list/save/
-// remove/clear attached); the vi.mock above replaces it with a bare vi.fn().
-const mockAnnotations = api.annotations as unknown as ReturnType<typeof vi.fn>
-const mockSave = api.saveAnnotation as ReturnType<typeof vi.fn>
-const mockDelete = api.deleteAnnotation as ReturnType<typeof vi.fn>
-const mockClear = api.clearAnnotations as ReturnType<typeof vi.fn>
+const mockAnnotations = api.annotations.list as ReturnType<typeof vi.fn>
+const mockSave = api.annotations.save as ReturnType<typeof vi.fn>
+const mockDelete = api.annotations.remove as ReturnType<typeof vi.fn>
+const mockClear = api.annotations.clear as ReturnType<typeof vi.fn>
 const mockDiffRange = api.diffRange as ReturnType<typeof vi.fn>
 
 function mkAnn(lineNum: number, lineContent: string): Annotation {
@@ -585,7 +587,7 @@ describe('createAnnotationStore', () => {
   })
 
   it('forLine() reactively updates after remove() — badge-disappears path', async () => {
-    // Regression for the DELETE empty-body json() throw: api.deleteAnnotation
+    // Regression for the DELETE empty-body json() throw: api.annotations.remove
     // rejected → withBusy's try block threw before list.filter() → badge stuck.
     // This test locks in the contract: mock resolves (as it would with the
     // Content-Length fix in api.ts) → list shrinks → forLine returns [].
@@ -602,7 +604,7 @@ describe('createAnnotationStore', () => {
   })
 
   it('remove() propagates api failure — list unchanged on error', async () => {
-    // If deleteAnnotation DOES fail (real server error, not the json-parse
+    // If annotations.remove DOES fail (real server error, not the json-parse
     // bug), list must stay intact. Silently dropping the item would desync
     // UI from storage.
     mockAnnotations.mockResolvedValue([mkStoreAnn('a1')])

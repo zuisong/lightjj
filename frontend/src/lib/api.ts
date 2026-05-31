@@ -539,7 +539,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   // All non-streaming requests get a timeout. Streaming (gitPush/gitFetch)
   // bypasses this function entirely so "push can take minutes" is handled
   // structurally, not by special-casing POST here. DELETE counts as a
-  // mutation (60s) — closeTab/deleteAnnotation previously had NO timeout;
+  // mutation (60s) — closeTab/annotations.remove previously had NO timeout;
   // now they have the same hang-protection as POST.
   const isRead = !init?.method || init.method === 'GET'
   let signal = init?.signal
@@ -987,31 +987,25 @@ export function computeConnectedCommitIds(
 // ── Annotation client ────────────────────────────────────────────────────────
 // Namespaced like api.docComments — annotations and doc-comments are sibling
 // review stores and their clients share one shape: {list, save/upsert, remove,
-// clear}. The object is ALSO callable (api.annotations(changeId)) as a
-// deprecated alias for .list(), kept for pre-namespacing call sites
-// (App.svelte's navigate-by-comment handler).
+// clear}.
 //
 // Annotations are uncached — they're review-state, not revision content. The
 // set changes when the user adds/removes/resolves, and when the agent iterates
 // (re-anchor mutates lineNum/status). Backend is the source of truth so
 // spawned workspace tabs share one store.
-const annotationsClient = Object.assign(
-  /** @deprecated Bare-call form. Use api.annotations.list(). */
-  (changeId: string): Promise<Annotation[]> => annotationsClient.list(changeId),
-  {
-    list: (changeId: string) =>
-      request<Annotation[]>(`/api/annotations?changeId=${encodeURIComponent(changeId)}`),
+const annotationsClient = {
+  list: (changeId: string) =>
+    request<Annotation[]>(`/api/annotations?changeId=${encodeURIComponent(changeId)}`),
 
-    save: (ann: Annotation) =>
-      post<Annotation>('/api/annotations', ann),
+  save: (ann: Annotation) =>
+    post<Annotation>('/api/annotations', ann),
 
-    remove: (changeId: string, id: string) =>
-      request<void>(`/api/annotations?changeId=${encodeURIComponent(changeId)}&id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  remove: (changeId: string, id: string) =>
+    request<void>(`/api/annotations?changeId=${encodeURIComponent(changeId)}&id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
-    clear: (changeId: string) =>
-      request<void>(`/api/annotations?changeId=${encodeURIComponent(changeId)}`, { method: 'DELETE' }),
-  },
-)
+  clear: (changeId: string) =>
+    request<void>(`/api/annotations?changeId=${encodeURIComponent(changeId)}`, { method: 'DELETE' }),
+}
 
 export const api = {
   log: (revset?: string, limit?: number) => {
@@ -1286,20 +1280,9 @@ export const api = {
   runAlias: (name: string, onLine: (line: string) => void) =>
     streamPost('/api/alias', { name }, onLine),
 
-  // Annotation client — see annotationsClient above. Namespaced methods
-  // (api.annotations.list/save/remove/clear) are canonical; the flat aliases
-  // below delegate to them and exist only for call sites that predate the
-  // namespacing (DiffPanel/App + their test mocks).
+  // Annotation client — see annotationsClient above. Namespaced
+  // (api.annotations.list/save/remove/clear), mirroring api.docComments.
   annotations: annotationsClient,
-
-  /** @deprecated Use api.annotations.save(). */
-  saveAnnotation: (ann: Annotation) => annotationsClient.save(ann),
-
-  /** @deprecated Use api.annotations.remove(). */
-  deleteAnnotation: (changeId: string, id: string) => annotationsClient.remove(changeId, id),
-
-  /** @deprecated Use api.annotations.clear(). */
-  clearAnnotations: (changeId: string) => annotationsClient.clear(changeId),
 
   // Doc-mode comments — per-filePath, range-anchored, survive across commits.
   // Uncached for the same reason as annotations (review-state, not content).
