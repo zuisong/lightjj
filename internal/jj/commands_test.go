@@ -592,6 +592,77 @@ func TestParseOpLog_Malformed(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+// ── OpLogJSON / ParseOpLogJSON — the json()-template exemplar ──────────────
+
+func TestOpLogJSON(t *testing.T) {
+	args := OpLogJSON(50)
+	assert.Equal(t, "op", args[0])
+	assert.Equal(t, "log", args[1])
+	assert.Contains(t, args, "--limit")
+	assert.Contains(t, args, "50")
+	assert.Contains(t, args, "--no-graph")
+	assert.Contains(t, args, "--ignore-working-copy")
+
+	tmpl := args[len(args)-1]
+	// Each string field is individually json()-wrapped (named-field schema we
+	// control), the boolean uses the proven if() form, and there are NO
+	// control-character delimiters anywhere.
+	assert.Contains(t, tmpl, `json(self.id().short())`)
+	assert.Contains(t, tmpl, `json(self.description())`)
+	assert.Contains(t, tmpl, `json(stringify(self.time().start()))`)
+	assert.Contains(t, tmpl, `if(self.current_operation(), "true", "false")`)
+	assert.NotContains(t, tmpl, "\x1f")
+	assert.NotContains(t, tmpl, "\x1e")
+	assert.NotContains(t, tmpl, "\x1d")
+	// And no whole-object serialization — schema must stay under our control.
+	assert.NotContains(t, tmpl, "json(self)")
+}
+
+func TestOpLogJSON_NoLimit(t *testing.T) {
+	args := OpLogJSON(0)
+	assert.NotContains(t, args, "--limit")
+}
+
+func TestParseOpLogJSON(t *testing.T) {
+	// As jj emits it: one JSON object per line. The second record's description
+	// carries the exact payload class that breaks positional parsers — embedded
+	// quote, newline, and a \x1F unit separator — all JSON-escaped by json() so
+	// the record still occupies a single line.
+	output := `{"id":"abc123","description":"describe commit xyz","time":"2026-05-30 10:00:00.000 -07:00","current":true}` + "\n" +
+		`{"id":"def456","description":"weird \"quoted\" desc with\nnewline and \u001f separator","time":"2026-05-30 09:00:00.000 -07:00","current":false}` + "\n"
+	entries := ParseOpLogJSON(output)
+	assert.Len(t, entries, 2)
+	assert.Equal(t, "abc123", entries[0].ID)
+	assert.Equal(t, "describe commit xyz", entries[0].Description)
+	assert.Equal(t, "2026-05-30 10:00:00.000 -07:00", entries[0].Time)
+	assert.True(t, entries[0].IsCurrent)
+	assert.Equal(t, "weird \"quoted\" desc with\nnewline and \x1f separator", entries[1].Description)
+	assert.False(t, entries[1].IsCurrent)
+}
+
+func TestParseOpLogJSON_Empty(t *testing.T) {
+	entries := ParseOpLogJSON("")
+	assert.Empty(t, entries)
+	assert.NotNil(t, entries) // empty slice, not nil — JSON serializes as []
+}
+
+func TestParseOpLogJSON_SkipsMalformedLines(t *testing.T) {
+	output := `{"id":"good","description":"d","time":"t","current":false}` + "\n" +
+		"this is not json\n" +
+		`{"id":"also-good","description":"d2","time":"t2","current":true}` + "\n"
+	entries := ParseOpLogJSON(output)
+	assert.Len(t, entries, 2)
+	assert.Equal(t, "good", entries[0].ID)
+	assert.Equal(t, "also-good", entries[1].ID)
+}
+
+func TestJSONTemplatesGate(t *testing.T) {
+	// json() landed in jj 0.31.0; the gate must let 0.31+ through and block 0.30.
+	assert.True(t, Semver{0, 31}.AtLeast(JSONTemplates))
+	assert.True(t, Semver{0, 40}.AtLeast(JSONTemplates))
+	assert.False(t, Semver{0, 30}.AtLeast(JSONTemplates))
+}
+
 func TestDiffRange(t *testing.T) {
 	got := DiffRange("abc", "def", nil)
 	assert.Equal(t, []string{"diff", "--from", "abc", "--to", "def", "--tool", ":git", "--color", "never", "--ignore-working-copy", "--config", pinGitDiffPrefix}, got)

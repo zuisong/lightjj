@@ -1,6 +1,5 @@
-// Execution side of divergence resolution. Fourth member of the family:
-//   divergence.ts         — classify() + buildKeepPlan()  (plan, pure)
-//   divergence-refined.ts — computeRefinedKind()          (analyze, pure)
+// Execution side of divergence resolution. Execution member of the family:
+//   divergence.ts         — classify() + buildKeepPlan() + computeRefinedKind()  (plan/analyze, pure)
 //   divergence-strategy.ts— recommend()                   (recommend, pure)
 //   divergence-actions.ts — executeKeepPlan() etc         (execute, api.*)
 //

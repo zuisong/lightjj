@@ -9,7 +9,13 @@ export const targetModeLabel: Record<TargetMode, string> = {
   '--insert-before': 'before',
 }
 
+/** Discriminant for kind-keyed dispatch tables (execute lookups, badge/verb
+ *  labels, StatusBar key tables). Prefer the shared ModeBase fields over
+ *  branching on kind — branch only where behavior is genuinely per-mode. */
+export type ModeKind = 'rebase' | 'squash' | 'split'
+
 export interface ModeBase {
+  readonly kind: ModeKind
   readonly active: boolean
   /** Does j/k navigation in this mode reload the diff panel?
    *  `true` = diff follows cursor (rebase: destination preview).
@@ -21,11 +27,21 @@ export interface ModeBase {
    *  this so both keyboard (handleInlineNav) and mouse (onselect) read the
    *  same source instead of each spelling out `squash.active || split.active`. */
   readonly diffFollows: boolean
+  /** Revisions the operation acts on — the "<< source >>" badge rows in
+   *  RevisionGraph. Split always has exactly one (its `revision`). Empty
+   *  when the mode is inactive. */
+  readonly sources: readonly string[]
+  /** Whether the j/k cursor picks a destination revision. Rebase/squash
+   *  preview + execute against the cursor (target badge, `/` typed-destination
+   *  input); split operates in place — no destination cursor, no target badge,
+   *  no j/k. */
+  readonly hasDestination: boolean
   cancel(): void
   handleKey(key: string): boolean
 }
 
 export interface RebaseMode extends ModeBase {
+  readonly kind: 'rebase'
   readonly sources: string[]
   readonly sourceMode: SourceMode
   readonly targetMode: TargetMode
@@ -36,6 +52,7 @@ export interface RebaseMode extends ModeBase {
 }
 
 export interface SquashMode extends ModeBase {
+  readonly kind: 'squash'
   readonly sources: string[]
   readonly keepEmptied: boolean
   readonly ignoreImmutable: boolean
@@ -43,6 +60,9 @@ export interface SquashMode extends ModeBase {
 }
 
 export interface SplitMode extends ModeBase {
+  readonly kind: 'split'
+  /** Alias of sources[0] — split semantically has exactly one source and
+   *  call sites read better as `split.revision`. */
   readonly revision: string
   readonly parallel: boolean
   /** When true, UI shows "accept/reject" labels instead of "split/stay".
@@ -61,8 +81,10 @@ export function createRebaseMode(): RebaseMode {
   let simplifyParents = $state(false)
 
   return {
+    kind: 'rebase' as const,
     get active() { return active },
     diffFollows: true,  // destination preview — diff shows what you'd land on
+    hasDestination: true,
     get sources() { return sources },
     get sourceMode() { return sourceMode },
     get targetMode() { return targetMode },
@@ -109,8 +131,10 @@ export function createSquashMode(): SquashMode {
   let ignoreImmutable = $state(false)
 
   return {
+    kind: 'squash' as const,
     get active() { return active },
     diffFollows: false,  // frozen on source — that's what you're squashing
+    hasDestination: true,
     get sources() { return sources },
     get keepEmptied() { return keepEmptied },
     get ignoreImmutable() { return ignoreImmutable },
@@ -214,8 +238,11 @@ export function createSplitMode(): SplitMode {
   let review = $state(false)
 
   return {
+    kind: 'split' as const,
     get active() { return active },
     diffFollows: false,  // frozen on source — that's what you're splitting
+    hasDestination: false,  // in-place operation — no destination cursor
+    get sources() { return revision ? [revision] : [] },
     get revision() { return revision },
     get parallel() { return parallel },
     get review() { return review },

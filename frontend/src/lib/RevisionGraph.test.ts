@@ -325,6 +325,37 @@ describe('RevisionGraph', () => {
     })
   })
 
+  describe('split mode', () => {
+    // Split has no destination cursor — the generic isTarget derivation must
+    // never produce a target badge, and the source row carries both the badge
+    // and the command preview (in-place operation).
+    it('shows split source badge + command preview on the source row, never a target badge', () => {
+      const split = createSplitMode()
+      split.enter('sp1')
+      const entries = [makeEntry({ change_id: 'sp1' }), makeEntry({ change_id: 'other' })]
+      const { container } = render(RevisionGraph, {
+        props: defaultProps({ revisions: entries, selectedIndex: 1, split }),
+      })
+      const source = container.querySelector('.badge-source')
+      expect(source?.textContent).toContain('split')
+      // selectedIndex=1 (a different row) — split must NOT mark it as target
+      expect(container.querySelector('.badge-target')).toBeNull()
+      // Preview renders on the SOURCE row's desc line
+      const preview = container.querySelector('.rebase-preview')
+      expect(preview?.textContent).toContain('jj split -r sp1')
+    })
+
+    it('review variant labels the badge "review"', () => {
+      const split = createSplitMode()
+      split.enter('sp1', true)
+      const entry = makeEntry({ change_id: 'sp1' })
+      const { container } = render(RevisionGraph, {
+        props: defaultProps({ revisions: [entry], split }),
+      })
+      expect(container.querySelector('.badge-source')?.textContent).toContain('review')
+    })
+  })
+
   describe('view label badge', () => {
     it('no badge renders when viewLabel is null', () => {
       const { container } = render(RevisionGraph, { props: defaultProps({ viewLabel: null }) })
@@ -475,62 +506,55 @@ describe('RevisionGraph', () => {
   })
 
   describe('virtualization', () => {
-    // These tests verify the THRESHOLD branch — below, eager full-render;
-    // above, .virtual-list engages. Actual virtual-item rendering needs a
-    // real layout engine (ResizeObserver, getBoundingClientRect) that jsdom
-    // lacks; tanstack's observeElementRect never fires so getVirtualItems()
-    // returns []. Verified manually in browser.
+    // The list is ALWAYS windowed (no eager path / threshold). jsdom has no
+    // layout engine — clientHeight stays 0, so the windower itself never
+    // produces items; the FALLBACK_ROWS synthesized window is what renders
+    // here (and on the first pre-measurement frame in real browsers). Real
+    // scrolling/windowing behavior is covered by virtual.svelte.test.ts +
+    // verified manually in browser.
 
-    it('below threshold: renders all rows eagerly (no .virtual-list)', () => {
+    it('small lists: every row renders (windowed fallback covers them all)', () => {
       const entries = Array.from({ length: 10 }, (_, i) =>
         makeEntry({ change_id: `ch${i}`, commit_id: `co${i}` }))
       const { container } = render(RevisionGraph, { props: defaultProps({ revisions: entries }) })
-      expect(container.querySelector('.virtual-list')).toBeNull()
-      // 10 revs × (node + desc) = 20 rows, all in DOM
+      // 10 revs × (node + desc) = 20 rows, all inside .virtual-row wrappers
       expect(container.querySelectorAll('.graph-row')).toHaveLength(20)
+      expect(container.querySelectorAll('.virtual-row')).toHaveLength(20)
+      // Rows are translateY-positioned at 18px intervals
+      const second = container.querySelectorAll('.virtual-row')[1] as HTMLElement
+      expect(second.style.transform).toBe('translateY(18px)')
     })
 
-    it('above threshold: virtual-list branch engages, container sized to totalSize', async () => {
-      // 200 revisions → 400 flatLines (node+desc) → above VIRTUALIZE_THRESHOLD(150)
+    it('large lists: container sized to totalHeight, render capped at the fallback window', async () => {
+      // 200 revisions → 400 flatLines (node+desc)
       const entries = Array.from({ length: 200 }, (_, i) =>
         makeEntry({ change_id: `ch${i}`, commit_id: `co${i}` }))
       const { container } = render(RevisionGraph, { props: defaultProps({ revisions: entries }) })
 
       const list = container.querySelector('.revision-list') as HTMLElement
-      expect(list.classList.contains('virtual-list')).toBe(true)
-
-      // Let the setOptions $effect + store update settle
       await new Promise(r => setTimeout(r, 0))
 
-      // totalSize = 400 lines × 18px = 7200px. Proves the virtualizer computes
-      // correctly even though jsdom can't give it a viewport to render items.
+      // totalHeight = 400 lines × 18px = 7200px — scrollbar geometry is exact
+      // even though only the fallback window is in the DOM.
       expect(list.style.height).toBe('7200px')
+      expect(container.querySelectorAll('.graph-row').length).toBeLessThan(400)
+      expect(container.querySelectorAll('.graph-row').length).toBeGreaterThan(0)
     })
 
-    it('shrink above threshold: no crash when virtual items outlast flatLines', async () => {
-      // Repro: flatLines shrinks but stays above threshold. Template re-renders
-      // BEFORE setOptions $effect (post-effect in Svelte 5), so virtual items
-      // hold the OLD count while flatLines is already shorter → item.index
-      // out of bounds. The {#if line} guard + ?.key fallback prevents the crash.
-      //
-      // jsdom can't fully simulate scrolling to a stale index, but rerender()
-      // with a smaller list exercises the transition path.
+    it('shrink: no crash when the list shrinks, container resizes', async () => {
       const mk = (n: number) => Array.from({ length: n }, (_, i) =>
         makeEntry({ change_id: `ch${i}`, commit_id: `co${i}` }))
 
       const { container, rerender } = render(RevisionGraph, {
-        props: defaultProps({ revisions: mk(200) }), // 400 lines, virtualized
+        props: defaultProps({ revisions: mk(200) }),
       })
       await new Promise(r => setTimeout(r, 0))
 
-      // Shrink to 100 revs = 200 lines — still above threshold (150).
-      // Without the guard, this would throw TypeError on flatLines[item.index].eid
       await rerender(defaultProps({ revisions: mk(100) }))
       await new Promise(r => setTimeout(r, 0))
 
-      // No crash + container resized to new totalSize (200 × 18 = 3600px)
+      // No crash + container resized to new totalHeight (200 × 18 = 3600px)
       const list = container.querySelector('.revision-list') as HTMLElement
-      expect(list.classList.contains('virtual-list')).toBe(true)
       expect(list.style.height).toBe('3600px')
     })
   })

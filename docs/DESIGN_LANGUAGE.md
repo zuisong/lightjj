@@ -51,16 +51,14 @@ Bookmarks, workspaces, and PRs are entity **types**, not semantic states. Icons 
 
 ## Tier 3: Graph Palette — Isolated and Muted
 
-The revision graph uses multiple colors to distinguish parallel branches:
+The revision graph uses multiple lane colors (`--graph-0`…`--graph-7`) to distinguish parallel branches:
 
 - **Muted** (~60% saturation) so they don't compete with semantic tier
 - **Reduced opacity**: lines at `0.45`, nodes at `0.8`
-- **Never amber, green, or red** (builtin themes) — avoids confusion with semantic meaning
-- **Never used outside the graph** — purely decorative
+- **Maximally distinct from amber/green/red — enforced in code.** Builtin themes hand-pick 8 non-semantic hues. Ghostty-derived themes get the same guarantee from `pickGraphPalette()` (themes.ts): ANSI hue slots are ranked by color-distance from the theme's own amber/green/red, the most distinct hues fill the low lanes (where most commits sit on linear history), and every lane is muted 25% toward the background. (This replaced an older straight `p[N]` mapping that could make lane 0 == amber.)
+- **Confined to revision-graph rows.** Exactly two consumers, both in RevisionGraph: the SVG gutter (pipes/nodes via GraphSvg) and the lane-tint on bookmark/PR badges (border + text hinting which lane the badge's commit is on). Never in panels, diffs, or other chrome. The deliberate crossover runs the *other* direction: the gutter's semantic nodes use Tier 1 colors at full opacity — working-copy `@` is amber, conflict `×` is red.
 
 Each builtin theme hand-picks 8 hues; the default dark/light pair uses Ochre, Terra, Mauve, Plum, Slate, Teal, Moss, Olive. Nord/Gruvbox/Dracula/Tokyo Night/Rosé Pine use their native accent sets.
-
-**Ghostty-derived themes are exempt from the never-red/green rule.** `deriveTheme()` maps `--graph-N` straight from the 16-slot ANSI palette (`p[1]`, `p[2]`, …) — there aren't 8 distinct non-semantic hues available in 16 ANSI slots. The 0.45/0.8 opacity tier still applies, which mutes them enough that semantic confusion hasn't surfaced in practice.
 
 ---
 
@@ -124,10 +122,11 @@ BADGES (entity types — neutral by default):
   ↗ PR        → neutral bg, amber if active
 
 GRAPH (isolated, decorative only):
-  8 muted colors, 0.45 opacity lines, 0.8 opacity nodes
-  Never amber/green/red (builtins). Never used outside the graph.
-  Exception: semantic nodes (@=amber, ×=red) use Tier 1 colors at full opacity.
-  Exception: Ghostty themes map graph-N from ANSI p[] — may include red/green.
+  8 muted lane colors, 0.45 opacity lines, 0.8 opacity nodes
+  Hues maximize distance from amber/green/red (hand-picked for builtins;
+  pickGraphPalette() ranks + mutes for Ghostty themes).
+  Used only in RevisionGraph rows: SVG gutter + lane-tinted bookmark/PR badges.
+  Inverse crossover: semantic nodes @=amber, ×=red (Tier 1, full opacity).
 
 DIFF:
   Added lines   → green bg + green text

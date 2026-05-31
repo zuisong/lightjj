@@ -26,6 +26,41 @@ describe('diffFollows — per-mode nav semantics', () => {
   })
 })
 
+// ModeBase unification: kind/sources/hasDestination are the shared contract
+// that lets RevisionGraph badges, StatusBar, and App's execute dispatch stay
+// generic instead of branching per-mode. New modes MUST fill all three.
+describe('ModeBase — kind/sources/hasDestination', () => {
+  it.each([
+    ['rebase', createRebaseMode, true],
+    ['squash', createSquashMode, true],
+    ['split',  createSplitMode,  false],
+  ] as const)('%s → kind=%s, hasDestination=%s', (kind, create, hasDestination) => {
+    const mode: ModeBase = create()
+    expect(mode.kind).toBe(kind)
+    expect(mode.hasDestination).toBe(hasDestination)
+    expect(mode.sources).toEqual([])  // inactive → empty for every mode
+  })
+
+  it('split.sources mirrors revision as a single-element array', () => {
+    const mode = createSplitMode()
+    expect(mode.sources).toEqual([])
+    mode.enter('abc123')
+    expect(mode.sources).toEqual(['abc123'])
+    expect(mode.revision).toBe('abc123')  // alias preserved for existing call sites
+    mode.cancel()
+    expect(mode.sources).toEqual([])
+  })
+
+  it('rebase/squash sources stay the entered revisions (unchanged contract)', () => {
+    const rebase = createRebaseMode()
+    rebase.enter(['a', 'b'])
+    expect(rebase.sources).toEqual(['a', 'b'])
+    const squash = createSquashMode()
+    squash.enter(['c'])
+    expect(squash.sources).toEqual(['c'])
+  })
+})
+
 describe('createRebaseMode', () => {
   it('starts inactive', () => {
     const mode = createRebaseMode()

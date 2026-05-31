@@ -54,7 +54,7 @@
   import ContextMenu, { type ContextMenuItem } from './lib/ContextMenu.svelte'
   import DivergencePanel from './lib/DivergencePanel.svelte'
   import { executeKeepPlan, splitIdentity, squashDivergent, abandonMutable, type DivergenceActionResult } from './lib/divergence-actions'
-  import { createRebaseMode, createSquashMode, createSplitMode, createDivergenceMode, createFileSelection, targetModeLabel } from './lib/modes.svelte'
+  import { createRebaseMode, createSquashMode, createSplitMode, createDivergenceMode, createFileSelection, targetModeLabel, type ModeKind } from './lib/modes.svelte'
   import { routeKeydown, type ActiveView } from './lib/keyboard-gate'
   import { computeSlide, type SlideDir } from './lib/slide'
   import { createLoader } from './lib/loader.svelte'
@@ -753,39 +753,40 @@
       if (p) void switchToDocView(p)
     }, when: () => !inlineMode },
 
-    // Revisions
-    { label: 'Refresh revisions', shortcut: 'r', category: 'Revisions', action: userRefresh, when: () => !inlineMode },
-    { label: 'Hard refresh (clear all caches)', category: 'Revisions', action: () => { clearAllCaches(); clearDiffCaches(); userRefresh(true) }, when: () => !inlineMode },
+    // Revisions — !inlineMode comes from INLINE_GATED_CATEGORIES; when() here
+    // only adds the per-entry conditions.
+    { label: 'Refresh revisions', shortcut: 'r', category: 'Revisions', action: userRefresh },
+    { label: 'Hard refresh (clear all caches)', category: 'Revisions', action: () => { clearAllCaches(); clearDiffCaches(); userRefresh(true) } },
     { label: 'New revision', shortcut: 'n', category: 'Revisions', action: () => {
       if (checkedRevisions.size > 0) handleNewFromChecked()
       else if (selectedRevision) handleNew(effectiveId(selectedRevision.commit))
-    }, when: () => !inlineMode && (!!selectedRevision || checkedRevisions.size > 0) },
-    { label: 'Edit description', shortcut: 'e', category: 'Revisions', action: startDescriptionEdit, when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
-    { label: 'Edit selected revision', category: 'Revisions', action: () => handleEdit(effectiveId(selectedRevision!.commit)), when: () => !inlineMode && !!selectedRevision },
-    { label: 'Abandon selected revision', category: 'Revisions', action: () => handleAbandon(effectiveId(selectedRevision!.commit)), when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
-    { label: 'Rebase revision(s)', shortcut: 'R', category: 'Revisions', action: enterRebaseMode, when: () => !inlineMode && (!!selectedRevision || checkedRevisions.size > 0) },
-    { label: 'Squash revision(s)', shortcut: 'S', category: 'Revisions', action: enterSquashMode, when: () => !inlineMode && (!!selectedRevision || checkedRevisions.size > 0) },
-    { label: 'Split revision', shortcut: 's', category: 'Revisions', action: enterSplitMode, when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
-    { label: 'Slide revision down (swap with parent)', shortcut: '⇧J', category: 'Revisions', action: () => handleSlide('down'), when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
-    { label: 'Slide revision up (swap with child)', shortcut: '⇧K', category: 'Revisions', action: () => handleSlide('up'), when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
-    { label: 'Review revision (accept/reject files)', shortcut: 'v', category: 'Revisions', action: enterReviewMode, when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
-    { label: 'Commit working copy', shortcut: 'c', category: 'Revisions', action: handleCommit, when: () => !inlineMode },
+    }, when: () => !!selectedRevision || checkedRevisions.size > 0 },
+    { label: 'Edit description', shortcut: 'e', category: 'Revisions', action: startDescriptionEdit, when: () => !!selectedRevision && checkedRevisions.size === 0 },
+    { label: 'Edit selected revision', category: 'Revisions', action: () => handleEdit(effectiveId(selectedRevision!.commit)), when: () => !!selectedRevision },
+    { label: 'Abandon selected revision', category: 'Revisions', action: () => handleAbandon(effectiveId(selectedRevision!.commit)), when: () => !!selectedRevision && checkedRevisions.size === 0 },
+    { label: 'Rebase revision(s)', shortcut: 'R', category: 'Revisions', action: enterRebaseMode, when: () => !!selectedRevision || checkedRevisions.size > 0 },
+    { label: 'Squash revision(s)', shortcut: 'S', category: 'Revisions', action: enterSquashMode, when: () => !!selectedRevision || checkedRevisions.size > 0 },
+    { label: 'Split revision', shortcut: 's', category: 'Revisions', action: enterSplitMode, when: () => !!selectedRevision && checkedRevisions.size === 0 },
+    { label: 'Slide revision down (swap with parent)', shortcut: '⇧J', category: 'Revisions', action: () => handleSlide('down'), when: () => !!selectedRevision && checkedRevisions.size === 0 },
+    { label: 'Slide revision up (swap with child)', shortcut: '⇧K', category: 'Revisions', action: () => handleSlide('up'), when: () => !!selectedRevision && checkedRevisions.size === 0 },
+    { label: 'Review revision (accept/reject files)', shortcut: 'v', category: 'Revisions', action: enterReviewMode, when: () => !!selectedRevision && checkedRevisions.size === 0 },
+    { label: 'Commit working copy', shortcut: 'c', category: 'Revisions', action: handleCommit },
 
     // Git
-    { label: 'Git fetch', shortcut: 'f', category: 'Git', action: () => handleGitOp('fetch', []), when: () => !inlineMode },
-    { label: 'Git push', shortcut: 'p', category: 'Git', action: () => handleGitOp('push', []), when: () => !inlineMode },
-    { label: 'Git operations (advanced)', shortcut: 'g', category: 'Git', action: () => openModal('git'), when: () => !inlineMode },
+    { label: 'Git fetch', shortcut: 'f', category: 'Git', action: () => handleGitOp('fetch', []) },
+    { label: 'Git push', shortcut: 'p', category: 'Git', action: () => handleGitOp('push', []) },
+    { label: 'Git operations (advanced)', shortcut: 'g', category: 'Git', action: () => openModal('git') },
 
     // Bookmarks
-    { label: 'Bookmark operations', shortcut: 'b', category: 'Bookmarks', action: openBookmarkModal, when: () => !inlineMode },
-    { label: 'Set bookmark', shortcut: 'B', category: 'Bookmarks', action: () => openModal('bookmarkInput'), when: () => !inlineMode && !!selectedRevision && checkedRevisions.size === 0 },
+    { label: 'Bookmark operations', shortcut: 'b', category: 'Bookmarks', action: openBookmarkModal },
+    { label: 'Set bookmark', shortcut: 'B', category: 'Bookmarks', action: () => openModal('bookmarkInput'), when: () => !!selectedRevision && checkedRevisions.size === 0 },
 
     // Workspaces
-    { label: 'New workspace…', category: 'Workspace', action: handleWorkspaceAdd, when: () => !inlineMode && sshMode === false },
+    { label: 'New workspace…', category: 'Workspace', action: handleWorkspaceAdd, when: () => sshMode === false },
     // Rename is otherwise only reachable by right-clicking the current-workspace
     // badge, which doesn't render in single-workspace repos. currentWorkspace
     // !== '' = workspace info loaded (tri-state: '' means unknown).
-    { label: 'Rename workspace…', category: 'Workspace', action: renameWorkspace, when: () => !inlineMode && currentWorkspace !== '' },
+    { label: 'Rename workspace…', category: 'Workspace', action: renameWorkspace, when: () => currentWorkspace !== '' },
 
     // View (non-dynamic)
     { label: 'Edit config (JSON)…', category: 'View', hint: 'theme, fonts, editorArgs', action: () => { closeAllModals(); configModalOpen = true } },
@@ -817,7 +818,7 @@
         navigator.clipboard.writeText(md)
         setMessage(md ? { kind: 'success', text: 'Annotations copied' } : { kind: 'warning', text: 'No annotations to export' })
       },
-      when: () => !inlineMode && !!diffPanelRef?.hasAnnotations(),
+      when: () => !!diffPanelRef?.hasAnnotations(),
     },
     { label: 'Export annotations (JSON → clipboard)', category: 'Annotations',
       action: () => {
@@ -825,21 +826,21 @@
         navigator.clipboard.writeText(json)
         setMessage(json ? { kind: 'success', text: 'Annotations JSON copied' } : { kind: 'warning', text: 'No annotations to export' })
       },
-      when: () => !inlineMode && !!diffPanelRef?.hasAnnotations(),
+      when: () => !!diffPanelRef?.hasAnnotations(),
     },
     { label: 'Clear all annotations on this revision', category: 'Annotations',
       action: () => {
         diffPanelRef?.clearAnnotations()
         setMessage({ kind: 'success', text: 'Annotations cleared' })
       },
-      when: () => !inlineMode && !!diffPanelRef?.hasAnnotations(),
+      when: () => !!diffPanelRef?.hasAnnotations(),
     },
   ])
 
   // Labels that bake reactive state into strings — only these re-allocate on Space/theme/view toggle.
   let dynamicCommands = $derived<PaletteCommand[]>([
-    { label: `Abandon ${checkedRevisions.size} checked`, category: 'Revisions', action: handleAbandonChecked, when: () => !inlineMode && checkedRevisions.size > 0 },
-    { label: `New from ${checkedRevisions.size} checked`, category: 'Revisions', action: handleNewFromChecked, when: () => !inlineMode && checkedRevisions.size > 0 },
+    { label: `Abandon ${checkedRevisions.size} checked`, category: 'Revisions', action: handleAbandonChecked, when: () => checkedRevisions.size > 0 },
+    { label: `New from ${checkedRevisions.size} checked`, category: 'Revisions', action: handleNewFromChecked, when: () => checkedRevisions.size > 0 },
     { label: darkMode ? 'Light theme' : 'Dark theme', shortcut: 't', category: 'View', action: toggleTheme },
     themeSubmenuCommand,
     { label: `Font size: increase (${config.fontSize}px)`, category: 'View', action: () => { config.fontSize += 1 }, when: () => config.fontSize < FONT_SIZE_MAX },
@@ -856,13 +857,26 @@
         hint: a.command.join(' '),
         category: 'Aliases',
         action: () => handleRunAlias(a.name),
-        when: () => !inlineMode,
       })),
   )
 
+  // Category-level inline-mode gate. Every command in these categories mutates
+  // the repo, enters a mode, or opens a modal — none are valid while a
+  // rebase/squash/split is in progress. The gate is injected HERE (not spelled
+  // per-entry) so a new entry can't forget it; per-entry when() only expresses
+  // ADDITIONAL conditions. Categories outside this set (Navigation, View, Help,
+  // Actions) gate individual entries explicitly where needed.
+  const INLINE_GATED_CATEGORIES = new Set(['Revisions', 'Git', 'Bookmarks', 'Workspace', 'Annotations', 'Aliases'])
+
   // Category grouping in the palette's cheatsheet view is handled by Map.groupBy
   // (CommandPalette.svelte), so spread order here doesn't affect visual grouping.
-  let commands = $derived<PaletteCommand[]>([...staticCommands, ...dynamicCommands, ...aliasCommands])
+  let commands = $derived<PaletteCommand[]>(
+    [...staticCommands, ...dynamicCommands, ...aliasCommands].map(c =>
+      INLINE_GATED_CATEGORIES.has(c.category ?? '')
+        ? { ...c, when: () => !inlineMode && (c.when?.() ?? true) }
+        : c,
+    ),
+  )
 
   // --- API actions ---
   async function loadInfo() {
@@ -2290,6 +2304,24 @@
     return true
   }
 
+  // Kind-keyed execute dispatch — Enter (handleInlineCommit) and the
+  // DestinationInput submit both route through this instead of re-spelling
+  // `split.active ? executeSplit : squash.active ? ...` chains. executeSplit
+  // ignores the typedDest arg (split has no destination).
+  const executeInlineMode: Record<ModeKind, (typedDest?: string) => unknown> = {
+    rebase: executeRebase,
+    squash: executeSquash,
+    split: executeSplit,
+  }
+
+  // Header verb for the `/` DestinationInput, per mode kind. Split never opens
+  // it (hasDestination=false gates the `/` key in handleInlineNav).
+  const destinationVerb: Record<ModeKind, () => string> = {
+    rebase: () => `Rebase ${targetModeLabel[rebase.targetMode]}`,
+    squash: () => 'Squash into',
+    split: () => '',
+  }
+
   // Inline mode Enter/Escape — must fire even when FileSelectionPanel holds
   // focus (it's a <div tabindex=-1> inside the diff panel). But cm-editor and
   // text inputs handle their own Enter/Escape, so sub-filter on those.
@@ -2301,9 +2333,7 @@
     if (isInInput(target)) return true
     e.preventDefault()
     if (e.key === 'Enter') {
-      if (split.active) executeSplit()
-      else if (squash.active) executeSquash()
-      else executeRebase()  // inlineMode && !split && !squash ⇒ rebase
+      if (activeInlineMode) executeInlineMode[activeInlineMode.kind]()
     } else {
       cancelInlineModes()
     }
@@ -2313,24 +2343,26 @@
   // j/k (per-mode semantics) + delegate to mode.handleKey(). Swallows ALL
   // keys — normal-mode shortcuts (t/u/b/r/...) deliberately don't leak through.
   //
-  // j/k semantics differ: squash uses selectRevisionCursorOnly (cursor moves,
-  // diff stays frozen on source — that's what you're squashing). Rebase uses
-  // full selectRevision (diff follows — destination preview). Split has NO j/k
-  // (operates on a fixed revision).
+  // j/k semantics come from the mode's own ModeBase contract:
+  //   no destination cursor        → no j/k at all (split — in-place op)
+  //   destination + diff follows   → full selectRevision (rebase: dest preview)
+  //   destination + diff frozen    → selectRevisionCursorOnly (squash)
   function handleInlineNav(e: KeyboardEvent): void {
     // Hunk-review j/k/Space/a/n/A/N take over. Routed here (not in
     // split.handleKey) because allHunks is derived from parseDiffCached
     // (App-owned); the mode factory can't see it.
     if (split.review && handleReviewKey(e.key)) { e.preventDefault(); return }
 
-    const [mode, jk] = split.active ? [split, undefined] as const
-                     : squash.active ? [squash, selectRevisionCursorOnly] as const
-                     : [rebase, selectRevision] as const
-    // `/` opens DestinationInput for off-revset targets. Split has no
-    // destination (it's in-place), so only rebase/squash get it. Handled HERE
-    // (not in mode.handleKey) because opening a modal is App-level concern;
-    // the mode factory has no access to destInputOpen.
-    if (e.key === '/' && !split.active) {
+    const mode = activeInlineMode
+    if (!mode) return  // unreachable: routeKeydown only calls this when inlineMode
+    const jk = !mode.hasDestination ? undefined
+             : mode.diffFollows ? selectRevision
+             : selectRevisionCursorOnly
+    // `/` opens DestinationInput for off-revset targets — only modes with a
+    // destination get it. Handled HERE (not in mode.handleKey) because opening
+    // a modal is an App-level concern; the mode factory has no access to
+    // destInputOpen.
+    if (e.key === '/' && mode.hasDestination) {
       e.preventDefault()
       destInputOpen = true
       return
@@ -3266,8 +3298,8 @@
 
   <DestinationInput
     bind:open={destInputOpen}
-    verb={squash.active ? 'Squash into' : `Rebase ${targetModeLabel[rebase.targetMode]}`}
-    onsubmit={(dest) => squash.active ? executeSquash(dest) : executeRebase(dest)}
+    verb={activeInlineMode ? destinationVerb[activeInlineMode.kind]() : ''}
+    onsubmit={(dest) => { if (activeInlineMode) executeInlineMode[activeInlineMode.kind](dest) }}
   />
 
   <BookmarkModal

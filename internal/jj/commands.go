@@ -6,6 +6,7 @@
 package jj
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -484,6 +485,75 @@ func ParseOpLog(output string) []OpEntry {
 			Description: parts[1],
 			Time:        parts[2],
 			IsCurrent:   parts[3] == "true",
+		})
+	}
+	return entries
+}
+
+// JSONTemplates names the first jj release whose template language has the
+// json(value) function (jj 0.31.0 changelog: "Templates now support json(x)
+// function to serialize values in JSON format"). Handlers that wire a
+// *JSON builder/parser pair branch on s.jjSupports(ctx, jj.JSONTemplates)
+// and keep the delimiter builder as the older-jj fallback. The constant
+// lives here (next to the exemplar) rather than in version.go's gate list
+// because that list only carries gates a handler already branches on; move
+// it there — plus a FeatureGates entry if the frontend needs the boolean —
+// when the first handler adopts it.
+var JSONTemplates = Semver{0, 31}
+
+// OpLogJSON is the json()-template counterpart of OpLog — the reference
+// migration for the "new jj output parsing uses json() templates" rule
+// (CLAUDE.md, Go conventions). One JSON object per line with a schema WE
+// define in the template:
+//
+//	{"id": ..., "description": ..., "time": ..., "current": ...}
+//
+// Why this shape and not json(self): whole-object serialization has whatever
+// schema jj's internal type happens to serialize to, which can change between
+// releases. Composing named fields keeps the wire schema under our control.
+//
+// Why this beats the \x1F-positional template in OpLog: json() escapes
+// embedded newlines/quotes/control characters, so no delimiter hierarchy, no
+// SplitN position counting, and free-text fields can never shift columns.
+// Booleans use the proven if(...) form ("true"/"false" are valid bare JSON
+// values); json() is only relied on for what it must do — escape strings.
+//
+// Requires jj >= JSONTemplates. Callers gate via jjSupports and fall back to
+// OpLog/ParseOpLog on older jj (json() there is a template parse error).
+func OpLogJSON(limit int) CommandArgs {
+	args := []string{"op", "log", "--no-graph", "--color", "never", "--ignore-working-copy"}
+	if limit > 0 {
+		args = append(args, "--limit", strconv.Itoa(limit))
+	}
+	tmpl := `'{"id":' ++ json(self.id().short()) ++ ',"description":' ++ json(self.description()) ++ ',"time":' ++ json(stringify(self.time().start())) ++ ',"current":' ++ if(self.current_operation(), "true", "false") ++ '}' ++ "\n"`
+	args = append(args, "-T", tmpl)
+	return args
+}
+
+// ParseOpLogJSON parses OpLogJSON output (one JSON object per line) into the
+// same OpEntry slice ParseOpLog produces, so a gated handler can swap parsers
+// without changing its response shape. Unparseable lines are skipped (same
+// tolerance as the positional parsers). Returns an empty slice, never nil.
+func ParseOpLogJSON(output string) []OpEntry {
+	entries := []OpEntry{}
+	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec struct {
+			ID          string `json:"id"`
+			Description string `json:"description"`
+			Time        string `json:"time"`
+			Current     bool   `json:"current"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		entries = append(entries, OpEntry{
+			ID:          rec.ID,
+			Description: rec.Description,
+			Time:        rec.Time,
+			IsCurrent:   rec.Current,
 		})
 	}
 	return entries

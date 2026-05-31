@@ -1,7 +1,6 @@
 <script lang="ts">
   import { api } from './api'
-  import { classify, buildKeepPlan, type DivergenceGroup, type KeepPlan } from './divergence'
-  import { computeRefinedKind, findCrossColumnMerge, type RefinedKind } from './divergence-refined'
+  import { classify, buildKeepPlan, computeRefinedKind, findCrossColumnMerge, type DivergenceGroup, type KeepPlan, type RefinedKind } from './divergence'
   import { createLoader } from './loader.svelte'
   import { recommend, immutableSiblingCopy, type Strategy } from './divergence-strategy'
   import { parseDiffContent } from './diff-parser'
@@ -78,7 +77,7 @@
   let parsedCrossDiff = $derived(parseDiffContent(crossDiff.value))
 
   // RefinedKind — full taxonomy after tree-delta lands. Feeds both the kind
-  // badge AND recommend(). Decision logic extracted to divergence-refined.ts.
+  // badge AND recommend(). Decision logic lives in divergence.ts (computeRefinedKind).
   let refinedKind = $derived(
     computeRefinedKind(group, crossDiff.loading, parsedCrossDiff.map(f => f.filePath), fileUnion)
   )
@@ -89,7 +88,7 @@
   let strategies = $derived(group ? recommend(group, refinedKind) : [])
 
   // A descendant merging two column tips is likely the user's manual
-  // reconciliation. Extracted to divergence-refined.ts (findCrossColumnMerge).
+  // reconciliation. Detected by divergence.ts (findCrossColumnMerge).
   let crossColumnMerge = $derived(group ? findCrossColumnMerge(group) : null)
 
   // --- Non-empty descendant confirm ---

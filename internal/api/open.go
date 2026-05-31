@@ -175,6 +175,11 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// exec.Command — the editor spawns on the machine where lightjj runs.
+	// This is the ONE sanctioned exception to the "never call exec.Command
+	// outside internal/runner/" rule (see CLAUDE.md, Go conventions): the
+	// editor must run where lightjj runs so it can open a window on the
+	// user's machine — routing it through the CommandRunner would launch it
+	// on the SSH remote in --remote mode.
 	// This is the documented invariant (docs/CONFIG.md): local mode → local
 	// editor; port-forward → remote CLI helper (e.g. VS Code Server's `code`
 	// which IPCs back to the laptop); --remote → local editor with SSH URI

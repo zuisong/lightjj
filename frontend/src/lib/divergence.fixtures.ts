@@ -1,5 +1,5 @@
 // Shared test fixtures for divergence tests — imported by divergence.test.ts,
-// divergence-refined.test.ts, divergence-strategy.test.ts, DivergencePanel.test.ts.
+// divergence-strategy.test.ts, DivergencePanel.test.ts.
 // DivergenceEntry has 11 required fields; every test redefining a builder
 // violates DRY and makes field additions painful (miss one test file → type error).
 

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity'
-  import { createWindower } from './virtual.svelte'
+  import { createWindower, type VirtualItem } from './virtual.svelte'
   import { effectiveId, type LogEntry, type PullRequest, type RemoteRef, type RemoteVisibility } from './api'
-  import { targetModeLabel, type RebaseMode, type SquashMode, type SplitMode } from './modes.svelte'
+  import { targetModeLabel, type ModeKind, type RebaseMode, type SquashMode, type SplitMode } from './modes.svelte'
   import { relativeTime } from './time-format'
   import GraphSvg from './GraphSvg.svelte'
 
@@ -10,10 +10,6 @@
   // see CLAUDE.md). Fixed-size virtualization is the simplest case: no dynamic
   // measurement, no ResizeObserver on items.
   const ROW_HEIGHT = 18
-  // Virtualize only above this many lines (~50 commits depending on bookmarks/
-  // connectors). Below threshold, render eagerly — overhead is noise and jsdom
-  // tests (clientHeight=0) render nothing under virtualization.
-  const VIRTUALIZE_THRESHOLD = 150
 
   interface Props {
     revisions: LogEntry[]
@@ -56,7 +52,11 @@
     theme, themeEpoch = 0, prByBookmark, impliedCommitIds, remoteVisibility,
   }: Props = $props()
 
-  let anyModeActive = $derived(rebase.active || squash.active || split.active)
+  // At most one mode is active (App's enter* helpers cancel the others first).
+  // The generic ModeBase fields (sources/hasDestination) drive the badge and
+  // preview rows below; only LABEL text dispatches on kind.
+  let activeMode = $derived(rebase.active ? rebase : squash.active ? squash : split.active ? split : null)
+  let anyModeActive = $derived(activeMode !== null)
 
   // Stale-while-revalidate: when we already have revisions, don't blank the
   // list during reloads — dim it and show a thin progress bar instead.
@@ -88,6 +88,29 @@
   }
 
   const sourceModeLabel: Record<string, string> = { '-r': 'move', '-s': 'source', '-b': 'branch' }
+
+  // Kind-keyed badge/preview text. The row template stays generic (isSource/
+  // isTarget come from ModeBase.sources / .hasDestination); only the label
+  // strings are per-mode. Thunks keep the reactive reads (sourceMode, review,
+  // keepEmptied, …) inside the render.
+  const sourceBadgeLabel: Record<ModeKind, () => string> = {
+    rebase: () => sourceModeLabel[rebase.sourceMode],
+    squash: () => 'from',
+    split: () => split.review ? 'review' : 'split',
+  }
+  const targetBadgeLabel: Record<ModeKind, () => string> = {
+    rebase: () => targetModeLabel[rebase.targetMode],
+    squash: () => 'into',
+    split: () => '',  // unreachable — hasDestination=false means no target row
+  }
+  // jj command preview shown on the operative row's description line: the
+  // destination row for rebase/squash, the source row itself for split
+  // (in-place operation). rowChangeId is that row's change_id.
+  const commandPreview: Record<ModeKind, (rowChangeId: string) => string> = {
+    rebase: (dest) => `rebase ${rebase.sourceMode} ${rebase.sources.map(s => s.slice(0, 8)).join(' ')} ${rebase.targetMode} ${dest.slice(0, 8)}`,
+    squash: (dest) => `jj squash --from ${squash.sources.map(s => s.slice(0, 8)).join(' --from ')} --into ${dest.slice(0, 8)}${squash.keepEmptied ? ' --keep-emptied' : ''}`,
+    split: (src) => `jj split -r ${src.slice(0, 8)}${split.parallel ? ' --parallel' : ''}`,
+  }
 
   // Build a continuation gutter: replace node symbols with │, keep pipes and spaces
   const nodeChars = new Set(['@', '○', '◆', '×', '◌'])
@@ -236,12 +259,10 @@
     return lines
   })
 
-  let shouldVirtualize = $derived(flatLines.length > VIRTUALIZE_THRESHOLD)
-
-  // Windower is always created (observers are cheap) but only USED above
-  // threshold. count and scrollEl passed as getters → reactive without
-  // $effect glue. No untrack dance needed — createWindower uses runes
-  // directly, not a self-notifying Svelte-4 store.
+  // Every list size renders through the windower — small lists window to
+  // "all rows", so there's no separate eager path. count and scrollEl passed
+  // as getters → reactive without $effect glue. No untrack dance needed —
+  // createWindower uses runes directly, not a self-notifying Svelte-4 store.
   const windower = createWindower({
     count: () => flatLines.length,
     scrollEl: () => scrollEl,
@@ -249,6 +270,18 @@
     // Generous overscan — j/k navigation is the hot path, rendering a few
     // extra rows is cheaper than mount/unmount churn on every keypress.
     overscan: 10,
+  })
+
+  // The windower can't compute a window before the viewport is measured: the
+  // first pre-effect render, and layout-engine-less environments (jsdom tests
+  // — clientHeight is always 0 there). Synthesize a window over the first rows
+  // so the list is never blank in those states; the real window takes over as
+  // soon as the measurement effect reports a height (pre-paint in browsers).
+  const FALLBACK_ROWS = 60
+  let renderItems: VirtualItem[] = $derived.by(() => {
+    if (windower.items.length > 0 || flatLines.length === 0) return windower.items
+    const n = Math.min(flatLines.length, FALLBACK_ROWS)
+    return Array.from({ length: n }, (_, i) => ({ index: i, start: i * ROW_HEIGHT }))
   })
 
   // Hover is tracked in JS, not via CSS :hover. The :hover pseudo-class
@@ -278,21 +311,15 @@
   }
 
   // Scroll the selected node row into view. Deps: selectedIndex + flatLines
-  // (via shouldVirtualize and the findIndex scan) — the latter means post-
-  // loadLog reflow also scrolls-to-selection, which is intentional.
-  // Virtualized path uses scrollToIndex (selected row may not be in DOM);
-  // eager path queries DOM.
+  // (via the findIndex scan) — the latter means post-loadLog reflow also
+  // scrolls-to-selection, which is intentional. Always windower.scrollToIndex
+  // — the selected row may not be in the DOM at all.
   $effect(() => {
     if (selectedIndex < 0) return
-    if (shouldVirtualize) {
-      // Selection is by entryIndex; windower scrolls by flatLines index.
-      // findIndex is O(n) but n~1500 max = <2μs; cheaper than a $derived Map
-      // built unconditionally (including below threshold where it's unused).
-      const idx = flatLines.findIndex(l => l.isNode && l.entryIndex === selectedIndex)
-      if (idx >= 0) windower.scrollToIndex(idx)
-    } else {
-      scrollEl?.querySelector('.graph-row.node-row.selected')?.scrollIntoView({ block: 'nearest' })
-    }
+    // Selection is by entryIndex; windower scrolls by flatLines index.
+    // findIndex is O(n) but n~1500 max = <2μs; cheaper than a $derived Map.
+    const idx = flatLines.findIndex(l => l.isNode && l.entryIndex === selectedIndex)
+    if (idx >= 0) windower.scrollToIndex(idx)
   })
 </script>
 
@@ -329,7 +356,7 @@
     {:else if revisions.length === 0}
       <div class="empty-state">No revisions found</div>
     {:else}
-      <!-- Row snippet — shared by virtual and eager render paths below. -->
+      <!-- Row snippet — rendered by the windowed {#each} below. -->
       {#snippet graphRow(line: FlatLine)}
         {@const isChecked = checkedRevisions.has(line.eid)}
         {@const isImplied = !isChecked && impliedCommitIds.has(revisions[line.entryIndex]?.commit.commit_id)}
@@ -382,25 +409,13 @@
           />
           {#if line.isNode}
             {@const entry = revisions[line.entryIndex]}
-            {@const isRebaseSource = rebase.active && rebase.sources.includes(line.eid)}
-            {@const isRebaseTarget = rebase.active && selectedIndex === line.entryIndex && !isRebaseSource}
-            {@const isSquashSource = squash.active && squash.sources.includes(line.eid)}
-            {@const isSquashTarget = squash.active && selectedIndex === line.entryIndex && !isSquashSource}
-            {@const isSplitSource = split.active && line.eid === split.revision}
-            {#if isRebaseSource}
-              <span class="role-marker badge-source">&lt;&lt; {sourceModeLabel[rebase.sourceMode]} &gt;&gt;</span>
+            {@const isSource = !!activeMode && activeMode.sources.includes(line.eid)}
+            {@const isTarget = !!activeMode && activeMode.hasDestination && selectedIndex === line.entryIndex && !isSource}
+            {#if activeMode && isSource}
+              <span class="role-marker badge-source">&lt;&lt; {sourceBadgeLabel[activeMode.kind]()} &gt;&gt;</span>
             {/if}
-            {#if isRebaseTarget}
-              <span class="role-marker badge-target">&lt;&lt; {targetModeLabel[rebase.targetMode]} &gt;&gt;</span>
-            {/if}
-            {#if isSquashSource}
-              <span class="role-marker badge-source">&lt;&lt; from &gt;&gt;</span>
-            {/if}
-            {#if isSquashTarget}
-              <span class="role-marker badge-target">&lt;&lt; into &gt;&gt;</span>
-            {/if}
-            {#if isSplitSource}
-              <span class="role-marker badge-source">&lt;&lt; {split.review ? 'review' : 'split'} &gt;&gt;</span>
+            {#if activeMode && isTarget}
+              <span class="role-marker badge-target">&lt;&lt; {targetBadgeLabel[activeMode.kind]()} &gt;&gt;</span>
             {/if}
             {#if entry.commit.divergent}
               <button class="alert-badge alert-badge-click" title="Resolve divergence"
@@ -478,16 +493,15 @@
             </span>
           {:else if line.isDescLine}
             {@const entry = revisions[line.entryIndex]}
-            {@const isRebaseTarget = rebase.active && selectedIndex === line.entryIndex && !rebase.sources.includes(line.eid)}
-            {@const isSquashTarget = squash.active && selectedIndex === line.entryIndex && !squash.sources.includes(line.eid)}
-            {@const isSplitPreview = split.active && line.eid === split.revision}
+            <!-- Preview shows on the operative row: the destination cursor row
+                 for modes with a destination (rebase/squash), the source row
+                 itself for in-place modes (split). -->
+            {@const showPreview = !!activeMode && (activeMode.hasDestination
+              ? selectedIndex === line.entryIndex && !activeMode.sources.includes(line.eid)
+              : activeMode.sources.includes(line.eid))}
             <span class="desc-line-content">
-              {#if isSplitPreview}
-                <span class="rebase-preview">jj split -r {entry.commit.change_id.slice(0, 8)}{split.parallel ? ' --parallel' : ''}</span>
-              {:else if isRebaseTarget}
-                <span class="rebase-preview">rebase {rebase.sourceMode} {rebase.sources.map(s => s.slice(0, 8)).join(' ')} {rebase.targetMode} {entry.commit.change_id.slice(0, 8)}</span>
-              {:else if isSquashTarget}
-                <span class="rebase-preview">jj squash --from {squash.sources.map(s => s.slice(0, 8)).join(' --from ')} --into {entry.commit.change_id.slice(0, 8)}{squash.keepEmptied ? ' --keep-emptied' : ''}</span>
+              {#if activeMode && showPreview}
+                <span class="rebase-preview">{commandPreview[activeMode.kind](entry.commit.change_id)}</span>
               {:else}
                 {@const divOffset = divergenceOffsets.get(entry.commit.commit_id)}
                 <span class="meta-line">
@@ -517,25 +531,18 @@
       <div
         class="revision-list"
         class:refreshing={isRefreshing}
-        class:virtual-list={shouldVirtualize}
-        style={shouldVirtualize ? `height:${windower.totalHeight}px` : undefined}
+        style="height:{windower.totalHeight}px"
         onmousemove={onListMouseMove}
         onmouseleave={onListMouseLeave}
         role="listbox"
         tabindex="-1"
         aria-label="Revision list"
       >
-        {#if shouldVirtualize}
-          {#each windower.items as item (`${flatLines[item.index].eid}:${flatLines[item.index].lineKey}`)}
-            <div class="virtual-row" style="transform:translateY({item.start}px)">
-              {@render graphRow(flatLines[item.index])}
-            </div>
-          {/each}
-        {:else}
-          {#each flatLines as line (`${line.eid}:${line.lineKey}`)}
-            {@render graphRow(line)}
-          {/each}
-        {/if}
+        {#each renderItems as item (`${flatLines[item.index].eid}:${flatLines[item.index].lineKey}`)}
+          <div class="virtual-row" style="transform:translateY({item.start}px)">
+            {@render graphRow(flatLines[item.index])}
+          </div>
+        {/each}
       </div>
     {/if}
   </div>
@@ -652,10 +659,12 @@
     overflow-x: hidden;
   }
 
-  /* --- Revision list (flat graph rows) --- */
+  /* --- Revision list (windowed graph rows) --- */
+  /* Container height = windower.totalHeight; each row absolutely positioned
+     via translateY(item.start). .graph-row CSS stays unchanged
+     (position:relative is fine inside an absolute parent). */
   .revision-list {
-    display: flex;
-    flex-direction: column;
+    position: relative;
     user-select: none;
     -webkit-user-select: none;
     /* Transition on base class so fade-OUT also animates (when .refreshing removed) */
@@ -666,12 +675,6 @@
     background: transparent;
   }
 
-  /* Virtualized layout: container height = totalSize; each row absolutely
-     positioned via translateY(item.start). .graph-row CSS stays unchanged
-     (position:relative is fine inside an absolute parent). */
-  .virtual-list {
-    position: relative;
-  }
   .virtual-row {
     position: absolute;
     top: 0;
@@ -682,11 +685,6 @@
   .graph-row {
     display: flex;
     align-items: center;
-    /* Below VIRTUALIZE_THRESHOLD the entire list renders eagerly; this lets
-       the browser skip offscreen paint. contain-intrinsic-size is EXACT
-       (matches the fixed height below) so no scroll jank. */
-    content-visibility: auto;
-    contain-intrinsic-size: 18px;
     height: 18px;
     line-height: 18px;
     /* --fs-md (base-1) not --font-size: leaves descender headroom at max base

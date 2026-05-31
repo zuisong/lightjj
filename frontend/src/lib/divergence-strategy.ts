@@ -12,8 +12,7 @@
 // Strategy 4 (accept) is the implicit null — no recommendation means we
 // can't help; panel falls back to column buttons with no primary highlight.
 
-import type { DivergenceGroup } from './divergence'
-import type { RefinedKind } from './divergence-refined'
+import type { DivergenceGroup, RefinedKind } from './divergence'
 
 // Only strategies recommend() actually emits. split-identity is
 // immutable-sibling-only and doesn't go through the Strategy[] path.

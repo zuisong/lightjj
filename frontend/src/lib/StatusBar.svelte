@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RebaseMode, SquashMode, SplitMode } from './modes.svelte'
+  import type { ModeBase, RebaseMode, SquashMode, SplitMode } from './modes.svelte'
 
   interface Props {
     statusText: string
@@ -13,6 +13,10 @@
 
   let { statusText, rebase, squash, squashFileCount, split, splitFileCount, activeView }: Props = $props()
 
+  // At most one mode is active (App's enter* helpers cancel the others first).
+  let activeMode: ModeBase | null = $derived(
+    rebase.active ? rebase : squash.active ? squash : split.active ? split : null)
+
   const sourceKeys: { key: string; flag: string; label: string }[] = [
     { key: 'r', flag: '-r', label: 'revision' },
     { key: 's', flag: '-s', label: 'source' },
@@ -24,81 +28,80 @@
     { key: 'a', flag: '--insert-after', label: 'after' },
     { key: 'i', flag: '--insert-before', label: 'before' },
   ]
+
+  // Per-mode key hints, rendered by ONE generic loop below. Each inner array
+  // is a key-group (separated by dividers); each hint is N <kbd>s + a label.
+  // The mode-specific knowledge lives in this kind-keyed table — the chrome
+  // around it (mode badge, Enter/Esc/`/`, file count) renders once for all modes.
+  interface KeyHint { keys: string[]; label: string; active?: boolean }
+  let keyGroups: KeyHint[][] = $derived.by(() => {
+    switch (activeMode?.kind) {
+      case 'rebase': return [
+        sourceKeys.map(sk => ({ keys: [sk.key], label: sk.label, active: rebase.sourceMode === sk.flag })),
+        targetKeys.map(tk => ({ keys: [tk.key], label: tk.label, active: rebase.targetMode === tk.flag })),
+        [
+          { keys: ['e'], label: 'skip-emptied', active: rebase.skipEmptied },
+          { keys: ['x'], label: 'ignore-immutable', active: rebase.ignoreImmutable },
+          { keys: ['p'], label: 'simplify-parents', active: rebase.simplifyParents },
+        ],
+      ]
+      case 'squash': return [[
+        { keys: ['e'], label: 'keep-emptied', active: squash.keepEmptied },
+        { keys: ['x'], label: 'ignore-immutable', active: squash.ignoreImmutable },
+      ]]
+      case 'split': return [
+        split.review
+          ? [{ keys: ['j', 'k'], label: 'hunk' }, { keys: ['Space'], label: 'toggle' }, { keys: ['a', 'n'], label: 'file' }]
+          : [{ keys: ['p'], label: 'parallel', active: split.parallel }],
+      ]
+      default: return []
+    }
+  })
+
+  let badgeLabel = $derived(
+    activeMode?.kind === 'split' && split.review ? 'review' : activeMode?.kind ?? '')
+
+  // File/hunk progress — at most one of the two count props applies.
+  let fileCount = $derived(
+    activeMode?.kind === 'squash' ? squashFileCount
+    : activeMode?.kind === 'split' ? splitFileCount
+    : null)
+  let fileCountNoun = $derived(
+    activeMode?.kind === 'squash' ? 'files to move'
+    : split.review ? 'hunks accepted' : 'files stay')
+  // Red empty-warning only for squash: 0 selected files blocks Enter there.
+  // Split's 0/total is reported on Enter instead.
+  let warnEmpty = $derived(activeMode?.kind === 'squash')
 </script>
 
-<footer class="statusbar" class:rebase-active={rebase.active} class:squash-active={squash.active} class:split-active={split.active}>
-  {#if split.active}
+<footer class="statusbar"
+  class:rebase-active={activeMode?.kind === 'rebase'}
+  class:squash-active={activeMode?.kind === 'squash'}
+  class:split-active={activeMode?.kind === 'split'}>
+  {#if activeMode}
     <div class="statusbar-left">
-      <span class="mode-badge">{split.review ? 'review' : 'split'}</span>
+      <span class="mode-badge">{badgeLabel}</span>
       <span class="key-group">
         <kbd class="key action-key">Enter</kbd><span class="key-label">apply</span>
         <kbd class="key action-key">Esc</kbd><span class="key-label">cancel</span>
+        {#if activeMode.hasDestination}
+          <kbd class="key action-key">/</kbd><span class="key-label">type dest</span>
+        {/if}
       </span>
-      <span class="key-divider"></span>
-      {#if split.review}
-        <span class="key-group">
-          <kbd class="key">j</kbd><kbd class="key">k</kbd><span class="key-label">hunk</span>
-          <kbd class="key">Space</kbd><span class="key-label">toggle</span>
-          <kbd class="key">a</kbd><kbd class="key">n</kbd><span class="key-label">file</span>
-        </span>
-      {:else}
-        <span class="key-group">
-          <kbd class="key" class:key-active={split.parallel}>p</kbd><span class="key-label" class:key-label-active={split.parallel}>parallel</span>
-        </span>
-      {/if}
-      {#if splitFileCount}
+      {#each keyGroups as group}
         <span class="key-divider"></span>
         <span class="key-group">
-          <span class="file-count">{splitFileCount.selected}/{splitFileCount.total} {split.review ? 'hunks accepted' : 'files stay'}</span>
+          {#each group as hint}
+            {#each hint.keys as k}<kbd class="key" class:key-active={hint.active}>{k}</kbd>{/each}<span class="key-label" class:key-label-active={hint.active}>{hint.label}</span>
+          {/each}
         </span>
-      {/if}
-    </div>
-  {:else if squash.active}
-    <div class="statusbar-left">
-      <span class="mode-badge">squash</span>
-      <span class="key-group">
-        <kbd class="key action-key">Enter</kbd><span class="key-label">apply</span>
-        <kbd class="key action-key">Esc</kbd><span class="key-label">cancel</span>
-        <kbd class="key action-key">/</kbd><span class="key-label">type dest</span>
-      </span>
-      <span class="key-divider"></span>
-      <span class="key-group">
-        <kbd class="key" class:key-active={squash.keepEmptied}>e</kbd><span class="key-label" class:key-label-active={squash.keepEmptied}>keep-emptied</span>
-        <kbd class="key" class:key-active={squash.ignoreImmutable}>x</kbd><span class="key-label" class:key-label-active={squash.ignoreImmutable}>ignore-immutable</span>
-      </span>
-      {#if squashFileCount}
+      {/each}
+      {#if fileCount}
         <span class="key-divider"></span>
         <span class="key-group">
-          <span class="file-count" class:file-count-empty={squashFileCount.selected === 0}>{squashFileCount.selected}/{squashFileCount.total} files to move</span>
+          <span class="file-count" class:file-count-empty={warnEmpty && fileCount.selected === 0}>{fileCount.selected}/{fileCount.total} {fileCountNoun}</span>
         </span>
       {/if}
-    </div>
-  {:else if rebase.active}
-    <div class="statusbar-left">
-      <span class="mode-badge">rebase</span>
-      <span class="key-group">
-        <kbd class="key action-key">Enter</kbd><span class="key-label">apply</span>
-        <kbd class="key action-key">Esc</kbd><span class="key-label">cancel</span>
-        <kbd class="key action-key">/</kbd><span class="key-label">type dest</span>
-      </span>
-      <span class="key-divider"></span>
-      <span class="key-group">
-        {#each sourceKeys as sk}
-          <kbd class="key" class:key-active={rebase.sourceMode === sk.flag}>{sk.key}</kbd><span class="key-label" class:key-label-active={rebase.sourceMode === sk.flag}>{sk.label}</span>
-        {/each}
-      </span>
-      <span class="key-divider"></span>
-      <span class="key-group">
-        {#each targetKeys as tk}
-          <kbd class="key" class:key-active={rebase.targetMode === tk.flag}>{tk.key}</kbd><span class="key-label" class:key-label-active={rebase.targetMode === tk.flag}>{tk.label}</span>
-        {/each}
-      </span>
-      <span class="key-divider"></span>
-      <span class="key-group">
-        <kbd class="key" class:key-active={rebase.skipEmptied}>e</kbd><span class="key-label" class:key-label-active={rebase.skipEmptied}>skip-emptied</span>
-        <kbd class="key" class:key-active={rebase.ignoreImmutable}>x</kbd><span class="key-label" class:key-label-active={rebase.ignoreImmutable}>ignore-immutable</span>
-        <kbd class="key" class:key-active={rebase.simplifyParents}>p</kbd><span class="key-label" class:key-label-active={rebase.simplifyParents}>simplify-parents</span>
-      </span>
     </div>
   {:else}
     <div class="statusbar-left">
@@ -173,7 +176,7 @@
     gap: 12px;
   }
 
-  /* --- Rebase mode --- */
+  /* --- Inline mode (rebase/squash/split) --- */
   .mode-badge {
     background: var(--amber);
     color: var(--crust);
