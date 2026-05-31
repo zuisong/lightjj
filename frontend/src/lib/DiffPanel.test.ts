@@ -13,6 +13,7 @@ vi.mock('./api', async (importOriginal) => {
       edit: vi.fn(),
       fileShow: vi.fn(),
       fileWrite: vi.fn(),
+      mergeResolve: vi.fn(),
       restore: vi.fn(),
       diff: vi.fn(),
       annotations: vi.fn().mockResolvedValue([]),
@@ -1041,6 +1042,7 @@ describe('DiffPanel', () => {
 
   describe('quickResolve — one-click whole-file conflict resolution', () => {
     const mockFileWrite = api.fileWrite as Mock
+    const mockMergeResolve = api.mergeResolve as Mock
     // jj Snapshot-style conflict: reconstructSides → ours="OURS", theirs="THEIRS".
     const conflictContent = [
       '<<<<<<<', '+++++++ s1', 'OURS', '------- base', 'BASE', '+++++++ s2', 'THEIRS', '>>>>>>>',
@@ -1067,9 +1069,30 @@ describe('DiffPanel', () => {
       expect(quickBtn(container, '◀ Ours')).toBeFalsy()
     })
 
-    it('"◀ Ours" writes sides.ours and reloads (auto-jj-edits the non-@ target first)', async () => {
-      mockEdit.mockResolvedValue(undefined)
+    it('"◀ Ours" on a non-@ target resolves via mergeResolve — @ does NOT move', async () => {
+      // Strategy unification (conflict-resolve.ts): resolution no longer
+      // auto-runs `jj edit` on non-@ targets. The write goes through
+      // `jj resolve -r <commit_id>` (api.mergeResolve), leaving @ alone.
       mockFileShow.mockResolvedValue({ content: conflictContent })
+      mockMergeResolve.mockResolvedValue({ output: '' })
+      const onfilesaved = vi.fn()
+      const { container } = render(DiffPanel, { props: conflictProps({ onfilesaved }) })
+      await settle()
+
+      await fireEvent.click(quickBtn(container, '◀ Ours')!)
+      await settle()
+
+      expect(mockEdit).not.toHaveBeenCalled()                 // @ untouched
+      expect(mockFileWrite).not.toHaveBeenCalled()
+      expect(mockMergeResolve).toHaveBeenCalledWith('co-A', 'a.go', 'OURS')  // commit_id
+      expect(onfilesaved).toHaveBeenCalled()
+    })
+
+    it('non-@ target in SSH mode (mergeResolve 501) → explicit jj-edit fallback + banner', async () => {
+      // The only resolution path that still moves @ — and it says so.
+      mockFileShow.mockResolvedValue({ content: conflictContent })
+      mockMergeResolve.mockRejectedValue(new Error('merge-resolve requires local mode'))
+      mockEdit.mockResolvedValue({ output: '' })
       mockFileWrite.mockResolvedValue({ ok: true })
       const onfilesaved = vi.fn()
       const { container } = render(DiffPanel, { props: conflictProps({ onfilesaved }) })
@@ -1078,9 +1101,11 @@ describe('DiffPanel', () => {
       await fireEvent.click(quickBtn(container, '◀ Ours')!)
       await settle()
 
-      expect(mockEdit).toHaveBeenCalledWith('ch-A')          // non-@ → jj edit first
+      expect(mockEdit).toHaveBeenCalledWith('co-A')            // fallback moves @ ...
       expect(mockFileWrite).toHaveBeenCalledWith('a.go', 'OURS')
       expect(onfilesaved).toHaveBeenCalled()
+      // ... and surfaces it — never silent.
+      expect(container.querySelector('.edit-error-banner')?.textContent).toContain('working copy moved')
     })
 
     it('"Theirs ▶" writes sides.theirs; no jj edit when target is @', async () => {

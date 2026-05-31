@@ -5,13 +5,13 @@
 // DiffExperimental / Snapshot. Git style falls through (no %%%%%%% / +++++++
 // markers → returns null → caller falls back to raw FileEditor).
 //
-// Marker chars are repeated ≥7 times (jj escalates if the file already
-// contains 7-char marker-lookalikes — conflicts.rs:62-65), hence {7,} regex.
-//
-// This operates on RAW content, NOT diff-wrapped — unlike conflict-parser.ts
-// which scans DiffLine[] where every line is prefixed with `+` (diff addition).
+// Marker recognition (escalation-aware width discovery, exact-width matching,
+// false-match defenses) lives in the shared scanner — conflict-markers.ts —
+// the same core conflict-parser.ts runs on diff-wrapped lines. This file owns
+// reconstruction policy: routing content lines into base/ours/theirs, side
+// labels/refs, and parse-time blocks.
 
-import { extractSideLabel } from './conflict-parser'
+import { createConflictScanner, extractSideLabel } from './conflict-markers'
 import type { ChangeBlock } from './merge-diff'
 
 /** Commit refs parsed from a conflict-marker label. Present when jj emits
@@ -27,11 +27,11 @@ export interface MergeSides {
   theirsLabel: string
   oursRef?: SideRef
   theirsRef?: SideRef
-  /** One block per jj conflict region — known at parse time (the `inRegion`
-   *  state machine toggles at every <<<<<<< / >>>>>>>). MergePanel reads this
-   *  instead of running LCS over the full file, which for a 1400-line file
-   *  with three 20-line conflicts is ~2M cells of re-discovering that the
-   *  out-of-region lines are identical. 1-indexed, half-open, matches
+  /** One block per jj conflict region — known at parse time (the scanner's
+   *  region tracking toggles at every <<<<<<< / >>>>>>>). MergePanel reads
+   *  this instead of running LCS over the full file, which for a 1400-line
+   *  file with three 20-line conflicts is ~2M cells of re-discovering that
+   *  the out-of-region lines are identical. 1-indexed, half-open, matches
    *  ChangeBlock exactly so it drops into blocksToLineSets/planTake. */
   blocks: ChangeBlock[]
 }
@@ -47,35 +47,9 @@ function parseRef(lbl: string): SideRef | undefined {
   return m ? { changeId: m[1], commitId: m[2] } : undefined
 }
 
-// Marker pattern. Only M_START is a static regex — it discovers the marker
-// LENGTH for this conflict region. jj escalates all markers to the same length
-// (conflicts.rs:62-65: max(7, longest-content-lookalike + 1)), so once we know
-// the <<<<<<< width we check all other markers for EXACTLY that width.
-//
-// {7,} matching would misfire on:
-//   - diff-prefixed content: file line `------` deleted → `-` prefix + 6 dashes
-//     = 7 dashes → false M_BASE match inside a %%%%%%% section
-//   - snapshot content: file line `-------` (7 dashes, markdown HR) appears
-//     verbatim in a +++++++ section; jj escalated to 8-char markers BECAUSE of
-//     this line → {7,} matches the content and the real 8-char marker alike
-const M_START = /^(<{7,})(?:\s+(.*))?$/
-
-/** True if line is EXACTLY `len` repetitions of `ch` followed by nothing or
- *  whitespace+label. Returns the label (or '') on match, null otherwise.
- *  Exact-length check is what distinguishes a real 8-char `--------` marker
- *  from a 7-char `-------` content line under escalation. */
-function matchMarker(line: string, ch: string, len: number): string | null {
-  if (line.length < len) return null
-  for (let i = 0; i < len; i++) if (line[i] !== ch) return null
-  // After the run: must be end-of-line, OR whitespace (label follows).
-  // A longer run of the SAME char is NOT a match — that would be file content
-  // like `--------` (8 dashes) when markers are 7, or vice versa.
-  if (line.length === len) return ''
-  if (line[len] === ch) return null
-  if (!/\s/.test(line[len])) return null
-  return line.slice(len + 1).trimStart()
-}
-
+// Content routing mode within a region. Mirrors the scanner's internal section
+// tracking, but kept here because routing (where content lines GO) is
+// reconstruction policy, not marker grammar.
 type Mode = 'out' | 'diff' | 'snap' | 'base'
 
 /** Returns null if markers unparseable, >2 sides, or no jj-native markers found
@@ -101,7 +75,7 @@ export function reconstructSides(raw: string): MergeSides | null {
   let oursRef: SideRef | undefined
   let theirsRef: SideRef | undefined
 
-  // Sets label + ref for the current side. Called from each marker handler.
+  // Sets label + ref for the current side. Called from each side-marker event.
   const setLabel = (lbl: string) => {
     const label = extractSideLabel(lbl)
     const ref = parseRef(lbl)
@@ -111,11 +85,6 @@ export function reconstructSides(raw: string): MergeSides | null {
 
   let mode: Mode = 'out'
   let sideNum = 0 // 1 = ours, 2 = theirs. 0 = not yet in a side section.
-  let inRegion = false
-  // Marker length for the CURRENT region, discovered from <<<<<<< width.
-  // All jj markers in one region use the same length (escalation is per-file).
-  // 0 = not in a region (match nothing).
-  let mLen = 0
   // DiffExperimental style emits TWO %%%%%%% sections (one per side), both
   // diffing from the same base. Without this guard, context/delete lines from
   // the second section re-push to base[] → doubled base content.
@@ -127,89 +96,58 @@ export function reconstructSides(raw: string): MergeSides | null {
     else if (sideNum === 2) theirs.push(s)
   }
 
-  for (const line of lines) {
-    let m: RegExpMatchArray | null
-    let lbl: string | null
+  const scanner = createConflictScanner()
 
-    if ((m = line.match(M_START))) {
-      if (inRegion) {
-        // Shorter run = content. jj escalated mLen BECAUSE the file contains
-        // <mLen-char runs; {7,} re-matching them here would false-null on
-        // the line jj was protecting. ≥mLen = nested/malformed → bail.
-        if (m[1].length >= mLen) return null
-        // fall through to content routing (switch below)
-      } else {
-        inRegion = true
-        mLen = m[1].length  // all markers in this region are this exact width
-        mode = 'out'
-        sideNum = 0
-        baseDoneThisRegion = false
-        blockStart = { a: ours.length + 1, b: theirs.length + 1 }
-        continue
+  for (const line of lines) {
+    const ev = scanner.next(line)
+
+    if (ev) {
+      switch (ev.kind) {
+        case 'start':
+          mode = 'out'
+          sideNum = 0
+          baseDoneThisRegion = false
+          blockStart = { a: ours.length + 1, b: theirs.length + 1 }
+          continue
+        case 'restart':
+          // Nested/malformed marker inside a region → bail; caller falls back
+          // to the raw FileEditor.
+          return null
+        case 'end':
+          if (sideNum !== 2) return null // saw <2 sides — not a 2-way conflict
+          blocks.push({
+            aFrom: blockStart.a, aTo: ours.length + 1,
+            bFrom: blockStart.b, bTo: theirs.length + 1,
+          })
+          mode = 'out'
+          sideNum = 0
+          baseDoneThisRegion = false
+          continue
+        case 'diff':
+          sideNum++
+          if (sideNum > 2) return null
+          mode = 'diff'
+          // %%%%%%% label is "from: <base>" — provisional, overwritten by the
+          // \\\\\\\ "to:" sub-marker below if present. Fallback is correct for
+          // the "Changes from base to side #N" format (no sub-marker, names
+          // result).
+          setLabel(ev.label)
+          continue
+        case 'diffTo':
+          // \\\\\\\ "to:" names what this diff transforms INTO — the real side label.
+          setLabel(ev.label)
+          continue
+        case 'snapshot':
+          sideNum++
+          if (sideNum > 2) return null
+          mode = 'snap'
+          setLabel(ev.label)
+          continue
+        case 'base':
+          mode = 'base'
+          // base label not surfaced — the 3-pane view labels flanks, not the middle column
+          continue
       }
-    }
-    // All subsequent markers use exact-length match against mLen. mLen=0
-    // outside a region (matchMarker rejects len<7 via length check? No —
-    // it'd accept a 0-length match. Guard with inRegion explicitly).
-    if (inRegion && matchMarker(line, '>', mLen) !== null) {
-      if (sideNum !== 2) return null // saw <2 sides — not a 2-way conflict
-      blocks.push({
-        aFrom: blockStart.a, aTo: ours.length + 1,
-        bFrom: blockStart.b, bTo: theirs.length + 1,
-      })
-      inRegion = false
-      mLen = 0
-      mode = 'out'
-      sideNum = 0
-      baseDoneThisRegion = false
-      continue
-    }
-    // Inner markers are ONLY checked while in a region and at EXACT mLen.
-    // This is what prevents diff-prefixed content (`-` + `------` = 7 dashes)
-    // from matching when real markers are 8 chars, AND prevents snapshot
-    // content `-------` (7 chars, a markdown HR) from matching the 8-char
-    // M_BASE that jj escalated BECAUSE of that content.
-    if (inRegion && (lbl = matchMarker(line, '%', mLen)) !== null) {
-      sideNum++
-      if (sideNum > 2) return null
-      mode = 'diff'
-      // %%%%%%% label is "from: <base>" — provisional, overwritten by \\\\\\\
-      // "to:" sub-marker below if present. Fallback is correct for the
-      // "Changes from base to side #N" format (no sub-marker, names result).
-      setLabel(lbl)
-      continue
-    }
-    if (mode === 'diff' && (lbl = matchMarker(line, '\\', mLen)) !== null) {
-      // \\\\\\\ "to:" names what this diff transforms INTO — the real side label.
-      setLabel(lbl)
-      continue
-    }
-    // The + marker CAN follow a %%%%%%% section (Diff-style: diff then snapshot).
-    // But inside the diff, content lines get `+` prefix — an added line of
-    // (mLen-1) '+' chars becomes a bare mLen-char run → false-positive. jj
-    // always labels real markers, so in diff mode require a non-empty label.
-    //
-    // Known edge: content `++++++  foo` + `+` prefix = 7 plus + "foo" → passes
-    // `lbl !== ''` → false marker. Rare (6-plus-chars followed by ws+text in
-    // source) and non-catastrophic (sideNum>2 → null → raw-editor fallback).
-    // Stem-checking jj's label format would couple to jj's output (commit-ref
-    // labels vs "Contents of side #N" vary by version/config).
-    if (inRegion && (lbl = matchMarker(line, '+', mLen)) !== null && (mode !== 'diff' || lbl !== '')) {
-      sideNum++
-      if (sideNum > 2) return null
-      mode = 'snap'
-      setLabel(lbl)
-      continue
-    }
-    // M_BASE only appears in Snapshot style — NEVER after a %%%%%%% section
-    // (diff mode encodes base via `-` prefixed lines, not a separate block).
-    // Without the mode gate, a deleted dash-line (`-` prefix + `------` =
-    // 7 dashes) inside a diff section would false-positive here even when
-    // marker length happens to equal the content length.
-    if (inRegion && mode !== 'diff' && matchMarker(line, '-', mLen) !== null) {
-      mode = 'base'
-      // base label not surfaced — the 3-pane view labels flanks, not the middle column
-      continue
     }
 
     // Content line — route by mode.
@@ -246,11 +184,12 @@ export function reconstructSides(raw: string): MergeSides | null {
   }
 
   // Unterminated region at EOF.
-  if (inRegion) return null
+  if (scanner.inRegion) return null
 
   // Git-style detection is implicit: git uses `=======` (not %%%/+++/---) as
-  // its divider. `=======` doesn't match any marker regex → treated as content.
-  // M_END then fails its sideNum===2 check → null. No explicit check needed.
+  // its divider. `=======` doesn't match any marker → treated as content.
+  // The end event then fails its sideNum===2 check → null. No explicit check
+  // needed.
 
   return {
     base: base.join('\n'),

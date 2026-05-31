@@ -4,7 +4,7 @@ import { api } from './api'
 
 vi.mock('./api', async (orig) => {
   const actual = await orig<typeof import('./api')>()
-  return { ...actual, api: { ...actual.api, conflicts: vi.fn(), fileShow: vi.fn(), fileWrite: vi.fn(), mergeResolve: vi.fn() } }
+  return { ...actual, api: { ...actual.api, conflicts: vi.fn(), fileShow: vi.fn(), fileWrite: vi.fn(), mergeResolve: vi.fn(), edit: vi.fn() } }
 })
 vi.mock('./conflict-extract', () => ({
   reconstructSides: vi.fn((c: string) => c.startsWith('UNSUPPORTED') ? null : { base: 'b', ours: 'o', theirs: 't', oursRef: null, theirsRef: null }),
@@ -46,6 +46,7 @@ beforeEach(() => {
   mockApi.fileShow.mockReset().mockResolvedValue({ content: 'ok' })
   mockApi.fileWrite.mockReset().mockResolvedValue({ ok: true })
   mockApi.mergeResolve.mockReset().mockResolvedValue({ output: '', warnings: '' })
+  mockApi.edit.mockReset().mockResolvedValue({ output: '', warnings: '' })
 })
 
 describe('enter()', () => {
@@ -176,7 +177,11 @@ describe('save()', () => {
     expect(mockApi.mergeResolve).toHaveBeenCalledWith('c_a.go', 'a.go', 'fixed')
   })
 
-  it('non-@ SSH 501 → warning (jj edit hint), not error', async () => {
+  it('non-@ SSH 501 → explicit jj-edit fallback: resolves, warns "working copy moved"', async () => {
+    // Strategy unification (conflict-resolve.ts): instead of bouncing with a
+    // "run jj edit yourself" hint, the SSH fallback runs jj edit + fileWrite
+    // and REPORTS the moved working copy — same semantics as DiffPanel's
+    // resolution path, never silent.
     mockApi.mergeResolve.mockRejectedValueOnce(
       new Error('501: merge-resolve requires local mode'),
     )
@@ -184,9 +189,34 @@ describe('save()', () => {
     mc.selectFile(item('a.go', 'aaa'))
     await flush()
     const ok = await mc.save('fixed')
-    expect(ok).toBe(false)
+    expect(ok).toBe(true)
+    expect(mockApi.edit).toHaveBeenCalledWith('c_a.go')
+    expect(mockApi.fileWrite).toHaveBeenCalledWith('a.go', 'fixed')
     expect(onError).not.toHaveBeenCalled()
-    expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('jj edit'))
+    expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('working copy moved'))
+    expect(mc.resolved.has('c_a.go:a.go')).toBe(true)
+    expect(reload).toHaveBeenCalled()
+  })
+
+  it('non-@ SSH 501 + superseding selectFile during save → fallback does NOT move @ (stale)', async () => {
+    // The isStale hook (shared gen) gates the fallback's jj edit — the point
+    // of no return. A nav during the failed mergeResolve await must not let
+    // the fallback move @ for a target the user already left.
+    const dResolve = deferred<never>()
+    mockApi.mergeResolve.mockImplementationOnce(() => dResolve.p)
+    const mc = createMergeController(deps)
+    mc.selectFile(item('a.go', 'aaa'))
+    await flush()
+
+    const savePromise = mc.save('fixed')
+    await flush()
+    mc.selectFile(item('b.go', 'bbb'))  // bumps shared gen mid-save
+    await flush()
+
+    dResolve.reject(new Error('501: merge-resolve requires local mode'))
+    expect(await savePromise).toBe(false)
+    expect(mockApi.edit).not.toHaveBeenCalled()
+    expect(mc.resolved.has('c_a.go:a.go')).toBe(false)
   })
 
   it('bug_051: save goes through withMutation', async () => {

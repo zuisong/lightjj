@@ -20,6 +20,7 @@
   import SearchResults from './SearchResults.svelte'
   import FileComparePicker from './FileComparePicker.svelte'
   import { reconstructSides, type MergeSides } from './conflict-extract'
+  import { resolveConflictFile } from './conflict-resolve'
   import FileSelectionPanel from './FileSelectionPanel.svelte'
   import type { ContextMenuItem, ContextMenuHandler } from './ContextMenu.svelte'
   import AnnotationBubble from './AnnotationBubble.svelte'
@@ -702,17 +703,24 @@
     }
   }
 
-  /** Shared prologue for startEdit/startMerge: guard, auto-jj-edit non-WC,
-   *  fetch file content, post-await identity guards. Returns undefined on any
-   *  bail (concurrent op, navigation during await, network error). The tricky
-   *  post-await guards live here so a race fix lands in one place. */
-  async function fetchFileForEdit(path: string, errorPrefix: string): Promise<string | undefined> {
+  /** Shared prologue for the edit/merge/resolve flows: guard, fetch file
+   *  content, post-await identity guards. Returns undefined on any bail
+   *  (concurrent op, navigation during await, network error). The tricky
+   *  post-await guards live here so a race fix lands in one place.
+   *
+   *  `moveWorkingCopy` additionally `jj edit`s a non-@ target BEFORE fetching.
+   *  Pass true ONLY on editor-opening paths (startEdit / openEditorFallback):
+   *  FileEditor's Save writes via fileWrite-to-@, so @ must BE the target.
+   *  Resolution paths (quickResolve/saveMerge) pass false — their write goes
+   *  through writeResolution → conflict-resolve.ts, which never moves @ in
+   *  local mode. */
+  async function fetchFileForEdit(path: string, errorPrefix: string, moveWorkingCopy: boolean): Promise<string | undefined> {
     if (diffTarget?.kind !== 'single' || editBusy.has(path)) return undefined
     const { changeId: revId, isWorkingCopy } = diffTarget
     editBusy.add(path)
     editError = ''
     try {
-      if (!isWorkingCopy) {
+      if (moveWorkingCopy && !isWorkingCopy) {
         // api.edit is a jj mutation — goes through App's mutation lock to
         // prevent races with keyboard-triggered mutations (e.g. 'u' undo).
         const result = onjjmutation
@@ -733,6 +741,76 @@
     }
   }
 
+  /** Fallback for unparseable conflicts (N-way, git-style) or auto-resolved
+   *  races: open the raw FileEditor on the file. FileEditor's save path is
+   *  fileWrite-to-@, so a non-@ target must become @ first — this re-runs the
+   *  prologue WITH moveWorkingCopy (the editor-opening semantic, same as
+   *  startEdit). It is the only resolution-flow step that still moves the
+   *  working copy; the actual resolution writes never do (in local mode). */
+  async function openEditorFallback(path: string, errorPrefix: string) {
+    const content = await fetchFileForEdit(path, errorPrefix, true)
+    if (content === undefined) return
+    openFileEditor(path, content)
+  }
+
+  /** Single write path for conflict resolutions (quickResolve + saveMerge).
+   *  The @/non-@/SSH strategy lives in conflict-resolve.ts — shared with
+   *  merge-controller's save():
+   *    @ → api.fileWrite; non-@ local → api.mergeResolve (does NOT move @);
+   *    non-@ SSH (501) → explicit jj edit + fileWrite, surfaced via the
+   *    message banner ("working copy moved"), never silent.
+   *  Returns true when the write succeeded AND the target is still current,
+   *  so callers run their post-steps (closeMerge / onfilesaved). */
+  async function writeResolution(path: string, content: string, errorPrefix: string): Promise<boolean> {
+    if (diffTarget?.kind !== 'single' || editBusy.has(path)) return false
+    const target = diffTarget
+    const revId = target.changeId
+    editBusy.add(path)
+    editError = ''
+    try {
+      const run = () => resolveConflictFile(
+        {
+          api: { fileWrite: api.fileWrite, mergeResolve: api.mergeResolve, edit: api.edit },
+          // DiffPanel's @-knowledge is diffTarget.isWorkingCopy (computed by
+          // App at navigate time, change_id-derived) — expressed here as the
+          // change_id rule conflict-resolve.ts documents.
+          getWorkingCopyChangeId: () => (target.isWorkingCopy ? target.changeId : undefined),
+          // j/k nav during the await → the SSH fallback must not move @.
+          isStale: () => diffTarget?.kind !== 'single' || diffTarget.changeId !== revId,
+        },
+        // commitId for non-@ ops — unambiguous on divergent change_ids.
+        { changeId: target.changeId, revision: target.commitId },
+        path, content,
+      )
+      // jj mutations (resolve/edit) go through App's mutation lock, same as
+      // startEdit/discardFile. undefined = blocked (App already warned).
+      const outcome = onjjmutation ? await onjjmutation(run) : await run()
+      if (outcome === undefined) return false
+      if (!outcome.ok) {
+        if (outcome.reason === 'error') {
+          const e = outcome.error
+          editError = `${errorPrefix} failed: ${e instanceof Error ? e.message : String(e)}`
+        }
+        return false
+      }
+      if (outcome.movedWorkingCopy) {
+        // Surface via the existing banner — never silently move @. Survives
+        // the post-resolve refresh: the target's change_id is unchanged, so
+        // the reset effect takes its sameChange (soft) branch.
+        editError = `Resolved ${path}; working copy moved to ${revId.slice(0, 8)} (remote mode).`
+      }
+      // Post-await identity guard: nav during the resolve → the write already
+      // happened, but don't run post-steps (reload) for the wrong revision.
+      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return false
+      return true
+    } catch (e) {
+      editError = `${errorPrefix} failed: ${e instanceof Error ? e.message : String(e)}`
+      return false
+    } finally {
+      editBusy.delete(path)
+    }
+  }
+
   function openFileEditor(path: string, content: string): void {
     // Editor lives in the right split column — switch if coming from unified.
     if (!splitView) splitView = true
@@ -745,7 +823,9 @@
   }
 
   async function startEdit(path: string) {
-    const content = await fetchFileForEdit(path, 'Edit')
+    // Editor-opening path: moving @ to the target is the expected semantic —
+    // the editor's Save writes via fileWrite-to-@.
+    const content = await fetchFileForEdit(path, 'Edit', true)
     if (content === undefined) return
     openFileEditor(path, content)
   }
@@ -782,14 +862,16 @@
       const names = otherEdits.length === 1 ? otherEdits[0] : `${otherEdits.length} files`
       if (!confirm(`Discard unsaved edits in ${names}?`)) return
     }
-    const content = await fetchFileForEdit(path, 'Merge')
+    // Pure read — opening the 3-pane editor no longer moves @; the eventual
+    // save goes through writeResolution (conflict-resolve.ts strategy).
+    const content = await fetchFileForEdit(path, 'Merge', false)
     if (content === undefined) return
     const sides = reconstructSides(content)
     // Unparseable (N-way, git-style) OR auto-resolved race (conflict_sides
     // said 2 but jj resolved between /api/files and here → all identical)
-    // → fall back to raw FileEditor.
+    // → fall back to raw FileEditor (which DOES need @ at the target).
     if (!sides || sides.ours === sides.theirs) {
-      openFileEditor(path, content)
+      await openEditorFallback(path, 'Merge')
       return
     }
     // Entering merge clears ALL in-progress file editors — MergePanel takes
@@ -828,62 +910,41 @@
    *  the common "just take my/their side" case. Writes the full reconstructed
    *  side (sides.ours/theirs), NOT planTake's incremental block surgery, so it
    *  sidesteps planTake's blank-line separator gap entirely (see BACKLOG.md).
-   *  Reuses startMerge's fetch+reconstruct prologue and saveMerge's write path
-   *  (api.fileWrite to @, after fetchFileForEdit auto-jj-edits a non-@ target).
-   *  N-way / git-style / auto-resolved-race → fall back to the editor, same as
-   *  startMerge. */
+   *  Fetches WITHOUT moving @ (pure read), then writes via writeResolution
+   *  (conflict-resolve.ts: @ → fileWrite, non-@ local → mergeResolve, non-@
+   *  SSH → explicit jj-edit fallback). N-way / git-style / auto-resolved-race
+   *  → fall back to the editor, same as startMerge. */
   async function quickResolve(path: string, side: 'ours' | 'theirs') {
-    const content = await fetchFileForEdit(path, 'Resolve')
+    const content = await fetchFileForEdit(path, 'Resolve', false)
     if (content === undefined) return
     const sides = reconstructSides(content)
     if (!sides || sides.ours === sides.theirs) {
-      openFileEditor(path, content)
+      await openEditorFallback(path, 'Resolve')
       return
     }
     // Modify/delete conflicts: jj materializes the deleted side as empty, so
-    // reconstructSides yields '' for it. fileWrite has no delete path — writing
-    // '' would "resolve" to a zero-byte file (M with the empty blob, not D):
-    // wrong tree content with no warning. The markers can't distinguish
-    // deleted-on-that-side from emptied-on-that-side, so refuse both and
-    // explain; a genuinely-empty resolve still works via the merge editor.
+    // reconstructSides yields '' for it. The resolution write has no delete
+    // path — writing '' would "resolve" to a zero-byte file (M with the empty
+    // blob, not D): wrong tree content with no warning. The markers can't
+    // distinguish deleted-on-that-side from emptied-on-that-side, so refuse
+    // both and explain; a genuinely-empty resolve still works via the merge
+    // editor.
     const chosen = side === 'ours' ? sides.ours : sides.theirs
     if (chosen === '') {
       editError = `The ${side} side of ${path} is empty — likely a modify/delete conflict. `
         + `Quick-resolve can't delete files; delete the file in the working copy to take that side.`
       return
     }
-    if (diffTarget?.kind !== 'single') return
-    const revId = diffTarget.changeId
-    editBusy.add(path)
-    editError = ''
-    try {
-      await api.fileWrite(path, chosen)
-      // j/k nav during the await → don't reload for the wrong revision.
-      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return
-      await onfilesaved?.()
-    } catch (e) {
-      editError = `Resolve failed: ${e instanceof Error ? e.message : String(e)}`
-    } finally {
-      editBusy.delete(path)
-    }
+    if (!await writeResolution(path, chosen, 'Resolve')) return
+    await onfilesaved?.()
   }
 
   async function saveMerge(content: string) {
     const path = mergingPath
-    if (!path || editBusy.has(path) || diffTarget?.kind !== 'single') return
-    const revId = diffTarget.changeId
-    editBusy.add(path)
-    editError = ''
-    try {
-      await api.fileWrite(path, content)
-      if (diffTarget?.kind !== 'single' || diffTarget.changeId !== revId) return
-      closeMerge()
-      await onfilesaved?.()
-    } catch (e) {
-      editError = `Save failed: ${e instanceof Error ? e.message : String(e)}`
-    } finally {
-      editBusy.delete(path)
-    }
+    if (!path) return
+    if (!await writeResolution(path, content, 'Save')) return
+    closeMerge()
+    await onfilesaved?.()
   }
 
   function clearEditState(path: string): void {

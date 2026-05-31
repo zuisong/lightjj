@@ -3,6 +3,15 @@
 Status: reviewed; v1 deep-review collapsed Phase 1 entirely (architect REFACTOR closed 25/40 findings, ratio 0.62).
 Goals: (1) exact base bytes for the base popup; (2) save resolution at non-`@`.
 
+> **Update (2026-05, conflict-resolution unification):** the frontend strategy
+> described below now lives in `frontend/src/lib/conflict-resolve.ts`
+> (`resolveConflictFile()`), shared by merge-controller's save() AND DiffPanel's
+> quickResolve/saveMerge. Two behavior changes vs this spec: (1) the SSH non-`@`
+> 501 no longer bounces with a "run `jj edit` yourself" warning — it falls back
+> to an explicit `jj edit` + fileWrite and reports "working copy moved"; (2)
+> DiffPanel's resolution paths no longer auto-`jj edit` non-`@` targets in local
+> mode (they use this endpoint instead). The backend design is unchanged.
+
 ## v1 → v2 delta
 
 v1 proposed two `jj resolve --tool` re-entry phases (dump + apply) with helper-mode flags, ephemeral TOML, and JSON tempfile transport. Review found the **fetch phase is unnecessary** — `jj file show --config ui.conflict-marker-style=snapshot` re-materializes conflicts with byte-exact base in `-------` sections at any revision, and `reconstructSides()` already parses snapshot mode. This closes every exit-1-on-happy-path, GET-snapshots-WC, dropped-labels, dropped-`blocks`, lost-LRU-cache, and SSH-dump-tempfile finding. Only the **save phase** is genuinely new.

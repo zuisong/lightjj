@@ -6,6 +6,7 @@
 
 import { api, type ConflictEntry } from './api'
 import { reconstructSides, type MergeSides } from './conflict-extract'
+import { resolveConflictFile } from './conflict-resolve'
 
 export interface MergeQueueItem {
   commitId: string
@@ -41,11 +42,13 @@ export interface MergeController {
    */
   selectFile(item: MergeQueueItem): void
   /**
-   * Write resolved content. `@` → api.fileWrite (SSH-compatible, handles
-   * empty content natively); non-@ → api.mergeResolve (`jj resolve --tool cp`,
-   * local-only — 501 in SSH surfaces as a warning). The @-branch compares
-   * change_id, NOT commit_id (bug_040: fileWrite snapshots @ → new commit_id).
-   * Returns false on warning/skip so caller can leave the panel open.
+   * Write resolved content via the unified strategy (conflict-resolve.ts,
+   * shared with DiffPanel's quickResolve/saveMerge): `@` → api.fileWrite;
+   * non-@ → api.mergeResolve (`jj resolve --tool cp`, does NOT move @);
+   * non-@ in SSH mode (501) → explicit jj-edit + fileWrite fallback, surfaced
+   * as a warning ("working copy moved"). The @-branch compares change_id,
+   * NOT commit_id (bug_040: fileWrite snapshots @ → new commit_id).
+   * Returns false on error/skip so caller can leave the panel open.
    */
   save(content: string): Promise<boolean>
 }
@@ -119,34 +122,42 @@ export function createMergeController(deps: MergeControllerDeps): MergeControlle
   async function save(content: string): Promise<boolean> {
     const cur = current
     if (!cur) return false
-    // bug_040: change_id, NOT commit_id — fileWrite snapshots @.
-    const isWC = cur.changeId === deps.getWorkingCopyChangeId()
     // bug_048/051: shared gen + withMutation mutex.
     const g = ++gen
     const result = await deps.withMutation(async () => {
       busy = true
       try {
-        if (isWC) {
-          // SSH-compatible + handles empty content natively.
-          await api.fileWrite(cur.path, content)
-        } else {
-          // Local-only; 501 surfaces below. cur.commitId — `jj resolve -r`
-          // accepts commit_id and won't be ambiguous on divergent change_ids.
-          await api.mergeResolve(cur.commitId, cur.path, content)
-        }
+        // The @/non-@/SSH strategy lives in conflict-resolve.ts — the single
+        // resolution path shared with DiffPanel. bug_040 (change_id, NOT
+        // commit_id, decides the @ branch) is enforced inside it.
+        const outcome = await resolveConflictFile(
+          {
+            api: { fileWrite: api.fileWrite, mergeResolve: api.mergeResolve, edit: api.edit },
+            getWorkingCopyChangeId: deps.getWorkingCopyChangeId,
+            // Shared-gen staleness: a selectFile/enter during this save's
+            // await means the SSH fallback must NOT move @ for a stale target.
+            isStale: () => g !== gen,
+          },
+          // cur.commitId for non-@ ops — `jj resolve -r`/`jj edit` accept
+          // commit_id and won't be ambiguous on divergent change_ids.
+          { changeId: cur.changeId, revision: cur.commitId },
+          cur.path, content,
+        )
         if (g !== gen) return false  // superseded — not an error
+        if (!outcome.ok) {
+          if (outcome.reason === 'error') deps.onError(outcome.error)
+          return false  // 'stale' is silent: gen check above already covers it
+        }
+        if (outcome.movedWorkingCopy) {
+          // SSH fallback ran `jj edit` — surface it, never silently move @.
+          deps.onWarning(`Resolved ${cur.path}; working copy moved to ${cur.changeId.slice(0, 8)} (remote mode)`)
+        }
         resolved = new Set([...resolved, `${cur.commitId}:${cur.path}`])
         await deps.reload()
         return true
       } catch (e) {
-        // 501 = SSH non-@; surface as warning (actionable: jj edit), not error.
-        if (g === gen) {
-          if (e instanceof Error && e.message.includes('local mode')) {
-            deps.onWarning('Non-@ resolve requires local mode. Run `jj edit ' + cur.changeId.slice(0, 8) + '` then save.')
-          } else {
-            deps.onError(e)
-          }
-        }
+        // reload() failure (resolveConflictFile itself never throws).
+        if (g === gen) deps.onError(e)
         return false
       } finally {
         if (g === gen) busy = false
