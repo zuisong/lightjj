@@ -1,0 +1,101 @@
+name: Update Nix hashes
+
+# flake.nix pins two fixed-output-derivation (FOD) hashes that go stale
+# whenever dependencies change:
+#   - vendorHash        — covers Go module downloads (go.mod / go.sum)
+#   - pnpmDeps.hash     — covers the pnpm store (frontend/pnpm-lock.yaml)
+# The maintainer's dev machines don't have nix installed, so this workflow
+# regenerates them in CI: build, parse the "hash mismatch" error nix emits
+# (specified: <old> / got: <new>), substitute, repeat until the build passes,
+# then commit the result back to main.
+#
+# Note the trigger paths deliberately EXCLUDE flake.nix / flake.lock so the
+# bot's own commit can't retrigger the workflow. Dep-bump PRs will show a red
+# Nix check until they merge and this workflow fixes main — that's expected.
+
+on:
+  workflow_dispatch: # manual regen (e.g. first run after the flake lands)
+  push:
+    branches: [main]
+    paths:
+      - go.mod
+      - go.sum
+      - frontend/pnpm-lock.yaml
+      - frontend/package.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-nix-hashes
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Allows the workflow to merge ahead of the flake itself; it becomes a
+      # no-op until flake.nix exists on main.
+      - name: Check flake exists
+        id: flake
+        run: echo "exists=$([ -f flake.nix ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - uses: cachix/install-nix-action@v31
+        if: steps.flake.outputs.exists == 'true'
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Regenerate FOD hashes
+        if: steps.flake.outputs.exists == 'true'
+        run: |
+          set -euo pipefail
+
+          # Two FOD hashes can be stale at once, and nix reports only the
+          # first mismatch per build (pnpmDeps fails before vendorHash because
+          # the Go derivation copies the frontend output in postPatch). Loop:
+          # each iteration fixes exactly one hash. Replacing the literal
+          # "specified" hash is unambiguous — the two pinned values are
+          # distinct real hashes, never both the same placeholder.
+          for i in 1 2 3; do
+            if out=$(nix build .# --no-link 2>&1); then
+              echo "build OK after $((i-1)) hash update(s)"
+              break
+            fi
+            # `|| true`: under set -e + pipefail, a no-match grep would kill
+            # the script before the empty-var check below can report it.
+            spec=$(grep -oP 'specified:\s+\Ksha256-[A-Za-z0-9+/=]+' <<<"$out" | head -1 || true)
+            got=$(grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' <<<"$out" | head -1 || true)
+            if [ -z "$spec" ] || [ -z "$got" ]; then
+              printf '%s\n' "$out" | tail -50
+              echo "::error::nix build failed for a reason other than a hash mismatch"
+              exit 1
+            fi
+            echo "hash drift: $spec -> $got"
+            # '#' delimiter: SRI base64 contains '/' and '+', never '#'
+            sed -i "s#${spec}#${got}#" flake.nix
+          done
+
+      - name: Verify final build
+        if: steps.flake.outputs.exists == 'true'
+        run: |
+          nix build --print-build-logs .#
+          ./result/bin/lightjj --version
+
+      - name: Commit and push
+        if: steps.flake.outputs.exists == 'true'
+        run: |
+          # nix build creates flake.lock on first run if it's missing —
+          # commit it too so the nixpkgs pin is reproducible.
+          git add flake.nix
+          [ -f flake.lock ] && git add flake.lock
+          if git diff --cached --quiet; then
+            echo "hashes already current — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "nix: regenerate flake hashes after dependency change"
+          git push
